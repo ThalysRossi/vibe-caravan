@@ -1,0 +1,11 @@
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum WololoError {
+    #[error("cli error: {0}")]
+    Cli(String),
+    #[error("invalid arguments: {0}")]
+    InvalidArguments(String),
+    #[error("not implemented: {0}")]
+    NotImplemented(&'static str),
+}
