@@ -1,0 +1,91 @@
+use std::path::Path;
+
+use wololo::capacity::{check_capacity_with_probe, CapacityDecision, SpaceInfo, SpaceProbe};
+use wololo::error::WololoError;
+
+#[derive(Debug, Clone, Copy)]
+struct StubProbe {
+    total: u64,
+    available: u64,
+}
+
+impl SpaceProbe for StubProbe {
+    fn probe(&self, _destination: &Path) -> Result<SpaceInfo, WololoError> {
+        Ok(SpaceInfo {
+            total_bytes: self.total,
+            available_bytes: self.available,
+        })
+    }
+}
+
+#[test]
+fn free_space_greater_than_batch_size_allows_copy() {
+    let probe = StubProbe {
+        total: 2_000,
+        available: 1_500,
+    };
+
+    let report = check_capacity_with_probe(Path::new("/fake"), 1_000, 0, &probe)
+        .expect("capacity check should succeed");
+
+    assert_eq!(report.decision, CapacityDecision::Proceed);
+    assert_eq!(report.reason, None);
+}
+
+#[test]
+fn free_space_equal_to_batch_size_aborts() {
+    let probe = StubProbe {
+        total: 2_000,
+        available: 1_000,
+    };
+
+    let report = check_capacity_with_probe(Path::new("/fake"), 1_000, 0, &probe)
+        .expect("capacity check should succeed");
+
+    assert_eq!(report.decision, CapacityDecision::Abort);
+    assert!(report.reason.is_some());
+}
+
+#[test]
+fn free_space_less_than_batch_size_aborts() {
+    let probe = StubProbe {
+        total: 2_000,
+        available: 999,
+    };
+
+    let report = check_capacity_with_probe(Path::new("/fake"), 1_000, 0, &probe)
+        .expect("capacity check should succeed");
+
+    assert_eq!(report.decision, CapacityDecision::Abort);
+}
+
+#[test]
+fn reserve_margin_is_applied_correctly() {
+    let probe = StubProbe {
+        total: 2_000,
+        available: 1_200,
+    };
+
+    let report = check_capacity_with_probe(Path::new("/fake"), 1_000, 300, &probe)
+        .expect("capacity check should succeed");
+
+    assert_eq!(report.decision, CapacityDecision::Abort);
+    assert_eq!(report.reserve_margin_bytes, 300);
+}
+
+#[test]
+fn capacity_failures_include_a_clear_abort_reason() {
+    let probe = StubProbe {
+        total: 5_000,
+        available: 2_000,
+    };
+
+    let report = check_capacity_with_probe(Path::new("/fake"), 2_000, 0, &probe)
+        .expect("capacity check should succeed");
+
+    assert_eq!(report.decision, CapacityDecision::Abort);
+    let reason = report.reason.expect("abort should include reason");
+    assert!(reason.contains("insufficient destination space"));
+    assert!(reason.contains("available=2000"));
+    assert!(reason.contains("required=2000"));
+}

@@ -1,0 +1,146 @@
+use std::fs;
+use std::path::Path;
+
+use tempfile::TempDir;
+use wololo::plan::{build_plan, plan_batches, PlanOptions};
+use wololo::scan::scan_source;
+
+fn create_file(root: &Path, rel: &str, size: usize) {
+    let path = root.join(rel);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("parent directories should be created");
+    }
+    fs::write(path, vec![b'x'; size]).expect("file should be created");
+}
+
+#[test]
+fn empty_source_tree_produces_zero_batches() {
+    let tmp = TempDir::new().expect("temp dir");
+    let plan = build_plan(
+        tmp.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+
+    assert_eq!(plan.source_file_count, 0);
+    assert!(plan.batches.is_empty());
+}
+
+#[test]
+fn single_large_file_forms_one_batch() {
+    let tmp = TempDir::new().expect("temp dir");
+    create_file(tmp.path(), "video.bin", 2048);
+
+    let plan = build_plan(
+        tmp.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+
+    assert_eq!(plan.batches.len(), 1);
+    assert_eq!(plan.batches[0].file_count, 1);
+    assert_eq!(plan.batches[0].total_bytes, 2048);
+}
+
+#[test]
+fn many_small_files_are_split_by_file_count_and_size() {
+    let tmp = TempDir::new().expect("temp dir");
+    for idx in 0..10 {
+        create_file(tmp.path(), &format!("docs/f{idx}.txt"), 10);
+    }
+
+    let scanned = scan_source(tmp.path()).expect("scan should succeed");
+    let batches = plan_batches(
+        scanned,
+        &PlanOptions {
+            batch_size_bytes: 100,
+            max_files: Some(3),
+        },
+    )
+    .expect("planning should succeed");
+
+    assert_eq!(batches.len(), 4);
+    assert_eq!(batches[0].file_count, 3);
+    assert_eq!(batches[1].file_count, 3);
+    assert_eq!(batches[2].file_count, 3);
+    assert_eq!(batches[3].file_count, 1);
+}
+
+#[test]
+fn directory_local_files_stay_together_when_possible() {
+    let tmp = TempDir::new().expect("temp dir");
+    create_file(tmp.path(), "a/1.txt", 10);
+    create_file(tmp.path(), "a/2.txt", 10);
+    create_file(tmp.path(), "b/1.txt", 10);
+    create_file(tmp.path(), "b/2.txt", 10);
+
+    let scanned = scan_source(tmp.path()).expect("scan should succeed");
+    let batches = plan_batches(
+        scanned,
+        &PlanOptions {
+            batch_size_bytes: 25,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+
+    assert_eq!(batches.len(), 2);
+    let first: Vec<_> = batches[0]
+        .files
+        .iter()
+        .map(|f| f.relative_path.to_string_lossy().to_string())
+        .collect();
+    let second: Vec<_> = batches[1]
+        .files
+        .iter()
+        .map(|f| f.relative_path.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(first, vec!["a/1.txt", "a/2.txt"]);
+    assert_eq!(second, vec!["b/1.txt", "b/2.txt"]);
+}
+
+#[test]
+fn planning_is_deterministic_across_runs() {
+    let tmp = TempDir::new().expect("temp dir");
+    create_file(tmp.path(), "x/c.txt", 7);
+    create_file(tmp.path(), "x/a.txt", 5);
+    create_file(tmp.path(), "y/b.txt", 6);
+
+    let options = PlanOptions {
+        batch_size_bytes: 10,
+        max_files: Some(2),
+    };
+    let first = build_plan(tmp.path(), &options).expect("first plan should succeed");
+    let second = build_plan(tmp.path(), &options).expect("second plan should succeed");
+
+    let first_paths: Vec<Vec<String>> = first
+        .batches
+        .iter()
+        .map(|b| {
+            b.files
+                .iter()
+                .map(|f| f.relative_path.to_string_lossy().to_string())
+                .collect()
+        })
+        .collect();
+    let second_paths: Vec<Vec<String>> = second
+        .batches
+        .iter()
+        .map(|b| {
+            b.files
+                .iter()
+                .map(|f| f.relative_path.to_string_lossy().to_string())
+                .collect()
+        })
+        .collect();
+
+    assert_eq!(first_paths, second_paths);
+    assert_eq!(first.batches, second.batches);
+}
