@@ -1,57 +1,38 @@
 # caravan
 
-`caravan` is a Rust migration tool for a very specific but common painful situation:
-
-- The original data lives on a Windows **Storage Spaces** volume.
-- The machine is dual-boot, so Windows and Linux are not running at the same time.
-- Linux cannot directly use the Storage Spaces volume for the final migration.
-- The data must first be staged in Windows onto one or more volumes that Linux can read later.
-- After rebooting into Linux, the data is migrated in controlled batches into a Btrfs destination with verification, human approval gates, resumable state, and optional snapshots.
-
-The purpose of `caravan` is to make both halves of that workflow safer.
+`caravan` is a Rust migration tool vibe coded for a very specific situation: On moving to Linux this year, I found that my storage hard drive is a **Storage Spaces** volume, since I'm currently (feb-2026) dual booting with win11, fully intent on migrating fully to Linux, I was faced with this issue when trying to access my data. Seeing as Linux cannot directly access Windows Storage Spaces, I need to transfer my files to regular NTFS drives which Linux can access, and then copy them from the NTFS drives into the new btrfs partition. With a data-set of over 3.5TB, doing this manually seemed like a really error prone task and one that would take a while, as the NTFS drives are way smaller than needed. This led me to create this tool to be able to automate part of the process as well as have some form of data integrity checking, resumable states and btrfs snapshots for added safety. I opted to use rust as it is a language I'm curious about.
 
 ## What problem it solves
 
-Large datasets are risky to move by hand, especially when the source is fragmented across multiple folders and the destination is tight on space. `caravan` is designed to reduce that risk by doing all of the following:
-
+A few of the requirements I came up with are: 
 - splitting data into batches of a configurable size
-- refusing to start a batch if the destination does not have enough free space
+- refusing to start a batch migration if the destination does not have enough free space
+- two running modes: staging for getting the data from Storage Spaces into the intermediary drives, migration for getting the data from NTFS to btrfs
 - copying each batch using a mode-appropriate backend
 - verifying the batch after copy
-- stopping for human review when verification fails
-- stopping again before deleting source files
+- prompting for human review when verification fails
+- prompting again before deleting source files
 - resuming safely after interruptions
 - creating Btrfs snapshots during the Linux final migration phase
 
-## Two modes
+## Modes
 
-### Staging mode
+### Staging Mode
 
-Use this mode in Windows.
+This mode is run in Windows to prepare the data transfer by creating the batches and moving them from the Storage Spaces volume to the intermediary NTFS drives.
 
-It is intended for the first phase of the migration, where files are copied out of the Storage Spaces volume into a Linux-readable intermediate volume.
-
-Typical use:
 
 ```text
 caravan staging --source D:\Data --dest E:\staging --batch-size 100GiB --interactive
 ```
 
-Staging mode is Windows-focused and does not use Btrfs snapshots.
-
 ### Migration mode
 
-Use this mode in Linux.
-
-It is intended for the final phase, where staged data is copied into the Btrfs destination.
-
-Typical use:
+This mode is run in Linux and is for the final phase, where staged data is copied to the btrfs destination drives and the snapshots created.
 
 ```text
 caravan migrate --source /mnt/staging/Data --dest /mnt/data/@media --batch-size 100GiB --snapshot-every 1 --interactive
 ```
-
-Migration mode can create Btrfs snapshots after approved batches.
 
 ## Safety model
 
@@ -194,34 +175,4 @@ Smaller batches can be better when:
 Before any copy begins, `caravan` checks the destination's free space.
 
 If the destination has **less than or equal to** the batch size available, the batch is aborted and the tool reports that the destination must be expanded or the source layout must be reduced further before continuing.
-
-## Terminal-friendly manual
-
-A more compact command reference is available in `manual.md`.
-
-You can open it with:
-
-```bash
-less manual.md
-```
-
-## Suggested usage flow
-
-1. Boot Windows.
-2. Run `caravan staging` until enough data has been moved into the intermediate volume.
-3. Reboot into Linux.
-4. Mount the staged volume.
-5. Run `caravan migrate` against the staged data.
-6. Review verification reports carefully.
-7. Approve deletions only when you are comfortable doing so.
-8. Let `caravan` snapshot the Btrfs destination according to your configured cadence.
-
-## Design notes
-
-- The core engine is path-based and reusable across platforms.
-- Platform-specific copy backends are used underneath.
-- Btrfs snapshots are Linux-only.
-- The state file is shared across resume operations.
-- The manifest is the single source of truth for batch order and routing history.
-- The tool is designed to stop rather than guess when something looks wrong.
 
