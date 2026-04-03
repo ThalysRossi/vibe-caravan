@@ -1,6 +1,6 @@
-# wololo
+# caravan
 
-`wololo` is a Rust migration tool for a very specific but common painful situation:
+`caravan` is a Rust migration tool for a very specific but common painful situation:
 
 - The original data lives on a Windows **Storage Spaces** volume.
 - The machine is dual-boot, so Windows and Linux are not running at the same time.
@@ -8,11 +8,11 @@
 - The data must first be staged in Windows onto one or more volumes that Linux can read later.
 - After rebooting into Linux, the data is migrated in controlled batches into a Btrfs destination with verification, human approval gates, resumable state, and optional snapshots.
 
-The purpose of `wololo` is to make both halves of that workflow safer.
+The purpose of `caravan` is to make both halves of that workflow safer.
 
 ## What problem it solves
 
-Large datasets are risky to move by hand, especially when the source is fragmented across multiple folders and the destination is tight on space. `wololo` is designed to reduce that risk by doing all of the following:
+Large datasets are risky to move by hand, especially when the source is fragmented across multiple folders and the destination is tight on space. `caravan` is designed to reduce that risk by doing all of the following:
 
 - splitting data into batches of a configurable size
 - refusing to start a batch if the destination does not have enough free space
@@ -34,7 +34,7 @@ It is intended for the first phase of the migration, where files are copied out 
 Typical use:
 
 ```text
-wololo staging --source D:\Data --dest E:\staging --batch-size 100GiB --interactive
+caravan staging --source D:\Data --dest E:\staging --batch-size 100GiB --interactive
 ```
 
 Staging mode is Windows-focused and does not use Btrfs snapshots.
@@ -48,14 +48,14 @@ It is intended for the final phase, where staged data is copied into the Btrfs d
 Typical use:
 
 ```text
-wololo migrate --source /mnt/staging/Data --dest /mnt/data/@media --batch-size 100GiB --snapshot-every 1 --interactive
+caravan migrate --source /mnt/staging/Data --dest /mnt/data/@media --batch-size 100GiB --snapshot-every 1 --interactive
 ```
 
 Migration mode can create Btrfs snapshots after approved batches.
 
 ## Safety model
 
-`wololo` uses two human-review gates:
+`caravan` uses two human-review gates:
 
 1. if verification fails, it stops and asks for review before doing anything destructive
 2. if verification succeeds, it still stops and asks for approval before deleting source files
@@ -70,7 +70,7 @@ Build from source with Cargo:
 cargo build --release
 ```
 
-Then run the resulting binary from `target/release/wololo`.
+Then run the resulting binary from `target/release/caravan`.
 
 ## Build and run
 
@@ -97,7 +97,7 @@ cargo build --release
 Run the release binary directly:
 
 ```bash
-./target/release/wololo migrate --source /mnt/staging --dest /mnt/data/@target --batch-size 100GiB --snapshot-every 1 --interactive
+./target/release/caravan migrate --source /mnt/staging --dest /mnt/data/@target --batch-size 100GiB --snapshot-every 1 --interactive
 ```
 
 Run all tests:
@@ -115,9 +115,9 @@ Used on Windows to copy from the Storage Spaces source to a Linux-readable inter
 Example:
 
 ```bash
-wololo staging \
+caravan staging \
   --source D:\\Photos \
-  --dest E:\\wololo-staging\\Photos \
+  --dest E:\\caravan-staging\\Photos \
   --batch-size 100GiB \
   --interactive
 ```
@@ -125,9 +125,9 @@ wololo staging \
 Example with smaller batches for a very cautious run:
 
 ```bash
-wololo staging \
+caravan staging \
   --source D:\\Archives \
-  --dest E:\\wololo-staging\\Archives \
+  --dest E:\\caravan-staging\\Archives \
   --batch-size 25GiB \
   --interactive
 ```
@@ -139,7 +139,7 @@ Used on Linux to move staged data into Btrfs.
 Example:
 
 ```bash
-wololo migrate \
+caravan migrate \
   --source /mnt/staging/Photos \
   --dest /mnt/data/@media \
   --batch-size 100GiB \
@@ -150,7 +150,7 @@ wololo migrate \
 Example for important documents with frequent snapshots:
 
 ```bash
-wololo migrate \
+caravan migrate \
   --source /mnt/staging/Documents \
   --dest /mnt/data/@documents \
   --batch-size 10GiB \
@@ -165,7 +165,7 @@ Shows the current saved state and progress.
 Example:
 
 ```bash
-wololo status --state /var/lib/wololo/state.json
+caravan status --state /var/lib/caravan/state.json
 ```
 
 ### `resume`
@@ -175,7 +175,7 @@ Continues an interrupted run from the saved state.
 Example:
 
 ```bash
-wololo resume --state /var/lib/wololo/state.json
+caravan resume --state /var/lib/caravan/state.json
 ```
 
 ## Batch size guidance
@@ -191,7 +191,7 @@ Smaller batches can be better when:
 
 ## Behavior when space is tight
 
-Before any copy begins, `wololo` checks the destination's free space.
+Before any copy begins, `caravan` checks the destination's free space.
 
 If the destination has **less than or equal to** the batch size available, the batch is aborted and the tool reports that the destination must be expanded or the source layout must be reduced further before continuing.
 
@@ -208,13 +208,13 @@ less manual.md
 ## Suggested usage flow
 
 1. Boot Windows.
-2. Run `wololo staging` until enough data has been moved into the intermediate volume.
+2. Run `caravan staging` until enough data has been moved into the intermediate volume.
 3. Reboot into Linux.
 4. Mount the staged volume.
-5. Run `wololo migrate` against the staged data.
+5. Run `caravan migrate` against the staged data.
 6. Review verification reports carefully.
 7. Approve deletions only when you are comfortable doing so.
-8. Let `wololo` snapshot the Btrfs destination according to your configured cadence.
+8. Let `caravan` snapshot the Btrfs destination according to your configured cadence.
 
 ## Design notes
 

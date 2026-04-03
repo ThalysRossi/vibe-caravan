@@ -1,11 +1,11 @@
-# wololo Implementation Plan
+# caravan Implementation Plan
 
 ## Purpose
 
-Build `wololo`, a Rust command-line tool for a two-phase migration on a dual-boot Windows + CachyOS machine:
+Build `caravan`, a Rust command-line tool for a two-phase migration on a dual-boot Windows + CachyOS machine:
 
-1. **Windows staging phase** — run `wololo` in staging mode while booted into Windows to copy data out of the Windows Storage Spaces volume into one or more Linux-readable intermediate volumes.
-2. **Linux final migration phase** — reboot into CachyOS and run `wololo` in migration mode to move the staged data into a Btrfs destination using verified batches, explicit human approval gates, resumable checkpoints, and optional snapshots.
+1. **Windows staging phase** — run `caravan` in staging mode while booted into Windows to copy data out of the Windows Storage Spaces volume into one or more Linux-readable intermediate volumes.
+2. **Linux final migration phase** — reboot into CachyOS and run `caravan` in migration mode to move the staged data into a Btrfs destination using verified batches, explicit human approval gates, resumable checkpoints, and optional snapshots.
 
 The tool is intentionally conservative. Its primary goal is data safety and recoverability, not maximum throughput.
 
@@ -18,20 +18,20 @@ The tool is intentionally conservative. Its primary goal is data safety and reco
 ```text
 Windows Storage Spaces source
         ↓
-wololo staging mode on Windows
+caravan staging mode on Windows
         ↓
 Linux-readable intermediate volume(s)
         ↓
 Reboot into CachyOS
         ↓
-wololo migration mode on Linux
+caravan migration mode on Linux
         ↓
 Btrfs destination
 ```
 
 ### Important implications
 
-- `wololo` must support **two execution contexts**:
+- `caravan` must support **two execution contexts**:
   - **staging mode** on Windows
   - **migration mode** on Linux
 - The same core planning, verification, approval, and checkpoint logic should be reusable across both modes.
@@ -213,7 +213,7 @@ For this migration, the sanitization layer should primarily **detect and report*
 ## Suggested repository layout
 
 ```text
-wololo/
+caravan/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs
@@ -351,7 +351,7 @@ Lock the real-world workflow before writing code.
 ## Deliverables
 
 - A written runbook section describing the Windows staging copy and the Linux final migration.
-- A clarified statement that `wololo` runs in both contexts but with different backend capabilities.
+- A clarified statement that `caravan` runs in both contexts but with different backend capabilities.
 - A finalized command model with explicit staging and migration modes.
 - A finalized source/destination topology for each mode.
 
@@ -360,7 +360,7 @@ Lock the real-world workflow before writing code.
 ### Windows staging phase
 
 1. Boot into Windows.
-2. Run `wololo` in staging mode against the Windows Storage Spaces source.
+2. Run `caravan` in staging mode against the Windows Storage Spaces source.
 3. Copy the selected batch to a Linux-readable intermediate volume.
 4. Verify the copy.
 5. Review any verification errors.
@@ -371,7 +371,7 @@ Lock the real-world workflow before writing code.
 
 1. Boot into CachyOS.
 2. Mount the staged intermediate volume.
-3. Run `wololo` in migration mode against the staged data.
+3. Run `caravan` in migration mode against the staged data.
 4. Copy into the Btrfs destination.
 5. Verify the copy.
 6. Review any verification errors.
@@ -453,10 +453,10 @@ Define and validate all command-line options and map them into a typed configura
 Prefer explicit subcommands:
 
 ```text
-wololo staging --source <PATH> --dest <PATH> --batch-size 100GiB --interactive
-wololo migrate --source <PATH> --dest <PATH> --batch-size 100GiB --snapshot-every 2 --interactive
-wololo status
-wololo resume
+caravan staging --source <PATH> --dest <PATH> --batch-size 100GiB --interactive
+caravan migrate --source <PATH> --dest <PATH> --batch-size 100GiB --snapshot-every 2 --interactive
+caravan status
+caravan resume
 ```
 
 If a convenience flag such as `--mode staging` is ever added, it should remain an alias rather than the primary shape.

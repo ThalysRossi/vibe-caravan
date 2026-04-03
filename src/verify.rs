@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use crate::config::VerificationMode;
-use crate::error::WololoError;
+use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::verification::{DigestModeUsed, VerificationReport, VerificationStatus};
 
@@ -11,7 +11,7 @@ pub fn verify_batch(
     source_root: &Path,
     destination_root: &Path,
     mode: VerificationMode,
-) -> Result<VerificationReport, WololoError> {
+) -> Result<VerificationReport, CaravanError> {
     let mut missing_files = Vec::new();
     let mut mismatched_files = Vec::new();
     let mut unreadable_files = Vec::new();
@@ -99,9 +99,9 @@ pub fn verify_batch(
     })
 }
 
-fn digest_file(path: &Path) -> Result<[u8; 32], WololoError> {
+fn digest_file(path: &Path) -> Result<[u8; 32], CaravanError> {
     let bytes = fs::read(path).map_err(|err| {
-        WololoError::InvalidArguments(format!("failed to read {}: {err}", path.display()))
+        CaravanError::InvalidArguments(format!("failed to read {}: {err}", path.display()))
     })?;
     Ok(blake3::hash(&bytes).into())
 }

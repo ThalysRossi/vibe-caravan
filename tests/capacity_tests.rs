@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use wololo::capacity::{check_capacity_with_probe, CapacityDecision, SpaceInfo, SpaceProbe};
-use wololo::error::WololoError;
+use caravan::capacity::{check_capacity_with_probe, CapacityDecision, SpaceInfo, SpaceProbe};
+use caravan::error::CaravanError;
 
 #[derive(Debug, Clone, Copy)]
 struct StubProbe {
@@ -10,7 +10,7 @@ struct StubProbe {
 }
 
 impl SpaceProbe for StubProbe {
-    fn probe(&self, _destination: &Path) -> Result<SpaceInfo, WololoError> {
+    fn probe(&self, _destination: &Path) -> Result<SpaceInfo, CaravanError> {
         Ok(SpaceInfo {
             total_bytes: self.total,
             available_bytes: self.available,

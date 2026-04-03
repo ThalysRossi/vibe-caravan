@@ -1,15 +1,15 @@
-use crate::error::WololoError;
+use crate::error::CaravanError;
 
 pub trait PromptBackend {
-    fn confirm_deletion(&self, batch_id: &str) -> Result<bool, WololoError>;
+    fn confirm_deletion(&self, batch_id: &str) -> Result<bool, CaravanError>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct InteractivePrompt;
 
 impl PromptBackend for InteractivePrompt {
-    fn confirm_deletion(&self, _batch_id: &str) -> Result<bool, WololoError> {
-        Err(WololoError::NotImplemented(
+    fn confirm_deletion(&self, _batch_id: &str) -> Result<bool, CaravanError> {
+        Err(CaravanError::NotImplemented(
             "interactive prompt backend is not wired yet",
         ))
     }
@@ -20,21 +20,21 @@ pub fn request_approval(
     interactive: bool,
     explicit_approval: bool,
     batch_id: &str,
-) -> Result<bool, WololoError> {
+) -> Result<bool, CaravanError> {
     if explicit_approval {
         return Ok(true);
     }
 
     if interactive {
         let prompt = backend.ok_or_else(|| {
-            WololoError::InvalidArguments(
+            CaravanError::InvalidArguments(
                 "interactive approval requested but no prompt backend provided".to_string(),
             )
         })?;
         return prompt.confirm_deletion(batch_id);
     }
 
-    Err(WololoError::InvalidArguments(
+    Err(CaravanError::InvalidArguments(
         "destructive operations are blocked in non-interactive mode without explicit approval"
             .to_string(),
     ))

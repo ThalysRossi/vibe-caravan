@@ -1,8 +1,8 @@
 use std::fs;
 
 use tempfile::TempDir;
-use wololo::plan::{build_plan, PlanOptions};
-use wololo::transfer::{transfer_batch, CopyBackend, LocalFsCopyBackend};
+use caravan::plan::{build_plan, PlanOptions};
+use caravan::transfer::{transfer_batch, CopyBackend, LocalFsCopyBackend};
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
     let path = root.join(rel);

@@ -1,11 +1,11 @@
 use std::fs;
 
 use tempfile::TempDir;
-use wololo::config::VerificationMode;
-use wololo::models::verification::VerificationStatus;
-use wololo::plan::{build_plan, PlanOptions};
-use wololo::transfer::{transfer_batch, LocalFsCopyBackend};
-use wololo::verify::verify_batch;
+use caravan::config::VerificationMode;
+use caravan::models::verification::VerificationStatus;
+use caravan::plan::{build_plan, PlanOptions};
+use caravan::transfer::{transfer_batch, LocalFsCopyBackend};
+use caravan::verify::verify_batch;
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
     let path = root.join(rel);

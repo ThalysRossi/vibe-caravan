@@ -1,5 +1,5 @@
-use wololo::error::WololoError;
-use wololo::prompt::{request_approval, PromptBackend};
+use caravan::error::CaravanError;
+use caravan::prompt::{request_approval, PromptBackend};
 
 #[derive(Debug, Clone, Copy)]
 struct StubPrompt {
@@ -7,7 +7,7 @@ struct StubPrompt {
 }
 
 impl PromptBackend for StubPrompt {
-    fn confirm_deletion(&self, _batch_id: &str) -> Result<bool, WololoError> {
+    fn confirm_deletion(&self, _batch_id: &str) -> Result<bool, CaravanError> {
         Ok(self.answer)
     }
 }

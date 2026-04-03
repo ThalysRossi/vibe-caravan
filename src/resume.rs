@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::error::WololoError;
+use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, BatchState, MigrationState};
 use crate::state_store;
@@ -125,9 +125,9 @@ pub enum ResumeStepPlan {
 }
 
 /// Load migration state for resume, with stable error classification.
-pub fn load_state_for_resume(path: &Path) -> Result<MigrationState, WololoError> {
+pub fn load_state_for_resume(path: &Path) -> Result<MigrationState, CaravanError> {
     if !path.exists() {
-        return Err(WololoError::Resume {
+        return Err(CaravanError::Resume {
             class: FailureClass::StateMissing.as_str().to_string(),
             detail: format!("state file does not exist: {}", path.display()),
         });
@@ -140,7 +140,7 @@ pub fn load_state_for_resume(path: &Path) -> Result<MigrationState, WololoError>
         } else {
             FailureClass::StateCorrupted
         };
-        WololoError::Resume {
+        CaravanError::Resume {
             class: class.as_str().to_string(),
             detail: msg,
         }
@@ -210,12 +210,12 @@ pub fn plan_resume_step(
 pub fn require_delete_permission_for_resume(
     batch_state: &BatchState,
     opts: &ResumeOptions,
-) -> Result<(), WololoError> {
+) -> Result<(), CaravanError> {
     if batch_state.deleted {
         return Ok(());
     }
     if !batch_state.verification_passed {
-        return Err(WololoError::Resume {
+        return Err(CaravanError::Resume {
             class: FailureClass::ResumePolicyBlocked.as_str().to_string(),
             detail: "cannot delete: verification did not pass for this batch".to_string(),
         });
@@ -226,7 +226,7 @@ pub fn require_delete_permission_for_resume(
     if opts.interactive {
         return Ok(());
     }
-    Err(WololoError::Resume {
+    Err(CaravanError::Resume {
         class: FailureClass::ResumePolicyBlocked.as_str().to_string(),
         detail: recovery_message(FailureClass::ResumePolicyBlocked).to_string(),
     })
@@ -246,6 +246,6 @@ pub fn classify_capacity_failure_message(_detail: &str) -> FailureClass {
 }
 
 /// Entry point for CLI resume: load checkpoint from disk (same rules as [`load_state_for_resume`]).
-pub fn resume_run(state_path: &Path) -> Result<MigrationState, WololoError> {
+pub fn resume_run(state_path: &Path) -> Result<MigrationState, CaravanError> {
     load_state_for_resume(state_path)
 }

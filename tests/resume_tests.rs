@@ -2,17 +2,17 @@ use std::fs;
 use std::path::Path;
 
 use tempfile::TempDir;
-use wololo::models::batch::Batch;
-use wololo::models::file_entry::FileEntry;
-use wololo::models::state::{BatchPhase, BatchState, MigrationState};
-use wololo::resume::{
+use caravan::models::batch::Batch;
+use caravan::models::file_entry::FileEntry;
+use caravan::models::state::{BatchPhase, BatchState, MigrationState};
+use caravan::resume::{
     classify_capacity_failure_message, classify_copy_failure_message,
     classify_verification_failure_message, load_state_for_resume, plan_resume_step,
     reconcile_batch_destination, recovery_message, require_delete_permission_for_resume,
     resume_run, FailureClass, ReconciliationResult, ResumeOptions, ResumeStepPlan,
 };
-use wololo::state_store::persist_state;
-use wololo::error::WololoError;
+use caravan::state_store::persist_state;
+use caravan::error::CaravanError;
 
 fn sample_batch() -> Batch {
     Batch {
@@ -36,8 +36,8 @@ fn create_file(root: &Path, rel: &str, bytes: &[u8]) {
 }
 
 #[test]
-fn wololo_error_resume_variant_formats_message() {
-    let err = WololoError::Resume {
+fn caravan_error_resume_variant_formats_message() {
+    let err = CaravanError::Resume {
         class: "state_missing".to_string(),
         detail: "no file".to_string(),
     };
@@ -293,14 +293,14 @@ fn resume_with_missing_state_file_fails_cleanly() {
     let missing = tmp.path().join("no-state.json");
     let err = load_state_for_resume(&missing).expect_err("should fail");
     match err {
-        WololoError::Resume { class, detail } => {
+        CaravanError::Resume { class, detail } => {
             assert_eq!(class, FailureClass::StateMissing.as_str());
             assert!(detail.contains("does not exist"));
         }
-        _ => panic!("expected WololoError::Resume"),
+        _ => panic!("expected CaravanError::Resume"),
     }
     let err2 = resume_run(&missing).expect_err("resume_run should fail same way");
-    assert!(matches!(err2, WololoError::Resume { .. }));
+    assert!(matches!(err2, CaravanError::Resume { .. }));
 }
 
 #[test]
@@ -310,7 +310,7 @@ fn resume_with_corrupted_state_fails_as_corrupted() {
     fs::write(&path, "{ not json").expect("write");
     let err = load_state_for_resume(&path).expect_err("parse should fail");
     match err {
-        WololoError::Resume { class, .. } => {
+        CaravanError::Resume { class, .. } => {
             assert_eq!(class, FailureClass::StateCorrupted.as_str());
         }
         _ => panic!("expected corrupted classification"),
@@ -354,7 +354,7 @@ fn non_interactive_resume_without_approval_fails_closed_before_delete() {
     };
     let err = require_delete_permission_for_resume(&state, &opts).expect_err("blocked");
     match err {
-        WololoError::Resume { class, .. } => {
+        CaravanError::Resume { class, .. } => {
             assert_eq!(class, FailureClass::ResumePolicyBlocked.as_str());
         }
         _ => panic!("expected resume policy error"),
@@ -439,7 +439,7 @@ fn delete_gate_blocks_when_verification_did_not_pass() {
         explicit_delete_approval: true,
     };
     let err = require_delete_permission_for_resume(&state, &opts).expect_err("verify must pass");
-    assert!(matches!(err, WololoError::Resume { .. }));
+    assert!(matches!(err, CaravanError::Resume { .. }));
 }
 
 #[test]

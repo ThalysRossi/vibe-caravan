@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::WololoError;
+use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
 
@@ -11,21 +11,21 @@ pub fn cleanup_batch(
     source_root: &Path,
     state: &mut MigrationState,
     execution_context: &str,
-) -> Result<(), WololoError> {
+) -> Result<(), CaravanError> {
     let batch_state = state.batch(&batch.id).ok_or_else(|| {
-        WololoError::InvalidArguments(format!(
+        CaravanError::InvalidArguments(format!(
             "missing batch state for {} before cleanup",
             batch.id
         ))
     })?;
 
     if !batch_state.verification_passed {
-        return Err(WololoError::InvalidArguments(
+        return Err(CaravanError::InvalidArguments(
             "deletion blocked because verification did not pass".to_string(),
         ));
     }
     if !batch_state.approved_for_delete {
-        return Err(WololoError::InvalidArguments(
+        return Err(CaravanError::InvalidArguments(
             "deletion blocked because batch is not approved".to_string(),
         ));
     }
@@ -37,7 +37,7 @@ pub fn cleanup_batch(
         let path = source_root.join(&file.relative_path);
         if path.exists() {
             fs::remove_file(&path).map_err(|err| {
-                WololoError::InvalidArguments(format!(
+                CaravanError::InvalidArguments(format!(
                     "failed to delete source file {}: {err}",
                     path.display()
                 ))

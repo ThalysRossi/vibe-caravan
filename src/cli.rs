@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::{Config, Mode, TransferConfig, VerificationMode};
-use crate::error::WololoError;
+use crate::error::CaravanError;
 
 #[derive(Debug, Parser)]
-#[command(name = "wololo", version, about = "Safe staged data migration tool")]
+#[command(name = "caravan", version, about = "Safe staged data migration tool")]
 pub struct Cli {
     #[arg(long, default_value = "info")]
     pub log_level: String,
@@ -49,7 +49,7 @@ pub struct MigrateArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct StateArgs {
-    #[arg(long, default_value = ".wololo/state.json")]
+    #[arg(long, default_value = ".caravan/state.json")]
     pub state: PathBuf,
 }
 
@@ -70,21 +70,21 @@ impl From<VerificationArg> for VerificationMode {
     }
 }
 
-pub fn parse_cli_from<I, T>(args: I) -> Result<Config, WololoError>
+pub fn parse_cli_from<I, T>(args: I) -> Result<Config, CaravanError>
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
 {
-    let cli = Cli::try_parse_from(args).map_err(|err| WololoError::Cli(err.to_string()))?;
+    let cli = Cli::try_parse_from(args).map_err(|err| CaravanError::Cli(err.to_string()))?;
     to_config(cli)
 }
 
-fn to_config(cli: Cli) -> Result<Config, WololoError> {
+fn to_config(cli: Cli) -> Result<Config, CaravanError> {
     match cli.command {
         Some(Command::Staging(args)) => {
             validate_transfer_args(&args)?;
             if args.max_files == Some(0) {
-                return Err(WololoError::InvalidArguments(
+                return Err(CaravanError::InvalidArguments(
                     "max-files must be greater than zero".to_string(),
                 ));
             }
@@ -103,12 +103,12 @@ fn to_config(cli: Cli) -> Result<Config, WololoError> {
         Some(Command::Migrate(args)) => {
             validate_transfer_args(&args.base)?;
             if let Some(0) = args.snapshot_every {
-                return Err(WololoError::InvalidArguments(
+                return Err(CaravanError::InvalidArguments(
                     "snapshot-every must be greater than zero when provided".to_string(),
                 ));
             }
             if args.base.max_files == Some(0) {
-                return Err(WololoError::InvalidArguments(
+                return Err(CaravanError::InvalidArguments(
                     "max-files must be greater than zero".to_string(),
                 ));
             }
@@ -132,30 +132,30 @@ fn to_config(cli: Cli) -> Result<Config, WololoError> {
             state: args.state,
             log_level: cli.log_level,
         }),
-        None => Err(WololoError::InvalidArguments("missing subcommand".to_string())),
+        None => Err(CaravanError::InvalidArguments("missing subcommand".to_string())),
     }
 }
 
-fn validate_transfer_args(args: &TransferArgs) -> Result<(), WololoError> {
+fn validate_transfer_args(args: &TransferArgs) -> Result<(), CaravanError> {
     if args.batch_size == 0 {
-        return Err(WololoError::InvalidArguments(
+        return Err(CaravanError::InvalidArguments(
             "batch-size must be greater than zero".to_string(),
         ));
     }
     if args.source == args.dest {
-        return Err(WololoError::InvalidArguments(
+        return Err(CaravanError::InvalidArguments(
             "source and destination must differ".to_string(),
         ));
     }
     Ok(())
 }
 
-pub fn run() -> Result<(), WololoError> {
+pub fn run() -> Result<(), CaravanError> {
     let config = parse_cli_from(std::env::args())?;
 
     match config {
         Config::Staging(_) | Config::Migrate(_) | Config::Status { .. } | Config::Resume { .. } => {
-            Err(WololoError::NotImplemented("phase 2 parsing only"))
+            Err(CaravanError::NotImplemented("phase 2 parsing only"))
         }
     }
 }

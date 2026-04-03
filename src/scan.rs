@@ -1,18 +1,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::WololoError;
+use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
 
-pub fn scan_source(source_root: &Path) -> Result<Vec<FileEntry>, WololoError> {
+pub fn scan_source(source_root: &Path) -> Result<Vec<FileEntry>, CaravanError> {
     if !source_root.exists() {
-        return Err(WololoError::InvalidArguments(format!(
+        return Err(CaravanError::InvalidArguments(format!(
             "source path does not exist: {}",
             source_root.display()
         )));
     }
     if !source_root.is_dir() {
-        return Err(WololoError::InvalidArguments(format!(
+        return Err(CaravanError::InvalidArguments(format!(
             "source path is not a directory: {}",
             source_root.display()
         )));
@@ -29,7 +29,7 @@ fn visit_dir(
     source_root: &Path,
     current_dir: &Path,
     output: &mut Vec<FileEntry>,
-) -> Result<(), WololoError> {
+) -> Result<(), CaravanError> {
     let read_dir = fs::read_dir(current_dir).map_err(map_io("failed to read source directory"))?;
     let mut children: Vec<PathBuf> = read_dir
         .map(|entry| entry.map(|e| e.path()))
@@ -49,7 +49,7 @@ fn visit_dir(
         }
 
         let relative_path = child.strip_prefix(source_root).map_err(|_| {
-            WololoError::InvalidArguments(
+            CaravanError::InvalidArguments(
                 "failed to derive relative path during scan".to_string(),
             )
         })?;
@@ -63,6 +63,6 @@ fn visit_dir(
     Ok(())
 }
 
-fn map_io(context: &'static str) -> impl Fn(std::io::Error) -> WololoError {
-    move |err| WololoError::InvalidArguments(format!("{context}: {err}"))
+fn map_io(context: &'static str) -> impl Fn(std::io::Error) -> CaravanError {
+    move |err| CaravanError::InvalidArguments(format!("{context}: {err}"))
 }

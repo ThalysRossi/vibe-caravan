@@ -2,8 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use tempfile::TempDir;
-use wololo::plan::{build_plan, plan_batches, PlanOptions};
-use wololo::scan::scan_source;
+use caravan::plan::{build_plan, plan_batches, PlanOptions};
+use caravan::scan::scan_source;
 
 fn create_file(root: &Path, rel: &str, size: usize) {
     let path = root.join(rel);

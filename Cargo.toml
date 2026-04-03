@@ -1,5 +1,5 @@
 [package]
-name = "wololo"
+name = "caravan"
 version = "0.1.0"
 edition = "2021"
 description = "Conservative two-phase migration CLI for Windows staging and Linux Btrfs migration"

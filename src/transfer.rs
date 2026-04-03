@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::error::WololoError;
+use crate::error::CaravanError;
 use crate::models::batch::Batch;
 
 pub trait CopyBackend {
@@ -10,7 +10,7 @@ pub trait CopyBackend {
         batch: &Batch,
         source_root: &Path,
         destination_root: &Path,
-    ) -> Result<(), WololoError>;
+    ) -> Result<(), CaravanError>;
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -22,14 +22,14 @@ impl CopyBackend for LocalFsCopyBackend {
         batch: &Batch,
         source_root: &Path,
         destination_root: &Path,
-    ) -> Result<(), WololoError> {
+    ) -> Result<(), CaravanError> {
         for file in &batch.files {
             let source_path = source_root.join(&file.relative_path);
             let destination_path = destination_root.join(&file.relative_path);
 
             if let Some(parent) = destination_path.parent() {
                 fs::create_dir_all(parent).map_err(|err| {
-                    WololoError::InvalidArguments(format!(
+                    CaravanError::InvalidArguments(format!(
                         "failed to create destination directory {}: {err}",
                         parent.display()
                     ))
@@ -37,7 +37,7 @@ impl CopyBackend for LocalFsCopyBackend {
             }
 
             fs::copy(&source_path, &destination_path).map_err(|err| {
-                WololoError::InvalidArguments(format!(
+                CaravanError::InvalidArguments(format!(
                     "failed to copy {} to {}: {err}",
                     source_path.display(),
                     destination_path.display()
@@ -54,6 +54,6 @@ pub fn transfer_batch(
     source_root: &Path,
     destination_root: &Path,
     backend: &dyn CopyBackend,
-) -> Result<(), WololoError> {
+) -> Result<(), CaravanError> {
     backend.copy_batch(batch, source_root, destination_root)
 }

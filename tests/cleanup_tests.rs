@@ -1,9 +1,9 @@
 use std::fs;
 
 use tempfile::TempDir;
-use wololo::cleanup::cleanup_batch;
-use wololo::models::state::{BatchPhase, BatchState, MigrationState};
-use wololo::plan::{build_plan, PlanOptions};
+use caravan::cleanup::cleanup_batch;
+use caravan::models::state::{BatchPhase, BatchState, MigrationState};
+use caravan::plan::{build_plan, PlanOptions};
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
     let path = root.join(rel);

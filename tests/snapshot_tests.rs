@@ -1,9 +1,9 @@
 use std::path::Path;
 
-use wololo::config::Mode;
-use wololo::error::WololoError;
-use wololo::models::state::{BatchPhase, BatchState, MigrationState};
-use wololo::snapshot::{snapshot_if_needed, SnapshotBackend};
+use caravan::config::Mode;
+use caravan::error::CaravanError;
+use caravan::models::state::{BatchPhase, BatchState, MigrationState};
+use caravan::snapshot::{snapshot_if_needed, SnapshotBackend};
 
 struct StubSnapshotBackend {
     snapshot_name: Option<String>,
@@ -15,13 +15,13 @@ impl SnapshotBackend for StubSnapshotBackend {
         &self,
         _destination_root: &Path,
         _batch_id: &str,
-    ) -> Result<String, WololoError> {
+    ) -> Result<String, CaravanError> {
         if let Some(message) = &self.fail_message {
-            return Err(WololoError::InvalidArguments(message.clone()));
+            return Err(CaravanError::InvalidArguments(message.clone()));
         }
         self.snapshot_name
             .clone()
-            .ok_or_else(|| WololoError::InvalidArguments("missing snapshot name".to_string()))
+            .ok_or_else(|| CaravanError::InvalidArguments("missing snapshot name".to_string()))
     }
 }
 

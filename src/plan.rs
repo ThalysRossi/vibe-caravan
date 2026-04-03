@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::WololoError;
+use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::file_entry::FileEntry;
 use crate::scan::scan_source;
@@ -18,14 +18,14 @@ pub struct PlanningSnapshot {
     pub batches: Vec<Batch>,
 }
 
-pub fn build_plan(source_root: &Path, options: &PlanOptions) -> Result<PlanningSnapshot, WololoError> {
+pub fn build_plan(source_root: &Path, options: &PlanOptions) -> Result<PlanningSnapshot, CaravanError> {
     if options.batch_size_bytes == 0 {
-        return Err(WololoError::InvalidArguments(
+        return Err(CaravanError::InvalidArguments(
             "batch-size must be greater than zero".to_string(),
         ));
     }
     if options.max_files == Some(0) {
-        return Err(WololoError::InvalidArguments(
+        return Err(CaravanError::InvalidArguments(
             "max-files must be greater than zero when provided".to_string(),
         ));
     }
@@ -41,14 +41,14 @@ pub fn build_plan(source_root: &Path, options: &PlanOptions) -> Result<PlanningS
     })
 }
 
-pub fn plan_batches(entries: Vec<FileEntry>, options: &PlanOptions) -> Result<Vec<Batch>, WololoError> {
+pub fn plan_batches(entries: Vec<FileEntry>, options: &PlanOptions) -> Result<Vec<Batch>, CaravanError> {
     if options.batch_size_bytes == 0 {
-        return Err(WololoError::InvalidArguments(
+        return Err(CaravanError::InvalidArguments(
             "batch-size must be greater than zero".to_string(),
         ));
     }
     if options.max_files == Some(0) {
-        return Err(WololoError::InvalidArguments(
+        return Err(CaravanError::InvalidArguments(
             "max-files must be greater than zero when provided".to_string(),
         ));
     }

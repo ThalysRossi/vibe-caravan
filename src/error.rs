@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum WololoError {
+pub enum CaravanError {
     #[error("cli error: {0}")]
     Cli(String),
     #[error("invalid arguments: {0}")]

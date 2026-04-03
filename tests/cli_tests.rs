@@ -1,16 +1,16 @@
-use wololo::cli::parse_cli_from;
-use wololo::config::{Config, VerificationMode};
+use caravan::cli::parse_cli_from;
+use caravan::config::{Config, VerificationMode};
 
 #[test]
 fn missing_required_arguments_are_rejected() {
-    let result = parse_cli_from(["wololo", "staging"]);
+    let result = parse_cli_from(["caravan", "staging"]);
     assert!(result.is_err());
 }
 
 #[test]
 fn invalid_batch_sizes_are_rejected() {
     let result = parse_cli_from([
-        "wololo",
+        "caravan",
         "staging",
         "--source",
         "/src",
@@ -25,7 +25,7 @@ fn invalid_batch_sizes_are_rejected() {
 #[test]
 fn invalid_snapshot_settings_in_staging_are_rejected() {
     let result = parse_cli_from([
-        "wololo",
+        "caravan",
         "staging",
         "--source",
         "/src",
@@ -42,7 +42,7 @@ fn invalid_snapshot_settings_in_staging_are_rejected() {
 #[test]
 fn interactive_mode_is_enabled_and_disabled_correctly() {
     let off = parse_cli_from([
-        "wololo",
+        "caravan",
         "staging",
         "--source",
         "/src",
@@ -54,7 +54,7 @@ fn interactive_mode_is_enabled_and_disabled_correctly() {
     .expect("staging parse should pass");
 
     let on = parse_cli_from([
-        "wololo",
+        "caravan",
         "staging",
         "--source",
         "/src",
@@ -78,15 +78,15 @@ fn interactive_mode_is_enabled_and_disabled_correctly() {
 
 #[test]
 fn state_file_path_defaults_are_applied_correctly() {
-    let status = parse_cli_from(["wololo", "status"]).expect("status parse should pass");
-    let resume = parse_cli_from(["wololo", "resume"]).expect("resume parse should pass");
+    let status = parse_cli_from(["caravan", "status"]).expect("status parse should pass");
+    let resume = parse_cli_from(["caravan", "resume"]).expect("resume parse should pass");
 
     match status {
-        Config::Status { state, .. } => assert_eq!(state.to_string_lossy(), ".wololo/state.json"),
+        Config::Status { state, .. } => assert_eq!(state.to_string_lossy(), ".caravan/state.json"),
         _ => panic!("expected status config"),
     }
     match resume {
-        Config::Resume { state, .. } => assert_eq!(state.to_string_lossy(), ".wololo/state.json"),
+        Config::Resume { state, .. } => assert_eq!(state.to_string_lossy(), ".caravan/state.json"),
         _ => panic!("expected resume config"),
     }
 }
@@ -94,7 +94,7 @@ fn state_file_path_defaults_are_applied_correctly() {
 #[test]
 fn source_and_destination_ordering_is_validated_by_mode() {
     let result = parse_cli_from([
-        "wololo",
+        "caravan",
         "migrate",
         "--source",
         "/same",
@@ -109,7 +109,7 @@ fn source_and_destination_ordering_is_validated_by_mode() {
 #[test]
 fn mutually_exclusive_or_invalid_values_are_rejected() {
     let result = parse_cli_from([
-        "wololo",
+        "caravan",
         "migrate",
         "--source",
         "/src",
@@ -126,7 +126,7 @@ fn mutually_exclusive_or_invalid_values_are_rejected() {
 #[test]
 fn parsed_configuration_is_typed_and_deterministic() {
     let parsed = parse_cli_from([
-        "wololo",
+        "caravan",
         "--log-level",
         "debug",
         "migrate",

@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use wololo::cli;
+use caravan::cli;
 
 fn main() -> ExitCode {
     if std::env::args().len() == 1 {

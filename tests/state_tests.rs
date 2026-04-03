@@ -1,6 +1,6 @@
 use tempfile::TempDir;
-use wololo::models::state::{BatchPhase, BatchState, JournalEntry, MigrationState};
-use wololo::state_store::{load_state, persist_state};
+use caravan::models::state::{BatchPhase, BatchState, JournalEntry, MigrationState};
+use caravan::state_store::{load_state, persist_state};
 
 #[test]
 fn migration_state_new_sets_expected_defaults() {
