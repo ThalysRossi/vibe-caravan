@@ -8,4 +8,6 @@ pub enum WololoError {
     InvalidArguments(String),
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
+    #[error("resume ({class}): {detail}")]
+    Resume { class: String, detail: String },
 }
