@@ -132,6 +132,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "caravan"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "blake3",
+ "clap",
+ "fs2",
+ "mockall",
+ "predicates",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cc"
 version = "1.2.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -975,24 +993,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "caravan"
-version = "0.1.0"
-dependencies = [
- "assert_cmd",
- "blake3",
- "clap",
- "fs2",
- "mockall",
- "predicates",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

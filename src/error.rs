@@ -10,4 +10,6 @@ pub enum CaravanError {
     NotImplemented(&'static str),
     #[error("resume ({class}): {detail}")]
     Resume { class: String, detail: String },
+    #[error("io error: {0}")]
+    Io(String),
 }

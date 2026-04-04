@@ -1,9 +1,13 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::{Config, Mode, TransferConfig, VerificationMode};
 use crate::error::CaravanError;
+use crate::models::state::{BatchPhase, BatchState, MigrationState};
+use crate::plan::PlanOptions;
+use crate::{capacity, cleanup, plan, prompt, resume, state_store, transfer, verify};
+use crate::models;
 
 #[derive(Debug, Parser)]
 #[command(name = "caravan", version, about = "Safe staged data migration tool")]
@@ -154,10 +158,177 @@ pub fn run() -> Result<(), CaravanError> {
     let config = parse_cli_from(std::env::args())?;
 
     match config {
-        Config::Staging(_) | Config::Migrate(_) | Config::Status { .. } | Config::Resume { .. } => {
-            Err(CaravanError::NotImplemented("phase 2 parsing only"))
+        Config::Staging(transfer_config) | Config::Migrate(transfer_config) => {
+            execute_transfer(transfer_config)
+        }
+        Config::Status { state, log_level: _ } => {
+            execute_status(&state)
+        }
+        Config::Resume { state, log_level: _ } => {
+            execute_resume(&state)
         }
     }
+}
+
+fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
+    use std::path::Path;
+    
+    // Initialize state
+    let state_path = Path::new(".caravan/state.json");
+    let mut state = MigrationState::new(
+        if config.mode == Mode::Staging { "staging" } else { "migrate" },
+        &config.source.to_string_lossy(),
+        &config.dest.to_string_lossy(),
+    );
+    
+    // Build plan
+    let plan_opts = PlanOptions {
+        batch_size_bytes: config.batch_size_bytes,
+        max_files: config.max_files.map(|v| v as usize),
+    };
+    let plan = plan::build_plan(&config.source, &plan_opts)?;
+    
+    println!("Planned {} batches for {} files ({} bytes total)",
+        plan.batches.len(), plan.source_file_count, plan.source_total_bytes);
+    
+    // Process each batch
+    let copy_backend = transfer::LocalFsCopyBackend;
+    let prompt_backend = prompt::InteractivePrompt;
+    let mut completed_batches = 0_u32;
+    
+    for batch in &plan.batches {
+        println!("\n=== Processing {} ({} files, {} bytes) ===", 
+            batch.id, batch.file_count, batch.total_bytes);
+        
+        // Initialize batch state
+        let mut batch_state = BatchState {
+            batch_id: batch.id.clone(),
+            phase: BatchPhase::Planned,
+            verification_passed: false,
+            approved_for_delete: false,
+            deleted: false,
+        };
+        state.upsert_batch(batch_state.clone());
+        state_store::persist_state(state_path, &state)?;
+        
+        // Check capacity
+        let capacity_report = capacity::check_capacity(&config.dest, batch.total_bytes, 0)?;
+        if capacity_report.decision == capacity::CapacityDecision::Abort {
+            eprintln!("Capacity check failed: {}", capacity_report.reason.unwrap_or_default());
+            return Err(CaravanError::InvalidArguments("insufficient destination space".to_string()));
+        }
+        
+        // Copy batch
+        println!("Copying batch...");
+        batch_state.phase = BatchPhase::CopyStarted;
+        state.upsert_batch(batch_state.clone());
+        state_store::persist_state(state_path, &state)?;
+        
+        transfer::transfer_batch(batch, &config.source, &config.dest, &copy_backend)?;
+        
+        batch_state.phase = BatchPhase::CopyCompleted;
+        state.upsert_batch(batch_state.clone());
+        state_store::persist_state(state_path, &state)?;
+        
+        // Verify batch
+        println!("Verifying batch...");
+        let verification_report = verify::verify_batch(
+            batch, &config.source, &config.dest, config.verification.clone()
+        )?;
+        
+        batch_state.phase = BatchPhase::VerifyCompleted;
+        batch_state.verification_passed = verification_report.status == models::verification::VerificationStatus::Pass;
+        state.upsert_batch(batch_state.clone());
+        state_store::persist_state(state_path, &state)?;
+        
+        if !batch_state.verification_passed {
+            eprintln!("Verification failed: {}", verification_report.recommended_action);
+            eprintln!("Missing: {:?}", verification_report.missing_files);
+            eprintln!("Mismatched: {:?}", verification_report.mismatched_files);
+            return Err(CaravanError::InvalidArguments("verification failed".to_string()));
+        }
+        
+        println!("Verification passed!");
+        
+        // Request approval for deletion
+        let approved = prompt::request_approval(
+            Some(&prompt_backend),
+            config.interactive,
+            false,
+            &batch.id,
+        )?;
+        
+        if !approved {
+            println!("Deletion not approved. Stopping.");
+            return Ok(());
+        }
+        
+        batch_state.approved_for_delete = true;
+        batch_state.phase = BatchPhase::ApprovedForDelete;
+        state.upsert_batch(batch_state.clone());
+        state_store::persist_state(state_path, &state)?;
+        
+        // Delete source files
+        println!("Deleting source files...");
+        cleanup::cleanup_batch(batch, &config.source, &mut state, "execute_transfer")?;
+        state_store::persist_state(state_path, &state)?;
+        
+        completed_batches += 1;
+        
+        // Snapshot if needed (migrate mode only)
+        if config.mode == Mode::Migrate && config.snapshot_every.is_some() {
+            println!("Snapshot support requires platform-specific backend implementation");
+        }
+    }
+    
+    println!("\n=== Migration complete! Processed {} batches ===", completed_batches);
+    Ok(())
+}
+
+fn execute_status(state_path: &Path) -> Result<(), CaravanError> {
+    let state = state_store::load_state(state_path)?;
+    
+    println!("=== Caravan Status ===");
+    println!("Mode: {}", state.mode);
+    println!("Source: {}", state.source);
+    println!("Destination: {}", state.destination);
+    println!("Batches: {}", state.batches.len());
+    
+    for batch in &state.batches {
+        println!("  {} - {:?} (verified: {}, approved: {}, deleted: {})",
+            batch.batch_id, batch.phase, batch.verification_passed,
+            batch.approved_for_delete, batch.deleted);
+    }
+    
+    if let Some(snapshot) = &state.last_successful_snapshot_name {
+        println!("Last snapshot: {}", snapshot);
+    }
+    
+    println!("\nJournal entries: {}", state.journal.len());
+    for entry in state.journal.iter().rev().take(5) {
+        println!("  [{}] {} - {} ({})",
+            entry.timestamp_unix_secs, entry.event, entry.batch_id, entry.context);
+    }
+    
+    Ok(())
+}
+
+fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
+    let state = resume::resume_run(state_path)?;
+    
+    println!("=== Resuming from saved state ===");
+    println!("Mode: {}", state.mode);
+    println!("Batches in state: {}", state.batches.len());
+    
+    // This would need to reconstruct the config and continue from where it left off
+    // For now, just show what would be resumed
+    for batch in &state.batches {
+        if !batch.deleted {
+            println!("Would resume: {} at phase {:?}", batch.batch_id, batch.phase);
+        }
+    }
+    
+    Err(CaravanError::NotImplemented("full resume logic requires config reconstruction"))
 }
 
 fn parse_batch_size(input: &str) -> Result<u64, String> {

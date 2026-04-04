@@ -8,10 +8,21 @@ pub trait PromptBackend {
 pub struct InteractivePrompt;
 
 impl PromptBackend for InteractivePrompt {
-    fn confirm_deletion(&self, _batch_id: &str) -> Result<bool, CaravanError> {
-        Err(CaravanError::NotImplemented(
-            "interactive prompt backend is not wired yet",
-        ))
+    fn confirm_deletion(&self, batch_id: &str) -> Result<bool, CaravanError> {
+        use std::io::{self, Write};
+        
+        print!("Approve deletion of source files for batch '{}'? (y/n): ", batch_id);
+        io::stdout().flush().map_err(|e| 
+            CaravanError::Io(format!("failed to flush stdout: {}", e))
+        )?;
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).map_err(|e| 
+            CaravanError::Io(format!("failed to read user input: {}", e))
+        )?;
+        
+        let answer = input.trim().to_lowercase();
+        Ok(matches!(answer.as_str(), "y" | "yes"))
     }
 }
 
