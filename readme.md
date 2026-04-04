@@ -2,8 +2,6 @@
 
 `caravan` is a Rust migration tool vibe coded for a very specific situation: On moving to Linux this year, I found that my storage hard drive is a **Storage Spaces** volume, since I'm currently (feb-2026) dual booting with win11, fully intent on migrating fully to Linux, I was faced with this issue when trying to access my data. Seeing as Linux cannot directly access Windows Storage Spaces, I need to transfer my files to regular NTFS drives which Linux can access, and then copy them from the NTFS drives into the new btrfs partition. With a data-set of over 3.5TB, doing this manually seemed like a really error prone task and one that would take a while, as the NTFS drives are way smaller than needed. This led me to create this tool to be able to automate part of the process as well as have some form of data integrity checking, resumable states and btrfs snapshots for added safety. I opted to use rust as it is a language I'm curious about.
 
-## What problem it solves
-
 A few of the requirements I came up with are: 
 - splitting data into batches of a configurable size
 - refusing to start a batch migration if the destination does not have enough free space
