@@ -6,6 +6,7 @@ pub mod error;
 pub mod logging;
 pub mod plan;
 pub mod prompt;
+pub mod progress;
 pub mod resume;
 pub mod scan;
 pub mod snapshot;

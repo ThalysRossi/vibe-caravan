@@ -219,21 +219,21 @@ fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         }
         
         // Copy batch
-        println!("Copying batch...");
         batch_state.phase = BatchPhase::CopyStarted;
         state.upsert_batch(batch_state.clone());
         state_store::persist_state(state_path, &state)?;
         
-        transfer::transfer_batch(batch, &config.source, &config.dest, &copy_backend)?;
+        let mut progress = crate::progress::TerminalProgress::new();
+        transfer::transfer_batch_with_progress(batch, &config.source, &config.dest, &copy_backend, &mut progress)?;
         
         batch_state.phase = BatchPhase::CopyCompleted;
         state.upsert_batch(batch_state.clone());
         state_store::persist_state(state_path, &state)?;
         
         // Verify batch
-        println!("Verifying batch...");
-        let verification_report = verify::verify_batch(
-            batch, &config.source, &config.dest, config.verification.clone()
+        let mut progress = crate::progress::TerminalProgress::new();
+        let verification_report = verify::verify_batch_with_progress(
+            batch, &config.source, &config.dest, config.verification.clone(), &mut progress
         )?;
         
         batch_state.phase = BatchPhase::VerifyCompleted;

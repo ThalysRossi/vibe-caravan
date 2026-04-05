@@ -1,11 +1,12 @@
 use std::fs;
+use std::io::Write;
 
 use tempfile::TempDir;
 use caravan::config::VerificationMode;
 use caravan::models::verification::VerificationStatus;
 use caravan::plan::{build_plan, PlanOptions};
 use caravan::transfer::{transfer_batch, LocalFsCopyBackend};
-use caravan::verify::verify_batch;
+use caravan::verify::{verify_batch, digest_file};
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
     let path = root.join(rel);
@@ -156,4 +157,67 @@ fn verification_report_serializes_to_json() {
         verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");
     let json = serde_json::to_string(&report).expect("report should serialize");
     assert!(json.contains("\"status\":\"Pass\""));
+}
+
+#[test]
+fn streaming_hash_produces_same_result_as_full_read() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = tmp.path().join("test.bin");
+    
+    // Create test file with content larger than 1MB buffer
+    let mut file = fs::File::create(&path).expect("create file");
+    let block = b"test_pattern_1234567890";
+    for _ in 0..150000 { // ~2MB file
+        file.write_all(block).expect("write block");
+    }
+    drop(file);
+    
+    // Get hash from streaming implementation
+    let streaming = digest_file(&path).expect("streaming hash should succeed");
+    
+    // Verify against blake3 direct hash of full file
+    let full = fs::read(&path).expect("read full file");
+    let expected = blake3::hash(&full);
+    
+    assert_eq!(streaming, *expected.as_bytes(), "Streaming hash must match full file hash");
+}
+
+#[test]
+fn empty_file_streaming_hash() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = tmp.path().join("empty.bin");
+    
+    fs::File::create(&path).expect("create empty file");
+    
+    let hash = digest_file(&path).expect("empty file hash should succeed");
+    let expected = blake3::hash(&[]);
+    
+    assert_eq!(hash, *expected.as_bytes());
+}
+
+#[test]
+fn single_byte_file_streaming_hash() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = tmp.path().join("single.bin");
+    
+    fs::write(&path, b"X").expect("write single byte");
+    
+    let hash = digest_file(&path).expect("single byte hash should succeed");
+    let expected = blake3::hash(b"X");
+    
+    assert_eq!(hash, *expected.as_bytes());
+}
+
+#[test]
+fn exact_buffer_size_file_hash() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = tmp.path().join("exact.bin");
+    
+    let data = vec![0xAA; 1024 * 1024]; // Exactly 1MB buffer size
+    fs::write(&path, &data).expect("write exact buffer size");
+    
+    let hash = digest_file(&path).expect("exact size hash should succeed");
+    let expected = blake3::hash(&data);
+    
+    assert_eq!(hash, *expected.as_bytes());
 }

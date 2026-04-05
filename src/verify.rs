@@ -5,6 +5,7 @@ use crate::config::VerificationMode;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::verification::{DigestModeUsed, VerificationReport, VerificationStatus};
+use crate::progress::ProgressReporter;
 
 pub fn verify_batch(
     batch: &Batch,
@@ -12,12 +13,24 @@ pub fn verify_batch(
     destination_root: &Path,
     mode: VerificationMode,
 ) -> Result<VerificationReport, CaravanError> {
+    verify_batch_with_progress(batch, source_root, destination_root, mode, &mut crate::progress::NoopProgress::default())
+}
+
+pub fn verify_batch_with_progress(
+    batch: &Batch,
+    source_root: &Path,
+    destination_root: &Path,
+    mode: VerificationMode,
+    progress: &mut dyn ProgressReporter,
+) -> Result<VerificationReport, CaravanError> {
     let mut missing_files = Vec::new();
     let mut mismatched_files = Vec::new();
     let mut unreadable_files = Vec::new();
     let mut bytes_compared = 0_u64;
 
-    for entry in &batch.files {
+    progress.start(batch.files.len(), "Verifying");
+    
+    for (index, entry) in batch.files.iter().enumerate() {
         let source_path = source_root.join(&entry.relative_path);
         let destination_path = destination_root.join(&entry.relative_path);
         let rel = entry.relative_path.to_string_lossy().to_string();
@@ -67,7 +80,11 @@ pub fn verify_batch(
                 mismatched_files.push(rel);
             }
         }
+        
+        progress.advance(index + 1, Some(&entry.relative_path.to_string_lossy()));
     }
+
+    progress.finish();
 
     let digest_mode_used = if mode == VerificationMode::Structural {
         DigestModeUsed::None
@@ -99,9 +116,25 @@ pub fn verify_batch(
     })
 }
 
-fn digest_file(path: &Path) -> Result<[u8; 32], CaravanError> {
-    let bytes = fs::read(path).map_err(|err| {
-        CaravanError::InvalidArguments(format!("failed to read {}: {err}", path.display()))
-    })?;
-    Ok(blake3::hash(&bytes).into())
+pub fn digest_file(path: &Path) -> Result<[u8; 32], CaravanError> {
+    use std::io::Read;
+    
+    let mut file = fs::File::open(path)
+        .map_err(|err| CaravanError::Io(format!("failed to open {}: {}", path.display(), err)))?;
+    
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = [0u8; 1024 * 1024]; // 1MB streaming buffer
+
+    loop {
+        let bytes_read = file.read(&mut buffer)
+            .map_err(|err| CaravanError::Io(format!("failed to read {}: {}", path.display(), err)))?;
+        
+        if bytes_read == 0 {
+            break;
+        }
+        
+        hasher.update(&buffer[..bytes_read]);
+    }
+
+    Ok(hasher.finalize().into())
 }
