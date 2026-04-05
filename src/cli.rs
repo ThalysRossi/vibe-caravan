@@ -170,7 +170,7 @@ pub fn run() -> Result<(), CaravanError> {
     }
 }
 
-fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
+pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     use std::path::Path;
     
     // Initialize state
@@ -187,16 +187,36 @@ fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         max_files: config.max_files.map(|v| v as usize),
     };
     let plan = plan::build_plan(&config.source, &plan_opts)?;
-    
+
     println!("Planned {} batches for {} files ({} bytes total)",
         plan.batches.len(), plan.source_file_count, plan.source_total_bytes);
-    
+
+    // Add ALL batches to state upfront BEFORE processing any
+    for batch in &plan.batches {
+        state.upsert_batch(BatchState {
+            batch_id: batch.id.clone(),
+            phase: BatchPhase::Planned,
+            verification_passed: false,
+            approved_for_delete: false,
+            deleted: false,
+        });
+    }
+    state_store::persist_state(state_path, &state)?;
+
     // Process each batch
     let copy_backend = transfer::LocalFsCopyBackend;
     let prompt_backend = prompt::InteractivePrompt;
     let mut completed_batches = 0_u32;
-    
+
     for batch in &plan.batches {
+        // Skip batches that are already completed according to state
+        if let Some(existing_batch) = state.batch(&batch.id) {
+            if existing_batch.deleted {
+                println!("Skipping {}: already completed", batch.id);
+                completed_batches += 1;
+                continue;
+            }
+        }
         println!("\n=== Processing {} ({} files, {} bytes) ===", 
             batch.id, batch.file_count, batch.total_bytes);
         

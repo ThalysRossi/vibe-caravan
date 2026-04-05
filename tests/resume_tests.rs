@@ -11,7 +11,9 @@ use caravan::resume::{
     reconcile_batch_destination, recovery_message, require_delete_permission_for_resume,
     resume_run, FailureClass, ReconciliationResult, ResumeOptions, ResumeStepPlan,
 };
-use caravan::state_store::persist_state;
+use caravan::state_store::{persist_state, load_state};
+use caravan::config::{TransferConfig, Mode, VerificationMode};
+use caravan::cli::execute_transfer;
 use caravan::error::CaravanError;
 
 fn sample_batch() -> Batch {
@@ -490,4 +492,54 @@ fn end_to_end_state_round_trip_after_reconcile_conflict() {
     let loaded = load_state_for_resume(&state_path).expect("load");
     assert_eq!(loaded.batches.len(), 1);
     assert_eq!(loaded.batch("batch-000001").unwrap().phase, BatchPhase::CopyCompleted);
+}
+
+#[test]
+fn all_planned_batches_are_saved_in_state_before_processing() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::create_dir_all(&dest_dir).unwrap();
+    
+    // Create 3 test files that will be split into 3 batches
+    for i in 0..3 {
+        std::fs::write(source_dir.join(format!("file{}.txt", i)), format!("content {}", i)).unwrap();
+    }
+    
+    let config = TransferConfig {
+        mode: Mode::Staging,
+        source: source_dir.clone(),
+        dest: dest_dir.clone(),
+        batch_size_bytes: 10, // Small enough to force 3 separate batches
+        max_files: None,
+        snapshot_every: None,
+        interactive: false,
+        verification: VerificationMode::Structural,
+        log_level: "error".to_string(),
+    };
+    
+    // Run execute_transfer
+    let _ = execute_transfer(config);
+    
+    // State should exist with ALL batches
+    let state_path = Path::new(".caravan/state.json");
+    assert!(state_path.exists(), "State file should exist");
+    
+    let state = load_state(state_path).expect("Failed to load state");
+    
+    // ✓ THE CRITICAL FIX: Verify we have ALL 3 batches in state, not just processed ones
+    assert_eq!(state.batches.len(), 3, "State must contain ALL planned batches, not only processed ones");
+    
+    // Count how many batches completed processing
+    let completed_count = state.batches.iter()
+        .filter(|b| b.phase == BatchPhase::VerifyCompleted || b.deleted)
+        .count();
+    
+    // Regardless of how many completed, ALL batches must be present in state
+    assert_eq!(state.batches.len(), 3, "Even if execution stops early, all batches are in state");
+    
+    // Cleanup
+    let _ = std::fs::remove_dir_all(".caravan");
 }
