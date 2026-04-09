@@ -204,17 +204,16 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     }
     state_store::persist_state(state_path, &state)?;
 
-    // Process each batch
+    // Process each batch (copy and verify only, no deletion yet)
     let copy_backend = transfer::LocalFsCopyBackend;
-    let prompt_backend = prompt::InteractivePrompt;
-    let mut completed_batches = 0_u32;
+    let mut processed_batches = 0_u32;
 
     for batch in &plan.batches {
-        // Skip batches that are already completed according to state
+        // Skip batches that are already deleted according to state
         if let Some(existing_batch) = state.batch(&batch.id) {
             if existing_batch.deleted {
                 println!("Skipping {}: already completed", batch.id);
-                completed_batches += 1;
+                processed_batches += 1;
                 continue;
             }
         }
@@ -270,13 +269,21 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         }
         
         println!("Verification passed!");
+        processed_batches += 1;
+    }
+    
+    // After all batches are processed, request approval for deletion of all verified batches
+    let prompt_backend = prompt::InteractivePrompt;
+    let batches_needing_approval = state.batches_needing_approval();
+    
+    if !batches_needing_approval.is_empty() {
+        println!("\n=== All {} batches have been verified successfully ===", batches_needing_approval.len());
         
-        // Request approval for deletion
-        let approved = prompt::request_approval(
+        let approved = prompt::request_approval_for_batches(
             Some(&prompt_backend),
             config.interactive,
             false,
-            &batch.id,
+            &batches_needing_approval,
         )?;
         
         if !approved {
@@ -284,25 +291,29 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
             return Ok(());
         }
         
-        batch_state.approved_for_delete = true;
-        batch_state.phase = BatchPhase::ApprovedForDelete;
-        state.upsert_batch(batch_state.clone());
+        // Mark all batches as approved
+        state.approve_batches(&batches_needing_approval);
         state_store::persist_state(state_path, &state)?;
         
-        // Delete source files
-        println!("Deleting source files...");
-        cleanup::cleanup_batch(batch, &config.source, &mut state, "execute_transfer")?;
-        state_store::persist_state(state_path, &state)?;
-        
-        completed_batches += 1;
-        
-        // Snapshot if needed (migrate mode only)
-        if config.mode == Mode::Migrate && config.snapshot_every.is_some() {
-            println!("Snapshot support requires platform-specific backend implementation");
+        // Delete all approved batches
+        println!("\n=== Deleting source files for all batches ===");
+        for batch_id in &batches_needing_approval {
+            if let Some(batch_state) = state.batch(batch_id) {
+                if batch_state.deleted {
+                    continue;
+                }
+                // Load batch definition
+                let batch = plan::load_batch_definition(&config.source, batch_id, state.batch_size_bytes)?;
+                cleanup::cleanup_batch(&batch, &config.source, &mut state, "execute_transfer")?;
+                state_store::persist_state(state_path, &state)?;
+            }
         }
     }
     
-    println!("\n=== Migration complete! Processed {} batches ===", completed_batches);
+    // Count completed batches (including previously deleted ones)
+    let completed_count = state.batches.iter().filter(|b| b.deleted).count();
+    println!("\n=== Migration complete! {} batches processed, {} total completed ===", 
+        processed_batches, completed_count);
     Ok(())
 }
 
@@ -368,9 +379,8 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
     
     let copy_backend = transfer::LocalFsCopyBackend;
     let prompt_backend = prompt::InteractivePrompt;
-    let mut resumed_count = 0_u32;
     
-    // ✅ BUGFIX: Process batches directly from STATE, NOT rebuilding plan
+    // Process batches directly from STATE, NOT rebuilding plan
     // Rebuilding plan would generate NEW DIFFERENT batch IDs that don't match existing state
     // which would cause resume to skip all actual work
     // We collect batch IDs first to avoid borrowing issues while mutating state during iteration
@@ -382,7 +392,6 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         
         if batch_state.deleted {
             println!("⏭️  Skipping {}: already completed", batch_state.batch_id);
-            resumed_count += 1;
             continue;
         }
         
@@ -456,39 +465,48 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
             
             println!("✅ Verification passed!");
         }
-        
-        // Request approval for deletion only if not already approved
-        if !current_state.approved_for_delete {
-            let approved = prompt::request_approval(
-                Some(&prompt_backend),
-                config.interactive,
-                false,
-                &batch_state.batch_id,
-            )?;
-            
-            if !approved {
-                println!("Deletion not approved. Stopping.");
-                return Ok(());
-            }
-            
-            current_state.approved_for_delete = true;
-            current_state.phase = BatchPhase::ApprovedForDelete;
-            state.upsert_batch(current_state.clone());
-            state_store::persist_state(state_path, &state)?;
-        }
-        
-        // Delete source files only if not already deleted
-        if !current_state.deleted {
-            println!("🗑️  Deleting source files for {}...", batch_state.batch_id);
-            cleanup::cleanup_batch(&batch, &config.source, &mut state, "resume")?;
-            state_store::persist_state(state_path, &state)?;
-        }
-        
-        resumed_count += 1;
     }
     
-    println!("\n✅ Resume complete! Processed {} batches ({} resumed)", 
-        state.batches.len(), resumed_count - completed_count as u32);
+    // After processing all batches, request approval for deletion of all verified but not approved batches
+    let batches_needing_approval = state.batches_needing_approval();
+    if !batches_needing_approval.is_empty() {
+        println!("\n=== All {} batches have been verified successfully ===", batches_needing_approval.len());
+        
+        let approved = prompt::request_approval_for_batches(
+            Some(&prompt_backend),
+            config.interactive,
+            false,
+            &batches_needing_approval,
+        )?;
+        
+        if !approved {
+            println!("Deletion not approved. Stopping.");
+            return Ok(());
+        }
+        
+        // Mark all batches as approved
+        state.approve_batches(&batches_needing_approval);
+        state_store::persist_state(state_path, &state)?;
+        
+        // Delete all approved batches
+        println!("\n=== Deleting source files for all batches ===");
+        for batch_id in &batches_needing_approval {
+            if let Some(batch_state) = state.batch(batch_id) {
+                if batch_state.deleted {
+                    continue;
+                }
+                // Load batch definition
+                let batch = plan::load_batch_definition(&config.source, batch_id, state.batch_size_bytes)?;
+                cleanup::cleanup_batch(&batch, &config.source, &mut state, "resume")?;
+                state_store::persist_state(state_path, &state)?;
+            }
+        }
+    }
+    
+    // Count completed batches (including previously deleted ones)
+    let completed_count = state.batches.iter().filter(|b| b.deleted).count();
+    println!("\n✅ Resume complete! {} batches processed, {} total completed", 
+        state.batches.len(), completed_count);
     
     Ok(())
 }

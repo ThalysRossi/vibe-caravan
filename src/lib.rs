@@ -2,6 +2,7 @@ pub mod capacity;
 pub mod cleanup;
 pub mod cli;
 pub mod config;
+pub mod detection;
 pub mod error;
 pub mod logging;
 pub mod plan;

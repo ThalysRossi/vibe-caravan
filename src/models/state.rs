@@ -64,4 +64,46 @@ impl MigrationState {
     pub fn batch(&self, batch_id: &str) -> Option<&BatchState> {
         self.batches.iter().find(|b| b.batch_id == batch_id)
     }
+
+    pub fn batch_mut(&mut self, batch_id: &str) -> Option<&mut BatchState> {
+        self.batches.iter_mut().find(|b| b.batch_id == batch_id)
+    }
+ 
+    pub fn batches_needing_approval(&self) -> Vec<String> {
+        self.batches
+            .iter()
+            .filter(|b| b.verification_passed && !b.approved_for_delete && !b.deleted)
+            .map(|b| b.batch_id.clone())
+            .collect()
+    }
+
+    pub fn batches_approved_but_not_deleted(&self) -> Vec<String> {
+        self.batches
+            .iter()
+            .filter(|b| b.approved_for_delete && !b.deleted)
+            .map(|b| b.batch_id.clone())
+            .collect()
+    }
+
+    pub fn batches_verified_and_ready(&self) -> Vec<String> {
+        self.batches
+            .iter()
+            .filter(|b| {
+                b.phase == BatchPhase::VerifyCompleted &&
+                b.verification_passed &&
+                !b.approved_for_delete &&
+                !b.deleted
+            })
+            .map(|b| b.batch_id.clone())
+            .collect()
+    }
+
+    pub fn approve_batches(&mut self, batch_ids: &[String]) {
+        for batch_id in batch_ids {
+            if let Some(batch) = self.batch_mut(batch_id) {
+                batch.approved_for_delete = true;
+                batch.phase = BatchPhase::ApprovedForDelete;
+            }
+        }
+    }
 }
