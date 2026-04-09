@@ -388,7 +388,11 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
     
     for batch_id in batch_ids {
         // Clone immediately to release immutable borrow on state
-        let batch_state = state.batch(&batch_id).expect("Batch disappeared during iteration").clone();
+        let batch_state = state.batch(&batch_id)
+            .ok_or_else(|| CaravanError::InvalidArguments(
+                format!("Batch {} disappeared from state during resume iteration", batch_id)
+            ))?
+            .clone();
         
         if batch_state.deleted {
             println!("⏭️  Skipping {}: already completed", batch_state.batch_id);
