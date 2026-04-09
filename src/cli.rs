@@ -6,6 +6,7 @@ use crate::config::{Config, Mode, TransferConfig, VerificationMode};
 use crate::error::CaravanError;
 use crate::models::state::{BatchPhase, BatchState, MigrationState};
 use crate::plan::PlanOptions;
+use crate::signal::{ShutdownFlag, check_shutdown, install_signal_handlers};
 use crate::{capacity, cleanup, plan, prompt, resume, state_store, transfer, verify};
 use crate::models;
 
@@ -173,6 +174,10 @@ pub fn run() -> Result<(), CaravanError> {
 pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     use std::path::Path;
     
+    // Initialize shutdown flag and install signal handlers
+    let shutdown_flag = ShutdownFlag::new();
+    install_signal_handlers(&shutdown_flag)?;
+    
     // Initialize state
     let state_path = Path::new(".caravan/state.json");
     let mut state = MigrationState::new(
@@ -209,6 +214,9 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     let mut processed_batches = 0_u32;
 
     for batch in &plan.batches {
+        // Check for shutdown before starting batch
+        check_shutdown(&shutdown_flag)?;
+        
         // Skip batches that are already deleted according to state
         if let Some(existing_batch) = state.batch(&batch.id) {
             if existing_batch.deleted {
@@ -272,6 +280,9 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         processed_batches += 1;
     }
     
+    // Check for shutdown before proceeding to deletion phase
+    check_shutdown(&shutdown_flag)?;
+    
     // After all batches are processed, request approval for deletion of all verified batches
     let prompt_backend = prompt::InteractivePrompt;
     let batches_needing_approval = state.batches_needing_approval();
@@ -298,6 +309,9 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         // Delete all approved batches
         println!("\n=== Deleting source files for all batches ===");
         for batch_id in &batches_needing_approval {
+            // Check for shutdown before each deletion
+            check_shutdown(&shutdown_flag)?;
+            
             if let Some(batch_state) = state.batch(batch_id) {
                 if batch_state.deleted {
                     continue;
@@ -346,6 +360,10 @@ fn execute_status(state_path: &Path) -> Result<(), CaravanError> {
 }
 
 fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
+    // Initialize shutdown flag and install signal handlers
+    let shutdown_flag = ShutdownFlag::new();
+    install_signal_handlers(&shutdown_flag)?;
+    
     let mut state = resume::resume_run(state_path)?;
     
     println!("=== Resuming from saved state ===");
@@ -387,6 +405,9 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
     let batch_ids: Vec<String> = state.batches.iter().map(|b| b.batch_id.clone()).collect();
     
     for batch_id in batch_ids {
+        // Check for shutdown before starting batch
+        check_shutdown(&shutdown_flag)?;
+        
         // Clone immediately to release immutable borrow on state
         let batch_state = state.batch(&batch_id)
             .ok_or_else(|| CaravanError::InvalidArguments(
@@ -471,6 +492,9 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         }
     }
     
+    // Check for shutdown before proceeding to deletion phase
+    check_shutdown(&shutdown_flag)?;
+    
     // After processing all batches, request approval for deletion of all verified but not approved batches
     let batches_needing_approval = state.batches_needing_approval();
     if !batches_needing_approval.is_empty() {
@@ -495,6 +519,9 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         // Delete all approved batches
         println!("\n=== Deleting source files for all batches ===");
         for batch_id in &batches_needing_approval {
+            // Check for shutdown before each deletion
+            check_shutdown(&shutdown_flag)?;
+            
             if let Some(batch_state) = state.batch(batch_id) {
                 if batch_state.deleted {
                     continue;

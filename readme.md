@@ -41,6 +41,19 @@ caravan migrate --source /mnt/staging/Data --dest /mnt/data/@media --batch-size 
 
 It also checks destination free space before each batch. If the available space is less than or equal to the planned batch size, the batch is aborted before copying starts.
 
+## Graceful Shutdown
+
+Caravan supports graceful shutdown via Ctrl+C (SIGINT on Unix, Ctrl+C on Windows). When a shutdown signal is received:
+
+- The current batch operation completes (copy or verification finishes)
+- No new batches are started
+- The migration state is saved to disk
+- The program exits cleanly with a `GracefulShutdown` error
+
+You can resume the migration later using the `caravan resume` command, which will continue from where it left off.
+
+This feature ensures that long-running migrations can be safely interrupted without losing progress or corrupting data.
+
 ## Installation
 
 Build from source with Cargo:
@@ -173,4 +186,3 @@ Smaller batches can be better when:
 Before any copy begins, `caravan` checks the destination's free space.
 
 If the destination has **less than or equal to** the batch size available, the batch is aborted and the tool reports that the destination must be expanded or the source layout must be reduced further before continuing.
-

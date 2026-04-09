@@ -10,6 +10,7 @@ pub mod prompt;
 pub mod progress;
 pub mod resume;
 pub mod scan;
+pub mod signal;
 pub mod snapshot;
 pub mod state_store;
 pub mod transfer;

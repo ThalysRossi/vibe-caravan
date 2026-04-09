@@ -12,4 +12,6 @@ pub enum CaravanError {
     Resume { class: String, detail: String },
     #[error("io error: {0}")]
     Io(String),
+    #[error("graceful shutdown requested")]
+    GracefulShutdown,
 }
