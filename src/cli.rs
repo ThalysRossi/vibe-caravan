@@ -180,6 +180,7 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         &config.source.to_string_lossy(),
         &config.dest.to_string_lossy(),
     );
+    state.batch_size_bytes = config.batch_size_bytes;
     
     // Build plan
     let plan_opts = PlanOptions {
@@ -334,21 +335,162 @@ fn execute_status(state_path: &Path) -> Result<(), CaravanError> {
 }
 
 fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
-    let state = resume::resume_run(state_path)?;
+    let mut state = resume::resume_run(state_path)?;
     
     println!("=== Resuming from saved state ===");
     println!("Mode: {}", state.mode);
-    println!("Batches in state: {}", state.batches.len());
+    println!("Source: {}", state.source);
+    println!("Destination: {}", state.destination);
+    println!("Total batches: {}", state.batches.len());
     
-    // This would need to reconstruct the config and continue from where it left off
-    // For now, just show what would be resumed
-    for batch in &state.batches {
-        if !batch.deleted {
-            println!("Would resume: {} at phase {:?}", batch.batch_id, batch.phase);
+    // Count completed batches to calculate resume progress
+    let completed_count = state.batches.iter().filter(|b| b.deleted).count();
+    println!("Completed batches: {} / {}", completed_count, state.batches.len());
+    
+    // Reconstruct TransferConfig from saved state
+    let config = TransferConfig {
+        mode: match state.mode.as_str() {
+            "staging" => Mode::Staging,
+            "migrate" => Mode::Migrate,
+            _ => return Err(CaravanError::InvalidArguments(format!("Unknown mode in state: {}", state.mode)))
+        },
+        source: PathBuf::from(&state.source),
+        dest: PathBuf::from(&state.destination),
+        batch_size_bytes: 0, // We don't need this for resume, planning is already done
+        max_files: None,
+        snapshot_every: None,
+        interactive: true,
+        verification: VerificationMode::Digest,
+        log_level: "info".to_string(),
+    };
+    
+    println!("Resuming transfer...\n");
+    
+    let copy_backend = transfer::LocalFsCopyBackend;
+    let prompt_backend = prompt::InteractivePrompt;
+    let mut resumed_count = 0_u32;
+    
+    // ✅ BUGFIX: Process batches directly from STATE, NOT rebuilding plan
+    // Rebuilding plan would generate NEW DIFFERENT batch IDs that don't match existing state
+    // which would cause resume to skip all actual work
+    // We collect batch IDs first to avoid borrowing issues while mutating state during iteration
+    let batch_ids: Vec<String> = state.batches.iter().map(|b| b.batch_id.clone()).collect();
+    
+    for batch_id in batch_ids {
+        // Clone immediately to release immutable borrow on state
+        let batch_state = state.batch(&batch_id).expect("Batch disappeared during iteration").clone();
+        
+        if batch_state.deleted {
+            println!("⏭️  Skipping {}: already completed", batch_state.batch_id);
+            resumed_count += 1;
+            continue;
         }
+        
+        // Check current batch phase to decide what to do next
+        match batch_state.phase {
+            BatchPhase::VerifyCompleted if batch_state.verification_passed => {
+                println!("✅ {} already copied & verified, ready for delete", batch_state.batch_id);
+            }
+            BatchPhase::CopyCompleted => {
+                println!("✅ {} already copied, will verify next", batch_state.batch_id);
+            }
+            BatchPhase::CopyStarted => {
+                println!("⚠️  {} partially copied, will retry", batch_state.batch_id);
+            }
+            phase => {
+                println!("🔄 Processing {}: at phase {:?}", batch_state.batch_id, phase);
+            }
+        }
+        
+        // We need the actual batch file list to copy/verify
+        let mut current_state = batch_state.clone();
+        
+        // Load original batch definition from disk (IDs are deterministic)
+        let batch = plan::load_batch_definition(&config.source, &batch_state.batch_id, state.batch_size_bytes)?;
+        
+        // Skip verification if already done
+        if current_state.phase != BatchPhase::VerifyCompleted {
+            // Copy batch if not already completed
+            if current_state.phase != BatchPhase::CopyCompleted {
+                println!("\n=== Processing {} ({} files, {} bytes) ===", 
+                    batch.id, batch.file_count, batch.total_bytes);
+                
+                // Check capacity
+                let capacity_report = capacity::check_capacity(&config.dest, batch.total_bytes, 0)?;
+                if capacity_report.decision == capacity::CapacityDecision::Abort {
+                    eprintln!("Capacity check failed: {}", capacity_report.reason.unwrap_or_default());
+                    return Err(CaravanError::InvalidArguments("insufficient destination space".to_string()));
+                }
+                
+                // Copy batch
+                current_state.phase = BatchPhase::CopyStarted;
+                state.upsert_batch(current_state.clone());
+                state_store::persist_state(state_path, &state)?;
+                
+                let mut progress = crate::progress::TerminalProgress::new();
+                transfer::transfer_batch_with_progress(&batch, &config.source, &config.dest, &copy_backend, &mut progress)?;
+                
+                current_state.phase = BatchPhase::CopyCompleted;
+                state.upsert_batch(current_state.clone());
+                state_store::persist_state(state_path, &state)?;
+            }
+            
+            // Verify batch
+            println!("Verifying {}...", batch.id);
+            let mut progress = crate::progress::TerminalProgress::new();
+            let verification_report = verify::verify_batch_with_progress(
+                &batch, &config.source, &config.dest, config.verification.clone(), &mut progress
+            )?;
+            
+            current_state.phase = BatchPhase::VerifyCompleted;
+            current_state.verification_passed = verification_report.status == models::verification::VerificationStatus::Pass;
+            state.upsert_batch(current_state.clone());
+            state_store::persist_state(state_path, &state)?;
+            
+            if !current_state.verification_passed {
+                eprintln!("Verification failed: {}", verification_report.recommended_action);
+                eprintln!("Missing: {:?}", verification_report.missing_files);
+                eprintln!("Mismatched: {:?}", verification_report.mismatched_files);
+                return Err(CaravanError::InvalidArguments("verification failed".to_string()));
+            }
+            
+            println!("✅ Verification passed!");
+        }
+        
+        // Request approval for deletion only if not already approved
+        if !current_state.approved_for_delete {
+            let approved = prompt::request_approval(
+                Some(&prompt_backend),
+                config.interactive,
+                false,
+                &batch_state.batch_id,
+            )?;
+            
+            if !approved {
+                println!("Deletion not approved. Stopping.");
+                return Ok(());
+            }
+            
+            current_state.approved_for_delete = true;
+            current_state.phase = BatchPhase::ApprovedForDelete;
+            state.upsert_batch(current_state.clone());
+            state_store::persist_state(state_path, &state)?;
+        }
+        
+        // Delete source files only if not already deleted
+        if !current_state.deleted {
+            println!("🗑️  Deleting source files for {}...", batch_state.batch_id);
+            cleanup::cleanup_batch(&batch, &config.source, &mut state, "resume")?;
+            state_store::persist_state(state_path, &state)?;
+        }
+        
+        resumed_count += 1;
     }
     
-    Err(CaravanError::NotImplemented("full resume logic requires config reconstruction"))
+    println!("\n✅ Resume complete! Processed {} batches ({} resumed)", 
+        state.batches.len(), resumed_count - completed_count as u32);
+    
+    Ok(())
 }
 
 fn parse_batch_size(input: &str) -> Result<u64, String> {

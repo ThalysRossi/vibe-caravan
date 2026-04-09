@@ -153,3 +153,52 @@ fn parsed_configuration_is_typed_and_deterministic() {
         _ => panic!("expected migrate config"),
     }
 }
+
+#[test]
+fn resume_command_parses_default_state_path() {
+    let result = parse_cli_from(["caravan", "resume"])
+        .expect("resume command should parse");
+    
+    match result {
+        Config::Resume { state, .. } => {
+            assert_eq!(state.to_string_lossy(), ".caravan/state.json");
+        }
+        _ => panic!("expected resume config"),
+    }
+}
+
+#[test]
+fn resume_command_accepts_custom_state_path() {
+    let result = parse_cli_from([
+        "caravan",
+        "resume",
+        "--state",
+        "/tmp/custom-state.json"
+    ])
+    .expect("resume with custom state path should parse");
+    
+    match result {
+        Config::Resume { state, .. } => {
+            assert_eq!(state.to_string_lossy(), "/tmp/custom-state.json");
+        }
+        _ => panic!("expected resume config"),
+    }
+}
+
+#[test]
+fn resume_config_includes_correct_log_level() {
+    let result = parse_cli_from([
+        "caravan",
+        "--log-level",
+        "trace",
+        "resume"
+    ])
+    .expect("resume with log level should parse");
+    
+    match result {
+        Config::Resume { log_level, .. } => {
+            assert_eq!(log_level, "trace");
+        }
+        _ => panic!("expected resume config"),
+    }
+}

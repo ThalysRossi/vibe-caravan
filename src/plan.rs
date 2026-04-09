@@ -96,6 +96,28 @@ pub fn plan_batches(entries: Vec<FileEntry>, options: &PlanOptions) -> Result<Ve
     Ok(batches)
 }
 
+/// Load an individual batch definition from disk for resume
+/// 
+/// When resuming we avoid rebuilding the whole plan which would generate different batch IDs,
+/// instead we scan the source again and find the exact batch matching the ID we need.
+pub fn load_batch_definition(source_root: &Path, batch_id: &str, batch_size_bytes: u64) -> Result<Batch, CaravanError> {
+    // We scan source and rebuild batches to find the one with matching ID
+    // This works because batch IDs are deterministic and reproducible
+    let entries = scan_source(source_root)?;
+    
+    // ✅ Use the EXACT original batch size that was used when planning!
+    let opts = PlanOptions {
+        batch_size_bytes,
+        max_files: None,
+    };
+    
+    let batches = plan_batches(entries, &opts)?;
+    
+    batches.into_iter()
+        .find(|b| b.id == batch_id)
+        .ok_or_else(|| CaravanError::InvalidArguments(format!("Could not locate batch {} in source directory", batch_id)))
+}
+
 fn make_batch(index: usize, files: Vec<FileEntry>, total_bytes: u64) -> Batch {
     Batch {
         id: format!("batch-{index:06}"),

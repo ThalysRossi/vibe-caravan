@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use tempfile::TempDir;
-use caravan::plan::{build_plan, plan_batches, PlanOptions};
+use caravan::plan::{build_plan, plan_batches, PlanOptions, load_batch_definition};
 use caravan::scan::scan_source;
 
 fn create_file(root: &Path, rel: &str, size: usize) {
@@ -143,4 +143,28 @@ fn planning_is_deterministic_across_runs() {
 
     assert_eq!(first_paths, second_paths);
     assert_eq!(first.batches, second.batches);
+}
+
+#[test]
+#[should_panic(expected = "Could not locate batch batch-000002 in source directory")]
+fn load_batch_definition_fails_for_second_batch_with_wrong_batch_size() {
+    // THIS TEST DEMONSTRATES THE CURRENT BUG
+    let tmp = TempDir::new().expect("temp dir");
+
+    // Create 4 test files that will generate 4 batches with small size
+    for i in 0..4 {
+        create_file(tmp.path(), &format!("file{}.txt", i), 10);
+    }
+
+    // ✅ First we build with small batch size = 4 batches total
+    let opts = PlanOptions {
+        batch_size_bytes: 10,
+        max_files: None,
+    };
+
+    let _plan = build_plan(tmp.path(), &opts).expect("plan built");
+
+    // ❌ Current bug: using wrong batch size u64::MAX merges everything into 1 batch!
+    // So it will only ever find batch-000001, not 000002
+    let _batch = load_batch_definition(tmp.path(), "batch-000002", u64::MAX).expect("this should fail");
 }
