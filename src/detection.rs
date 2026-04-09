@@ -4,43 +4,31 @@ use crate::error::CaravanError;
 use crate::models::state::MigrationState;
 use crate::state_store::load_state;
 
-/// Where to look for state files
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateLocation {
-    /// Source directory (source/.caravan/state.json)
     Source,
-    /// Destination directory (dest/.caravan/state.json)
     Destination,
-    /// Current working directory (.caravan/state.json)
     CurrentDir,
 }
 
-/// User choice when batch sizes differ between state and CLI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchSizeMismatchChoice {
-    /// Use batch size from state file
     UseStateSize,
-    /// Enter new batch size
     EnterNewSize,
-    /// Start fresh migration (overwrite state)
     StartFresh,
 }
 
-/// Detect if a state file exists in common locations
 pub fn detect_state_file(source: &Path, dest: &Path) -> Option<PathBuf> {
-    // Check source directory first (precedence)
     let source_state = source.join(".caravan/state.json");
     if source_state.exists() {
         return Some(source_state);
     }
     
-    // Check destination directory
     let dest_state = dest.join(".caravan/state.json");
     if dest_state.exists() {
         return Some(dest_state);
     }
     
-    // Check current directory
     let current_state = PathBuf::from(".caravan/state.json");
     if current_state.exists() {
         return Some(current_state);
@@ -48,13 +36,10 @@ pub fn detect_state_file(source: &Path, dest: &Path) -> Option<PathBuf> {
     
     None
 }
-
-/// Load state and check if batch size matches CLI argument
 pub fn check_state_file_compatibility(state_path: &Path, cli_batch_size: u64) -> Result<MigrationState, CaravanError> {
     let state = load_state(state_path)?;
     
     if state.batch_size_bytes == 0 {
-        // State doesn't have batch size (old version), assume compatible
         return Ok(state);
     }
     
@@ -68,7 +53,6 @@ pub fn check_state_file_compatibility(state_path: &Path, cli_batch_size: u64) ->
     }
 }
 
-/// Handle batch size mismatch with user interaction
 pub fn handle_batch_size_mismatch(
     prompt: &dyn crate::prompt::PromptBackend,
     state_batch_size: u64,
@@ -77,7 +61,6 @@ pub fn handle_batch_size_mismatch(
     prompt.ask_batch_size_mismatch(state_batch_size, cli_batch_size)
 }
 
-/// Parse a batch size from user input
 pub fn parse_batch_size_input(input: &str) -> Result<u64, CaravanError> {
     let raw = input.trim();
     if raw.is_empty() {
@@ -122,7 +105,6 @@ pub fn parse_batch_size_input(input: &str) -> Result<u64, CaravanError> {
         ))
 }
 
-/// Extended prompt trait for batch size mismatch handling
 pub trait ExtendedPromptBackend: crate::prompt::PromptBackend {
     fn ask_batch_size_mismatch(&self, state_size: u64, cli_size: u64) -> Result<BatchSizeMismatchChoice, CaravanError> 
     where
@@ -132,5 +114,4 @@ pub trait ExtendedPromptBackend: crate::prompt::PromptBackend {
     }
 }
 
-// Automatically implement ExtendedPromptBackend for all types that implement PromptBackend
 impl<T: crate::prompt::PromptBackend + Sized> ExtendedPromptBackend for T {}
