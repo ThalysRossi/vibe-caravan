@@ -241,14 +241,18 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         plan.batches.len(), plan.source_file_count, format::format_bytes(plan.source_total_bytes));
 
     // Add ALL batches to state upfront BEFORE processing any
+    // Only add batches that don't already exist in state to preserve existing progress
     for batch in &plan.batches {
-        state.upsert_batch(BatchState {
-            batch_id: batch.id.clone(),
-            phase: BatchPhase::Planned,
-            verification_passed: false,
-            approved_for_delete: false,
-            deleted: false,
-        });
+        if state.batch(&batch.id).is_none() {
+            state.upsert_batch(BatchState {
+                batch_id: batch.id.clone(),
+                phase: BatchPhase::Planned,
+                verification_passed: false,
+                approved_for_delete: false,
+                deleted: false,
+            });
+        }
+        // If batch already exists (e.g., from a previous run), keep its current state
     }
     persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
 
