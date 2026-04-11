@@ -16,27 +16,66 @@
 /// assert_eq!(format_bytes(1073741824), "1.00 GiB");
 /// ```
 pub fn format_bytes(bytes: u64) -> String {
-    if bytes < 1024 {
-        if bytes == 1 {
-            "1 byte".to_string()
-        } else {
-            format!("{} bytes", bytes)
+    let unit = ByteUnit::for_bytes(bytes);
+    
+    match unit {
+        ByteUnit::Bytes => {
+            // Special handling for singular "byte" vs plural "bytes"
+            if bytes == 1 {
+                "1 byte".to_string()
+            } else {
+                format!("{} bytes", bytes)
+            }
         }
-    } else if bytes < 1024 * 1024 {
-        // KiB range
-        let kib = bytes as f64 / 1024.0;
-        format!("{:.2} KiB", kib)
-    } else if bytes < 1024 * 1024 * 1024 {
-        // MiB range
-        let mib = bytes as f64 / (1024.0 * 1024.0);
-        format!("{:.2} MiB", mib)
-    } else if bytes < 1024 * 1024 * 1024 * 1024 {
-        // GiB range
-        let gib = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
-        format!("{:.2} GiB", gib)
-    } else {
-        // TiB range (and beyond)
-        let tib = bytes as f64 / (1024.0 * 1024.0 * 1024.0 * 1024.0);
-        format!("{:.2} TiB", tib)
+        _ => {
+            let value = bytes as f64 / unit.divisor();
+            format!("{:.2} {}", value, unit.suffix())
+        }
+    }
+}
+
+/// Byte units for human-readable formatting
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ByteUnit {
+    Bytes,
+    KiB,
+    MiB,
+    GiB,
+    TiB,
+}
+
+impl ByteUnit {
+    /// Determine the appropriate unit for a given byte count
+    fn for_bytes(bytes: u64) -> ByteUnit {
+        match bytes.checked_ilog(1024).unwrap_or(0).min(4) {
+            0 => ByteUnit::Bytes,
+            1 => ByteUnit::KiB,
+            2 => ByteUnit::MiB,
+            3 => ByteUnit::GiB,
+            4 => ByteUnit::TiB,
+            _ => unreachable!(), // min(4) ensures we never exceed 4
+        }
+    }
+    
+    /// Get the divisor for converting bytes to this unit
+    fn divisor(&self) -> f64 {
+        match self {
+            ByteUnit::Bytes => 1.0,
+            ByteUnit::KiB => 1024.0,
+            ByteUnit::MiB => 1024.0 * 1024.0,
+            ByteUnit::GiB => 1024.0 * 1024.0 * 1024.0,
+            ByteUnit::TiB => 1024.0 * 1024.0 * 1024.0 * 1024.0,
+        }
+    }
+    
+    /// Get the display suffix for this unit
+    fn suffix(&self) -> &'static str {
+        match self {
+            ByteUnit::Bytes => "bytes",
+            ByteUnit::KiB => "KiB",
+            ByteUnit::MiB => "MiB",
+            ByteUnit::GiB => "GiB",
+            ByteUnit::TiB => "TiB",
+        }
     }
 }
