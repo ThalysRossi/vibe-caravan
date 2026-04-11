@@ -7,7 +7,7 @@ use crate::error::CaravanError;
 use crate::models::state::{BatchPhase, BatchState, MigrationState};
 use crate::plan::PlanOptions;
 use crate::signal::{ShutdownFlag, check_shutdown, install_signal_handlers};
-use crate::{capacity, cleanup, plan, prompt, resume, state_store, transfer, verify};
+use crate::{capacity, cleanup, format, plan, prompt, resume, state_store, transfer, verify};
 use crate::models;
 
 #[derive(Debug, Parser)]
@@ -194,8 +194,8 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     };
     let plan = plan::build_plan(&config.source, &plan_opts)?;
 
-    println!("Planned {} batches for {} files ({} bytes total)",
-        plan.batches.len(), plan.source_file_count, plan.source_total_bytes);
+    println!("Planned {} batches for {} files ({} total)",
+        plan.batches.len(), plan.source_file_count, format::format_bytes(plan.source_total_bytes));
 
     // Add ALL batches to state upfront BEFORE processing any
     for batch in &plan.batches {
@@ -225,8 +225,8 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
                 continue;
             }
         }
-        println!("\n=== Processing {} ({} files, {} bytes) ===", 
-            batch.id, batch.file_count, batch.total_bytes);
+        println!("\n=== Processing {} ({} files, {}) ===", 
+            batch.id, batch.file_count, format::format_bytes(batch.total_bytes));
         
         // Initialize batch state
         let mut batch_state = BatchState {
@@ -446,8 +446,8 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         if current_state.phase != BatchPhase::VerifyCompleted {
             // Copy batch if not already completed
             if current_state.phase != BatchPhase::CopyCompleted {
-                println!("\n=== Processing {} ({} files, {} bytes) ===", 
-                    batch.id, batch.file_count, batch.total_bytes);
+                println!("\n=== Processing {} ({} files, {}) ===", 
+                    batch.id, batch.file_count, format::format_bytes(batch.total_bytes));
                 
                 // Check capacity
                 let capacity_report = capacity::check_capacity(&config.dest, batch.total_bytes, 0)?;

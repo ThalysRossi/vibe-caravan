@@ -83,9 +83,19 @@ fn capacity_failures_include_a_clear_abort_reason() {
     let report = check_capacity_with_probe(Path::new("/fake"), 2_000, 0, &probe)
         .expect("capacity check should succeed");
 
+    // 1. Verify the capacity decision and numeric values are correct
     assert_eq!(report.decision, CapacityDecision::Abort);
+    assert_eq!(report.total_capacity_bytes, 5_000);
+    assert_eq!(report.available_free_bytes, 2_000);
+    assert_eq!(report.planned_batch_bytes, 2_000);
+    assert_eq!(report.reserve_margin_bytes, 0);
+    
+    // 2. Verify the formatted error message contains the correct values
     let reason = report.reason.expect("abort should include reason");
     assert!(reason.contains("insufficient destination space"));
-    assert!(reason.contains("available=2000"));
-    assert!(reason.contains("required=2000"));
+    // 2000 bytes = 1.95 KiB (2000 / 1024 = 1.953125 ≈ 1.95)
+    assert!(reason.contains("available=1.95 KiB"));
+    assert!(reason.contains("required=1.95 KiB"));
+    assert!(reason.contains("batch=1.95 KiB"));
+    assert!(reason.contains("reserve=0 bytes"));
 }

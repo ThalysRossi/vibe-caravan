@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use crate::error::CaravanError;
+use crate::format::format_bytes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CapacityDecision {
@@ -90,7 +91,10 @@ pub fn check_capacity_with_probe(
     let reason = if decision == CapacityDecision::Abort {
         Some(format!(
             "insufficient destination space: available={} required={} (batch={} reserve={})",
-            space.available_bytes, required_bytes, planned_batch_bytes, reserve_margin_bytes
+            format_bytes(space.available_bytes),
+            format_bytes(required_bytes),
+            format_bytes(planned_batch_bytes),
+            format_bytes(reserve_margin_bytes)
         ))
     } else {
         None

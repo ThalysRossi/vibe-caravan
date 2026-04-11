@@ -1,4 +1,5 @@
 use crate::error::CaravanError;
+use crate::format::format_bytes;
 
 pub trait PromptBackend {
     fn confirm_deletion(&self, batch_id: &str) -> Result<bool, CaravanError>;
@@ -15,10 +16,10 @@ pub trait PromptBackend {
         use std::io::{self, Write};
         
         println!("\n⚠️  Batch size mismatch detected!");
-        println!("   State file batch size: {} bytes", state_size);
-        println!("   CLI argument batch size: {} bytes", cli_size);
+        println!("   State file batch size: {}", format_bytes(state_size));
+        println!("   CLI argument batch size: {}", format_bytes(cli_size));
         println!("\nPlease choose an option:");
-        println!("  1) Use batch size from state file ({} bytes)", state_size);
+        println!("  1) Use batch size from state file ({})", format_bytes(state_size));
         println!("  2) Enter new batch size");
         println!("  3) Start fresh migration (overwrites state file)");
         print!("\nEnter choice (1-3): ");

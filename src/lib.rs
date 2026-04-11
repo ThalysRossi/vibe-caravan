@@ -4,6 +4,7 @@ pub mod cli;
 pub mod config;
 pub mod detection;
 pub mod error;
+pub mod format;
 pub mod logging;
 pub mod plan;
 pub mod prompt;
