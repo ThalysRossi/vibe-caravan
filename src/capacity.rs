@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 
 use crate::error::CaravanError;
@@ -34,11 +35,64 @@ pub struct SystemSpaceProbe;
 
 impl SpaceProbe for SystemSpaceProbe {
     fn probe(&self, destination: &Path) -> Result<SpaceInfo, CaravanError> {
+        // Helper to check if we should create the directory
+        fn ensure_destination_exists(dest: &Path) -> Result<(), CaravanError> {
+            if dest.exists() {
+                return Ok(());
+            }
+            
+            // Check if parent exists
+            let parent = dest.parent();
+            match parent {
+                Some(p) if p.exists() => {
+                    // Top-level directory (parent exists) - create it
+                    println!("Creating destination directory: {}", dest.display());
+                    fs::create_dir_all(dest).map_err(|err| {
+                        CaravanError::InvalidArguments(format!(
+                            "failed to create destination directory {}: {err}",
+                            dest.display()
+                        ))
+                    })?;
+                    Ok(())
+                }
+                Some(p) => {
+                    // Subdirectory where parent doesn't exist - fail
+                    Err(CaravanError::InvalidArguments(format!(
+                        "destination directory {} does not exist and cannot be created because parent directory {} does not exist",
+                        dest.display(),
+                        p.display()
+                    )))
+                }
+                None => {
+                    // No parent (root-like path) - shouldn't happen but try to create
+                    println!("Creating destination directory: {}", dest.display());
+                    fs::create_dir_all(dest).map_err(|err| {
+                        CaravanError::InvalidArguments(format!(
+                            "failed to create destination directory {}: {err}",
+                            dest.display()
+                        ))
+                    })?;
+                    Ok(())
+                }
+            }
+        }
+        
+        // Ensure destination exists before checking capacity
+        ensure_destination_exists(destination)?;
+        
         let total_bytes = fs2::total_space(destination).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "failed to read destination total capacity at {}: {err}",
-                destination.display()
-            ))
+            // Improve error message for missing directory vs capacity issues
+            if err.kind() == std::io::ErrorKind::NotFound {
+                CaravanError::InvalidArguments(format!(
+                    "destination directory {} does not exist and could not be created",
+                    destination.display()
+                ))
+            } else {
+                CaravanError::InvalidArguments(format!(
+                    "failed to read destination total capacity at {}: {err}",
+                    destination.display()
+                ))
+            }
         })?;
         let available_bytes = fs2::available_space(destination).map_err(|err| {
             CaravanError::InvalidArguments(format!(

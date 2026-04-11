@@ -16,5 +16,6 @@ pub mod snapshot;
 pub mod state_store;
 pub mod transfer;
 pub mod verify;
+pub mod migration_registry;
 
 pub mod models;

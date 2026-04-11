@@ -1,6 +1,16 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MigrationPhase {
+    NotStarted,
+    Copying,
+    Verifying,
+    AwaitingDeletion,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BatchPhase {
     Planned,
     CopyStarted,
@@ -35,6 +45,7 @@ pub struct MigrationState {
     pub source: String,
     pub destination: String,
     pub batch_size_bytes: u64,
+    pub migration_phase: MigrationPhase,
     pub last_successful_snapshot_name: Option<String>,
     pub batches: Vec<BatchState>,
     pub journal: Vec<JournalEntry>,
@@ -47,6 +58,7 @@ impl MigrationState {
             source: source.to_string(),
             destination: destination.to_string(),
             batch_size_bytes: 0,
+            migration_phase: MigrationPhase::NotStarted,
             last_successful_snapshot_name: None,
             batches: Vec::new(),
             journal: Vec::new(),

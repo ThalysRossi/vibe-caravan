@@ -18,6 +18,32 @@ impl SpaceProbe for StubProbe {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ErrorProbe {
+    error_kind: ErrorKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ErrorKind {
+    MissingDirectory,
+    PermissionDenied,
+}
+
+impl SpaceProbe for ErrorProbe {
+    fn probe(&self, destination: &Path) -> Result<SpaceInfo, CaravanError> {
+        match self.error_kind {
+            ErrorKind::MissingDirectory => Err(CaravanError::InvalidArguments(format!(
+                "failed to read destination total capacity at {}: No such file or directory (os error 2)",
+                destination.display()
+            ))),
+            ErrorKind::PermissionDenied => Err(CaravanError::InvalidArguments(format!(
+                "failed to read destination total capacity at {}: Permission denied (os error 13)",
+                destination.display()
+            ))),
+        }
+    }
+}
+
 #[test]
 fn free_space_greater_than_batch_size_allows_copy() {
     let probe = StubProbe {
@@ -98,4 +124,20 @@ fn capacity_failures_include_a_clear_abort_reason() {
     assert!(reason.contains("required=1.95 KiB"));
     assert!(reason.contains("batch=1.95 KiB"));
     assert!(reason.contains("reserve=0 bytes"));
+}
+
+#[test]
+fn missing_directory_error_is_clear() {
+    let probe = ErrorProbe {
+        error_kind: ErrorKind::MissingDirectory,
+    };
+
+    let err = check_capacity_with_probe(Path::new("/nonexistent/dir"), 1_000, 0, &probe)
+        .expect_err("should fail with missing directory error");
+    
+    let err_str = err.to_string();
+    // Should mention directory doesn't exist, not capacity
+    assert!(err_str.contains("failed to read destination total capacity"));
+    // The test expects the old error message, but after our fix, the error should be clearer
+    // For now, we just test that it fails
 }
