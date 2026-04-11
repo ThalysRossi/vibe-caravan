@@ -250,14 +250,14 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
             deleted: false,
         });
     }
-    state_store::persist_state(&state_path, &state)?;
+    persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
 
     let copy_backend = transfer::LocalFsCopyBackend;
     let mut processed_batches = 0_u32;
 
     // === PHASE 1: COPY ALL BATCHES ===
     state.migration_phase = MigrationPhase::Copying;
-    state_store::persist_state(&state_path, &state)?;
+    persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
     println!("\n=== Copying all batches ===");
     
     for batch in &plan.batches {
@@ -300,7 +300,7 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         // Copy batch
         batch_state.phase = BatchPhase::CopyStarted;
         state.upsert_batch(batch_state.clone());
-        state_store::persist_state(&state_path, &state)?;
+        persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
         
         let mut progress = crate::progress::TerminalProgress::new();
         transfer::transfer_batch_with_progress(batch, &config.source, &config.dest, &copy_backend, &mut progress)?;
@@ -308,12 +308,12 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         batch_state.phase = BatchPhase::CopyCompleted;
         batch_state.verification_passed = false;
         state.upsert_batch(batch_state.clone());
-        state_store::persist_state(&state_path, &state)?;
+        persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
     }
     
     // === PHASE 2: VERIFY ALL BATCHES ===
     state.migration_phase = MigrationPhase::Verifying;
-    state_store::persist_state(&state_path, &state)?;
+    persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
     println!("\n=== Verifying all batches ===");
     
     for batch in &plan.batches {
@@ -347,7 +347,7 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         batch_state.phase = BatchPhase::VerifyCompleted;
         batch_state.verification_passed = verification_report.status == models::verification::VerificationStatus::Pass;
         state.upsert_batch(batch_state.clone());
-        state_store::persist_state(&state_path, &state)?;
+        persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
         
         if !batch_state.verification_passed {
             eprintln!("Verification failed: {}", verification_report.recommended_action);
@@ -384,7 +384,7 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         
         // Mark all batches as approved
         state.approve_batches(&batches_needing_approval);
-        state_store::persist_state(&state_path, &state)?;
+        persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
         
         // Delete all approved batches
         println!("\n=== Deleting source files for all batches ===");
@@ -399,7 +399,7 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
                 // Load batch definition
                 let batch = plan::load_batch_definition(&config.source, batch_id, state.batch_size_bytes)?;
                 cleanup::cleanup_batch(&batch, &config.source, &mut state, "execute_transfer")?;
-                state_store::persist_state(&state_path, &state)?;
+                persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
             }
         }
     }

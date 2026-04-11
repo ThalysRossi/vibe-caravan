@@ -69,3 +69,16 @@ fn load_state_errors_for_missing_file() {
     let err = load_state(&missing).expect_err("load should fail");
     assert!(err.to_string().contains("failed to read state file"));
 }
+
+#[test]
+fn persist_state_creates_parent_directories() {
+    let tmp = TempDir::new().expect("temp dir");
+    let state_path = tmp.path().join("deep").join("dir").join("state.json");
+    
+    let state = MigrationState::new("staging", "/source", "/dest");
+    persist_state(&state_path, &state).expect("state should persist");
+    
+    assert!(state_path.exists(), "state file should exist");
+    let loaded = load_state(&state_path).expect("should load state");
+    assert_eq!(loaded, state);
+}

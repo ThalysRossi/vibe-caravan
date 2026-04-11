@@ -41,6 +41,12 @@ fn visit_dir(
         let metadata = fs::symlink_metadata(&child)
             .map_err(map_io("failed to read source file metadata"))?;
         if metadata.is_dir() {
+            // Skip .caravan directories at any depth
+            if let Some(file_name) = child.file_name() {
+                if file_name == ".caravan" {
+                    continue;
+                }
+            }
             visit_dir(source_root, &child, output)?;
             continue;
         }

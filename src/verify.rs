@@ -7,6 +7,17 @@ use crate::models::batch::Batch;
 use crate::models::verification::{DigestModeUsed, VerificationReport, VerificationStatus};
 use crate::progress::ProgressReporter;
 
+/// Check if a path should be skipped because it's inside a .caravan directory
+fn should_skip_caravan(path: &Path) -> bool {
+    path.components().any(|comp| {
+        if let std::path::Component::Normal(name) = comp {
+            name == ".caravan"
+        } else {
+            false
+        }
+    })
+}
+
 pub fn verify_batch(
     batch: &Batch,
     source_root: &Path,
@@ -34,6 +45,11 @@ pub fn verify_batch_with_progress(
         let source_path = source_root.join(&entry.relative_path);
         let destination_path = destination_root.join(&entry.relative_path);
         let rel = entry.relative_path.to_string_lossy().to_string();
+
+        // Skip files inside .caravan directories
+        if should_skip_caravan(&entry.relative_path) {
+            continue;
+        }
 
         if !destination_path.exists() {
             missing_files.push(rel);
