@@ -123,7 +123,7 @@ pub fn digest_file(path: &Path) -> Result<[u8; 32], CaravanError> {
         .map_err(|err| CaravanError::Io(format!("failed to open {}: {}", path.display(), err)))?;
     
     let mut hasher = blake3::Hasher::new();
-    let mut buffer = [0u8; 1024 * 1024]; // 1MB streaming buffer
+    let mut buffer = vec![0u8; 1024 * 1024]; // 1MB streaming buffer on heap
 
     loop {
         let bytes_read = file.read(&mut buffer)

@@ -165,9 +165,11 @@ fn streaming_hash_produces_same_result_as_full_read() {
     let path = tmp.path().join("test.bin");
     
     // Create test file with content larger than 1MB buffer
+    // This test would cause stack overflow on Windows with stack-allocated buffer
+    // due to Windows' default 1MB thread stack size. Heap allocation prevents this.
     let mut file = fs::File::create(&path).expect("create file");
     let block = b"test_pattern_1234567890";
-    for _ in 0..150000 { // ~2MB file
+    for _ in 0..150000 { // ~3.45MB file
         file.write_all(block).expect("write block");
     }
     drop(file);
@@ -180,6 +182,27 @@ fn streaming_hash_produces_same_result_as_full_read() {
     let expected = blake3::hash(&full);
     
     assert_eq!(streaming, *expected.as_bytes(), "Streaming hash must match full file hash");
+}
+
+#[test]
+fn very_large_file_hash_without_stack_overflow() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = tmp.path().join("very_large.bin");
+    
+    // Create a 10MB file to stress test the heap-allocated buffer
+    // This would definitely cause stack overflow on Windows with stack allocation
+    let mut file = fs::File::create(&path).expect("create file");
+    let block = vec![0x42u8; 1024 * 1024]; // 1MB block
+    for _ in 0..10 { // 10MB total
+        file.write_all(&block).expect("write block");
+    }
+    drop(file);
+    
+    let hash = digest_file(&path).expect("very large file hash should succeed");
+    let full = fs::read(&path).expect("read full file");
+    let expected = blake3::hash(&full);
+    
+    assert_eq!(hash, *expected.as_bytes(), "Very large file hash must match");
 }
 
 #[test]
