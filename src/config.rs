@@ -26,6 +26,7 @@ pub struct TransferConfig {
     pub interactive: bool,
     pub verification: VerificationMode,
     pub log_level: String,
+    pub skip_conflicts: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

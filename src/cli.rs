@@ -9,6 +9,7 @@ use crate::plan::PlanOptions;
 use crate::signal::{ShutdownFlag, check_shutdown, install_signal_handlers};
 use crate::{capacity, cleanup, format, migration_registry, plan, prompt, resume, state_store, transfer, verify};
 use crate::models;
+use crate::prompt::PromptBackend;
 
 /// Save state to both primary (source directory) and secondary (current directory) locations
 fn persist_state_both_locations(
@@ -57,6 +58,8 @@ pub struct TransferArgs {
     pub interactive: bool,
     #[arg(long, value_enum, default_value_t = VerificationArg::Digest)]
     pub verification: VerificationArg,
+    #[arg(long, default_value_t = false)]
+    pub skip_conflicts: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -118,6 +121,7 @@ fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                 interactive: args.interactive,
                 verification: args.verification.into(),
                 log_level: cli.log_level,
+                skip_conflicts: args.skip_conflicts,
             }))
         }
         Some(Command::Migrate(args)) => {
@@ -142,6 +146,7 @@ fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                 interactive: args.base.interactive,
                 verification: args.base.verification.into(),
                 log_level: cli.log_level,
+                skip_conflicts: args.base.skip_conflicts,
             }))
         }
         Some(Command::Status(args)) => Ok(Config::Status {
@@ -326,6 +331,37 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
             return Err(CaravanError::InvalidArguments("insufficient destination space".to_string()));
         }
         
+        // Check for naming conflicts
+        let conflict_report = crate::conflict::detect_batch_conflicts(batch, &config.dest)?;
+        if conflict_report.has_conflicts {
+            // Determine whether to skip this batch
+            let should_skip = if config.skip_conflicts || !config.interactive {
+                // Auto-skip in non-interactive mode or when skip_conflicts flag is set
+                true
+            } else {
+                // Interactive mode: ask user
+                let prompt_backend = prompt::InteractivePrompt;
+                prompt_backend.confirm_conflict_skip(&batch.id, &conflict_report)?
+            };
+            
+            if should_skip {
+                println!("⚠️  Skipping batch '{}' due to {} naming conflict(s)", 
+                    batch.id, conflict_report.total_conflicts);
+                
+                // Mark batch as skipped (we'll treat it as completed to avoid retrying)
+                batch_state.phase = BatchPhase::CopyCompleted;
+                batch_state.verification_passed = false;
+                state.upsert_batch(batch_state.clone());
+                persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
+                
+                // Skip to next batch
+                continue;
+            }
+            // If user chooses not to skip, we'll continue with copy (overwrites files)
+            // This is the MVP - we only have skip functionality for now
+            // In future implementations, we could proceed with overwrite
+        }
+        
         // Copy batch
         batch_state.phase = BatchPhase::CopyStarted;
         state.upsert_batch(batch_state.clone());
@@ -500,6 +536,7 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         interactive: true,
         verification: VerificationMode::Digest,
         log_level: "info".to_string(),
+        skip_conflicts: false, // Default to false for resume
     };
     
     println!("Resuming transfer...\n");

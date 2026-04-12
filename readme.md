@@ -211,3 +211,42 @@ Smaller batches can be better when:
 Before any copy begins, `caravan` checks the destination's free space.
 
 If the destination has **less than or equal to** the batch size available, the batch is aborted and the tool reports that the destination must be expanded or the source layout must be reduced further before continuing.
+
+## Naming Conflict Safety Guardrail
+
+To prevent accidental overwrites, `caravan` includes a safety guardrail that detects naming conflicts before copying files.
+
+### How it works
+
+1. **Before copying each batch**, the tool checks if any destination files already exist
+2. **For regular files**, it also compares sizes to detect potential mismatches
+3. **When conflicts are detected**, the user is presented with a detailed report showing:
+   - Total number of conflicts
+   - List of existing files
+   - Size mismatches (when source and destination files differ in size)
+
+### Conflict Resolution Options
+
+- **Interactive mode (default)**: User is prompted to skip the batch or continue (which would overwrite files)
+- **Non-interactive mode with `--skip-conflicts`**: Automatically skip batches with conflicts
+- **Resume operations**: Conflicts are re-checked during resume to maintain safety
+
+### CLI Options
+
+- `--skip-conflicts`: Automatically skip batches with naming conflicts (default: false)
+  - In non-interactive mode, conflicts are automatically skipped
+  - In interactive mode, user is prompted unless `--skip-conflicts` is specified
+
+### Example Usage
+
+Skip batches with conflicts automatically:
+```bash
+caravan staging --source /src --dest /dst --batch-size 100GiB --skip-conflicts
+```
+
+Interactive prompt for conflicts (default behavior):
+```bash
+caravan migrate --source /src --dest /dst --batch-size 100GiB --interactive
+```
+
+This safety feature ensures that existing data is not accidentally overwritten during migration operations.

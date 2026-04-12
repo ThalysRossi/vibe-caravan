@@ -518,6 +518,7 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
         interactive: false,
         verification: VerificationMode::Structural,
         log_level: "error".to_string(),
+        skip_conflicts: false,
     };
     
     // Run execute_transfer
