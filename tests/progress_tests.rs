@@ -54,20 +54,31 @@ fn terminal_progress_lifecycle_completes() {
 
 #[test]
 fn duration_formatting_works() {
-    // Test private method by reimplementation
+    // Test private method by reimplementation matching the new implementation
     fn format_duration(d: Duration) -> String {
         let secs = d.as_secs();
-        if secs < 60 {
-            format!("{}s", secs)
-        } else {
-            format!("{}m {}s", secs / 60, secs % 60)
+        match secs {
+            0..=59 => format!("{}s", secs),
+            60..=3599 => {
+                let mins = secs / 60;
+                let secs_remain = secs % 60;
+                format!("{}m {:02}s", mins, secs_remain)
+            }
+            _ => {
+                let hours = secs / 3600;
+                let mins = (secs % 3600) / 60;
+                let secs_remain = secs % 60;
+                format!("{}h {:02}m {:02}s", hours, mins, secs_remain)
+            }
         }
     }
 
     assert_eq!(format_duration(Duration::from_secs(35)), "35s");
-    assert_eq!(format_duration(Duration::from_secs(65)), "1m 5s");
-    assert_eq!(format_duration(Duration::from_secs(125)), "2m 5s");
-    assert_eq!(format_duration(Duration::from_secs(3600)), "60m 0s");
+    assert_eq!(format_duration(Duration::from_secs(65)), "1m 05s");
+    assert_eq!(format_duration(Duration::from_secs(125)), "2m 05s");
+    assert_eq!(format_duration(Duration::from_secs(3600)), "1h 00m 00s");
+    assert_eq!(format_duration(Duration::from_secs(3665)), "1h 01m 05s");
+    assert_eq!(format_duration(Duration::from_secs(7200)), "2h 00m 00s");
 }
 
 #[test]
