@@ -92,6 +92,13 @@ impl MigrationRegistry {
         self.migrations.iter_mut().find(|m| m.id == id)
     }
 
+    pub fn find_by_source_dest(&self, source: &str, dest: &str, mode: &str) -> Option<&MigrationEntry> {
+        self.migrations
+            .iter()
+            .find(|m| m.source == source && m.destination == dest && m.mode == mode 
+                && m.status != MigrationStatus::Completed && m.status != MigrationStatus::Failed)
+    }
+
     pub fn find_first_incomplete(&self) -> Option<&MigrationEntry> {
         self.migrations
             .iter()

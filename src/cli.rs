@@ -191,23 +191,11 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     let shutdown_flag = ShutdownFlag::new();
     install_signal_handlers(&shutdown_flag)?;
     
-    // Check if source directory is writable for state
-    migration_registry::check_source_writable(&config.source)?;
-    
     // Determine state file paths:
     // 1. Primary: source directory (for resume feature)
     // 2. Secondary: current directory (for backward compatibility)
     let state_path = migration_registry::state_file_in_source(&config.source, &config.dest);
     let secondary_state_path = PathBuf::from(".caravan/state.json");
-    println!("State will be saved to: {} (primary) and {} (backward compatibility)", 
-        state_path.display(), secondary_state_path.display());
-    
-    let mut state = MigrationState::new(
-        if config.mode == Mode::Staging { "staging" } else { "migrate" },
-        &config.source.to_string_lossy(),
-        &config.dest.to_string_lossy(),
-    );
-    state.batch_size_bytes = config.batch_size_bytes;
     
     // Update migration registry
     let registry_path = migration_registry::default_registry_path();
@@ -218,17 +206,54 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         &config.dest.to_string_lossy(),
     );
     
-    let migration_id = registry.add_migration(
-        &config.source.to_string_lossy(),
-        &config.dest.to_string_lossy(),
-        if config.mode == Mode::Staging { "staging" } else { "migrate" },
-        &state_filename,
-    );
+    // Check if there's an existing incomplete migration for the same source/destination/mode
+    let source_str = config.source.to_string_lossy();
+    let dest_str = config.dest.to_string_lossy();
+    let mode_str = if config.mode == Mode::Staging { "staging" } else { "migrate" };
+    
+    let migration_id = if let Some(existing_migration) = registry.find_by_source_dest(&source_str, &dest_str, mode_str) {
+        println!("Resuming existing migration ID: {}", existing_migration.id);
+        existing_migration.id
+    } else {
+        // No existing migration found, create a new one
+        let new_id = registry.add_migration(
+            &source_str,
+            &dest_str,
+            mode_str,
+            &state_filename,
+        );
+        println!("Migration registered with new ID: {}", new_id);
+        new_id
+    };
     
     registry.update_status(migration_id, migration_registry::MigrationStatus::Running)?;
     registry.save(&registry_path)?;
     
-    println!("Migration registered with ID: {}", migration_id);
+    // Try to load existing state file, or create new state
+    let mut state = if state_path.exists() {
+        // Load existing state
+        match state_store::load_state(&state_path) {
+            Ok(loaded_state) => {
+                println!("Loaded existing state from: {}", state_path.display());
+                loaded_state
+            }
+            Err(err) => {
+                println!("Warning: Failed to load existing state from {}: {}. Creating new state.", 
+                    state_path.display(), err);
+                MigrationState::new(mode_str, &source_str, &dest_str)
+            }
+        }
+    } else {
+        // No existing state file, create new state
+        // Check if source directory is writable before creating new state
+        migration_registry::check_source_writable(&config.source)?;
+        MigrationState::new(mode_str, &source_str, &dest_str)
+    };
+    
+    state.batch_size_bytes = config.batch_size_bytes;
+    
+    println!("State will be saved to: {} (primary) and {} (backward compatibility)", 
+        state_path.display(), secondary_state_path.display());
     
     // Build plan
     let plan_opts = PlanOptions {

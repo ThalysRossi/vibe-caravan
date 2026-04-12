@@ -56,19 +56,58 @@ fn add_migration_increments_id() {
 }
 
 #[test]
-fn find_migration_by_id() {
+fn find_first_incomplete_with_multiple_statuses() {
     let mut registry = MigrationRegistry::new();
     
     let id1 = registry.add_migration("/src1", "/dst1", "staging", "state1.json");
     let id2 = registry.add_migration("/src2", "/dst2", "migrate", "state2.json");
+    let id3 = registry.add_migration("/src3", "/dst3", "staging", "state3.json");
     
-    assert!(registry.find_by_id(id1).is_some());
-    assert!(registry.find_by_id(id2).is_some());
-    assert!(registry.find_by_id(999).is_none());
+    registry.update_status(id1, MigrationStatus::Completed).expect("should update");
+    registry.update_status(id2, MigrationStatus::Running).expect("should update");
+    registry.update_status(id3, MigrationStatus::AwaitingDeletion).expect("should update");
     
-    let migration = registry.find_by_id(id1).unwrap();
-    assert_eq!(migration.source, "/src1");
-    assert_eq!(migration.destination, "/dst1");
+    let incomplete = registry.find_first_incomplete().expect("should find incomplete");
+    assert_eq!(incomplete.id, id2); // Running is incomplete
+}
+
+#[test]
+fn find_by_source_dest_finds_existing_migration() {
+    let mut registry = MigrationRegistry::new();
+    
+    let id1 = registry.add_migration("/source/a", "/dest/a", "staging", "state1.json");
+    let id2 = registry.add_migration("/source/b", "/dest/b", "migrate", "state2.json");
+    
+    // Should find exact match
+    let found = registry.find_by_source_dest("/source/a", "/dest/a", "staging")
+        .expect("should find migration");
+    assert_eq!(found.id, id1);
+    
+    // Different mode shouldn't match
+    let not_found = registry.find_by_source_dest("/source/a", "/dest/a", "migrate");
+    assert!(not_found.is_none(), "different mode shouldn't match");
+    
+    // Different paths shouldn't match
+    let not_found2 = registry.find_by_source_dest("/source/c", "/dest/c", "staging");
+    assert!(not_found2.is_none(), "different paths shouldn't match");
+}
+
+#[test]
+fn find_by_source_dest_finds_incomplete_first() {
+    let mut registry = MigrationRegistry::new();
+    
+    // Add two migrations with same source/dest but different status
+    let id1 = registry.add_migration("/same/source", "/same/dest", "staging", "state1.json");
+    registry.update_status(id1, MigrationStatus::Completed).expect("should update");
+    
+    let id2 = registry.add_migration("/same/source", "/same/dest", "staging", "state2.json");
+    registry.update_status(id2, MigrationStatus::Running).expect("should update");
+    
+    // Should find the incomplete one (Running) first
+    let found = registry.find_by_source_dest("/same/source", "/same/dest", "staging")
+        .expect("should find migration");
+    assert_eq!(found.id, id2, "should find incomplete migration first");
+    assert_eq!(found.status, MigrationStatus::Running);
 }
 
 #[test]

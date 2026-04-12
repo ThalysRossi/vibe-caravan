@@ -166,8 +166,15 @@ This manual test plan covers the comprehensive testing of `caravan`, a Rust migr
 - [ ] Interrupt after approval, before deletion
 - [ ] Resume with modified source (files added/removed)
 - [ ] Resume with batch size mismatch detection
+- [ ] **Automatic Resume**: Re-running same `staging`/`migrate` command resumes existing migration
+- [ ] **Migration Registry**: Multiple migrations with same source/dest handled correctly
 
-#### 7.3 State Reconciliation
+#### 7.3 Destination Directory Handling
+- [ ] Top-level destination directory created automatically when missing
+- [ ] Subdirectory creation fails when parent doesn't exist
+- [ ] Clear error messages for directory issues (not misleading "capacity" errors)
+
+#### 7.4 State Reconciliation
 - [ ] Partial copy detected and handled
 - [ ] Already deleted files not re-deleted
 - [ ] Verification not repeated unnecessarily

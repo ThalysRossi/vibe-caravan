@@ -41,7 +41,7 @@ caravan migrate --source /mnt/staging/Data --dest /mnt/data/@media --batch-size 
 
 It also checks destination free space before each batch. If the available space is less than or equal to the planned batch size, the batch is aborted before copying starts.
 
-## Graceful Shutdown
+## Graceful Shutdown & Automatic Resume
 
 Caravan supports graceful shutdown via Ctrl+C (SIGINT on Unix, Ctrl+C on Windows). When a shutdown signal is received:
 
@@ -50,7 +50,32 @@ Caravan supports graceful shutdown via Ctrl+C (SIGINT on Unix, Ctrl+C on Windows
 - The migration state is saved to disk
 - The program exits cleanly with a `GracefulShutdown` error
 
-You can resume the migration later using the `caravan resume` command, which will continue from where it left off.
+### Automatic Resume Feature
+
+When you re-run the same `staging` or `migrate` command with identical source and destination paths:
+
+1. The tool automatically detects if an incomplete migration exists for those paths
+2. It loads the existing state file from the `.caravan` directory in the source
+3. Batches that are already `CopyCompleted` or `VerifyCompleted` are skipped
+4. The migration continues from where it left off
+
+This means you can simply re-run the same command after an interruption, without needing the `resume` subcommand.
+
+### State Files & `.caravan` Directory
+
+Caravan saves migration state to a `.caravan` directory in the source folder (e.g., `/source/.caravan/migration_abcdef12.json`). This directory is:
+
+- Automatically created when needed
+- Excluded from scanning and verification operations
+- Used to store state files, migration registry, and batch definitions
+
+### Manual Resume
+
+You can also use the `caravan resume` command to explicitly resume from a specific state file, which is useful when:
+
+- You need to resume from a different location
+- You want to override the automatic detection
+- You're troubleshooting state file issues
 
 This feature ensures that long-running migrations can be safely interrupted without losing progress or corrupting data.
 
