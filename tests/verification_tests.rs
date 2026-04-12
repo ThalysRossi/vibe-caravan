@@ -32,7 +32,7 @@ fn copied_file_contents_match_source() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
     let report =
         verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");
 
@@ -76,7 +76,7 @@ fn size_mismatch_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
 
     create_file(dst.path(), "bin/data.bin", b"abc");
 
@@ -101,7 +101,7 @@ fn digest_mismatch_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
 
     create_file(dst.path(), "docs/report.txt", b"same-size-datA");
 
@@ -126,7 +126,7 @@ fn unreadable_file_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
 
     fs::remove_file(src.path().join("x/file.txt")).expect("source file removal should succeed");
 
@@ -151,7 +151,7 @@ fn verification_report_serializes_to_json() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
 
     let report =
         verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");

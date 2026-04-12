@@ -122,7 +122,7 @@ fn transfer_batch_calls_progress_correctly() {
     };
     
     let mut mock = MockProgress::default();
-    let backend = LocalFsCopyBackend;
+    let backend = LocalFsCopyBackend::new();
     
     transfer_batch_with_progress(&batch, src.path(), dst.path(), &backend, &mut mock).unwrap();
     

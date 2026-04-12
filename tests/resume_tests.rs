@@ -519,6 +519,8 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
         verification: VerificationMode::Structural,
         log_level: "error".to_string(),
         skip_conflicts: false,
+        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
+        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
     };
     
     // Run execute_transfer

@@ -29,7 +29,7 @@ fn transfer_batch_copies_multiple_files_with_nested_paths() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
 
     assert_eq!(
         fs::read(dst.path().join("a/one.txt")).expect("first copied file should exist"),
@@ -57,7 +57,7 @@ fn backend_copy_batch_direct_call_is_successful() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    let backend = LocalFsCopyBackend;
+    let backend = LocalFsCopyBackend::new();
     backend
         .copy_batch(batch, src.path(), dst.path())
         .expect("direct backend copy should succeed");
@@ -86,7 +86,7 @@ fn transfer_batch_returns_error_when_source_file_is_missing() {
 
     fs::remove_file(src.path().join("x/data.bin")).expect("source file removal should succeed");
 
-    let err = transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend)
+    let err = transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect_err("copy should fail for missing source");
     assert!(err.to_string().contains("failed to copy"));
 }
@@ -112,7 +112,7 @@ fn directory_creation_deduplicated_for_files_in_same_directory() {
     let batch = &plan.batches[0];
     
     // This should work correctly with deduplication
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend)
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed with multiple files in same directory");
     
     // Verify all files were copied
@@ -148,7 +148,7 @@ fn nested_directories_created_correctly_with_deduplication() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
     
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend)
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed with nested directories");
     
     // Verify all files and directories
@@ -182,7 +182,7 @@ fn files_at_root_level_need_no_directory_creation() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
     
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend)
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed for root-level files");
     
     assert_eq!(fs::read(dst.path().join("file1.txt")).unwrap(), b"one");
@@ -222,7 +222,7 @@ fn error_message_includes_file_path_when_directory_creation_fails() {
         perms.set_mode(0o555); // Read and execute only, no write
         fs::set_permissions(dst.path(), perms).unwrap();
         
-        let err = transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend)
+        let err = transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
             .expect_err("copy should fail due to permission error");
         
         // Error message should include the file path

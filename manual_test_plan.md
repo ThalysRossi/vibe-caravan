@@ -52,6 +52,11 @@ This manual test plan covers the comprehensive testing of `caravan`, a Rust migr
 - [ ] Snapshot settings in staging mode (should fail)
 - [ ] `--max-files 0` (should fail)
 - [ ] `--snapshot-every 0` (should fail)
+- [ ] Invalid `--copy-buffer-size` values (0, malformed units)
+- [ ] Invalid `--buffered-copy-threshold` values (0, malformed units)
+- [ ] Valid `--copy-buffer-size` values (8MiB, 64MiB, 1GiB)
+- [ ] Valid `--buffered-copy-threshold` values (1MiB, 4MiB, 16MiB)
+- [ ] Default values applied when buffer flags not specified
 
 #### 1.3 Interactive Mode
 - [ ] Non-interactive mode blocks destructive operations
@@ -107,6 +112,18 @@ This manual test plan covers the comprehensive testing of `caravan`, a Rust migr
 - [ ] Disk full during copy
 - [ ] Source file disappears mid-copy
 - [ ] Network timeout (if network paths used)
+
+#### 4.3 Buffer Copy Strategy Tests
+- [ ] **Small files** (< 1 MiB default) use OS copy (`std::fs::copy`)
+- [ ] **Large files** (≥ 1 MiB default) use buffered copy (8 MiB chunks)
+- [ ] Custom `--copy-buffer-size` flag works (e.g., 16 MiB, 64 MiB)
+- [ ] Custom `--buffered-copy-threshold` flag works (e.g., 2 MiB, 4 MiB)
+- [ ] Empty files handled correctly (0 bytes)
+- [ ] Files exactly at threshold size (boundary case)
+- [ ] Very large files (> buffer size) copied correctly in chunks
+- [ ] Cross-filesystem copy optimization (NTFS → BTRFS)
+- [ ] Memory usage stays within configured buffer size
+- [ ] Default values applied when flags not specified
 
 ### 5. Verification Tests
 

@@ -212,6 +212,49 @@ Before any copy begins, `caravan` checks the destination's free space.
 
 If the destination has **less than or equal to** the batch size available, the batch is aborted and the tool reports that the destination must be expanded or the source layout must be reduced further before continuing.
 
+## Copy Performance Tuning
+
+`caravan` uses a hybrid copy strategy to optimize file transfer performance for disk-to-disk transfers:
+
+- **Small files** (< 1 MiB by default): Use operating system's native copy (`std::fs::copy`)
+- **Large files** (≥ 1 MiB by default): Use buffered copy with 8 MiB chunks
+
+You can customize this behavior with two new flags:
+
+- `--copy-buffer-size <SIZE>`: Set buffer size for chunked copying (default: 8 MiB)
+- `--buffered-copy-threshold <SIZE>`: Files larger than this threshold use buffered copy (default: 1 MiB)
+
+Both flags accept the same size units as `--batch-size`: B, KiB, MiB, GiB, or TiB.
+
+### Example Usage
+
+Optimizing for fast SSD-to-SSD transfers:
+```bash
+caravan staging \
+  --source /src \
+  --dest /dst \
+  --batch-size 100GiB \
+  --copy-buffer-size 64MiB \
+  --buffered-copy-threshold 4MiB
+```
+
+Reducing memory pressure when copying many small files:
+```bash
+caravan migrate \
+  --source /mnt/staging \
+  --dest /mnt/btrfs/@data \
+  --batch-size 50GiB \
+  --copy-buffer-size 4MiB \
+  --buffered-copy-threshold 2MiB
+```
+
+### Performance Considerations
+
+- **Larger buffer sizes** (64-256 MiB) can improve throughput for sequential transfers between fast storage (SSD to SSD)
+- **Smaller buffers** (1-4 MiB) may reduce memory pressure when copying many small files
+- The default 1 MiB threshold is optimal for most local disk scenarios
+- Cross-filesystem copies (NTFS to BTRFS) benefit from buffered copying for large files
+
 ## Naming Conflict Safety Guardrail
 
 To prevent accidental overwrites, `caravan` includes a safety guardrail that detects naming conflicts before copying files.

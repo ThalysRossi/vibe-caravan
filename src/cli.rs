@@ -60,6 +60,10 @@ pub struct TransferArgs {
     pub verification: VerificationArg,
     #[arg(long, default_value_t = false)]
     pub skip_conflicts: bool,
+    #[arg(long)]
+    pub copy_buffer_size: Option<String>,
+    #[arg(long)]
+    pub buffered_copy_threshold: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -111,6 +115,14 @@ fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                     "max-files must be greater than zero".to_string(),
                 ));
             }
+            let copy_buffer_size = match &args.copy_buffer_size {
+                Some(s) => parse_size_usize(s).map_err(|e| CaravanError::InvalidArguments(format!("copy-buffer-size: {}", e)))?,
+                None => TransferConfig::default_copy_buffer_size(),
+            };
+            let buffered_copy_threshold = match &args.buffered_copy_threshold {
+                Some(s) => parse_size_u64(s).map_err(|e| CaravanError::InvalidArguments(format!("buffered-copy-threshold: {}", e)))?,
+                None => TransferConfig::default_buffered_copy_threshold(),
+            };
             Ok(Config::Staging(TransferConfig {
                 mode: Mode::Staging,
                 source: args.source,
@@ -122,6 +134,8 @@ fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                 verification: args.verification.into(),
                 log_level: cli.log_level,
                 skip_conflicts: args.skip_conflicts,
+                copy_buffer_size,
+                buffered_copy_threshold,
             }))
         }
         Some(Command::Migrate(args)) => {
@@ -136,6 +150,14 @@ fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                     "max-files must be greater than zero".to_string(),
                 ));
             }
+            let copy_buffer_size = match &args.base.copy_buffer_size {
+                Some(s) => parse_size_usize(s).map_err(|e| CaravanError::InvalidArguments(format!("copy-buffer-size: {}", e)))?,
+                None => TransferConfig::default_copy_buffer_size(),
+            };
+            let buffered_copy_threshold = match &args.base.buffered_copy_threshold {
+                Some(s) => parse_size_u64(s).map_err(|e| CaravanError::InvalidArguments(format!("buffered-copy-threshold: {}", e)))?,
+                None => TransferConfig::default_buffered_copy_threshold(),
+            };
             Ok(Config::Migrate(TransferConfig {
                 mode: Mode::Migrate,
                 source: args.base.source,
@@ -147,6 +169,8 @@ fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                 verification: args.base.verification.into(),
                 log_level: cli.log_level,
                 skip_conflicts: args.base.skip_conflicts,
+                copy_buffer_size,
+                buffered_copy_threshold,
             }))
         }
         Some(Command::Status(args)) => Ok(Config::Status {
@@ -286,7 +310,10 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     }
     persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
 
-    let copy_backend = transfer::LocalFsCopyBackend;
+    let copy_backend = transfer::LocalFsCopyBackend::with_config(
+        config.copy_buffer_size,
+        config.buffered_copy_threshold,
+    );
     let mut processed_batches = 0_u32;
 
     // === PHASE 1: COPY ALL BATCHES ===
@@ -537,11 +564,16 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         verification: VerificationMode::Digest,
         log_level: "info".to_string(),
         skip_conflicts: false, // Default to false for resume
+        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
+        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
     };
     
     println!("Resuming transfer...\n");
     
-    let copy_backend = transfer::LocalFsCopyBackend;
+    let copy_backend = transfer::LocalFsCopyBackend::with_config(
+        config.copy_buffer_size,
+        config.buffered_copy_threshold,
+    );
     let prompt_backend = prompt::InteractivePrompt;
     
     // Process batches directly from STATE, NOT rebuilding plan
@@ -722,4 +754,83 @@ fn parse_batch_size(input: &str) -> Result<u64, String> {
 
     base.checked_mul(multiplier)
         .ok_or_else(|| "batch-size is too large".to_string())
+}
+
+fn parse_size_usize(input: &str) -> Result<usize, String> {
+    let raw = input.trim();
+    if raw.is_empty() {
+        return Err("size cannot be empty".to_string());
+    }
+
+    let split_idx = raw
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(raw.len());
+    let (number, unit_raw) = raw.split_at(split_idx);
+    if number.is_empty() {
+        return Err("size must start with digits".to_string());
+    }
+
+    let base = number
+        .parse::<u64>()
+        .map_err(|_| "size numeric part is invalid".to_string())?;
+    let unit = unit_raw.trim().to_ascii_lowercase();
+
+    let multiplier = match unit.as_str() {
+        "" | "b" => 1_u64,
+        "kib" => 1024_u64,
+        "mib" => 1024_u64.pow(2),
+        "gib" => 1024_u64.pow(3),
+        "tib" => 1024_u64.pow(4),
+        _ => {
+            return Err(
+                "unsupported size unit; use B, KiB, MiB, GiB, or TiB".to_string(),
+            )
+        }
+    };
+
+    let result = base.checked_mul(multiplier)
+        .ok_or_else(|| "size is too large".to_string())?;
+    
+    // Convert to usize with bounds checking
+    if result > usize::MAX as u64 {
+        return Err("size exceeds maximum allowed value".to_string());
+    }
+    
+    Ok(result as usize)
+}
+
+fn parse_size_u64(input: &str) -> Result<u64, String> {
+    let raw = input.trim();
+    if raw.is_empty() {
+        return Err("size cannot be empty".to_string());
+    }
+
+    let split_idx = raw
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(raw.len());
+    let (number, unit_raw) = raw.split_at(split_idx);
+    if number.is_empty() {
+        return Err("size must start with digits".to_string());
+    }
+
+    let base = number
+        .parse::<u64>()
+        .map_err(|_| "size numeric part is invalid".to_string())?;
+    let unit = unit_raw.trim().to_ascii_lowercase();
+
+    let multiplier = match unit.as_str() {
+        "" | "b" => 1_u64,
+        "kib" => 1024_u64,
+        "mib" => 1024_u64.pow(2),
+        "gib" => 1024_u64.pow(3),
+        "tib" => 1024_u64.pow(4),
+        _ => {
+            return Err(
+                "unsupported size unit; use B, KiB, MiB, GiB, or TiB".to_string(),
+            )
+        }
+    };
+
+    base.checked_mul(multiplier)
+        .ok_or_else(|| "size is too large".to_string())
 }

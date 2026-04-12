@@ -1,5 +1,4 @@
 use std::collections::HashSet;
-use std::fs;
 use std::path::Path;
 
 use crate::error::CaravanError;
@@ -22,6 +21,126 @@ impl DirectoryCreator for FsDirectoryCreator {
     }
 }
 
+/// Trait for file copying abstraction, allowing different copy strategies.
+pub trait FileCopier {
+    /// Copy a single file from source to destination.
+    /// Returns the number of bytes copied on success.
+    fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64>;
+}
+
+/// Simple file copier that uses the operating system's copy functionality.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OsFileCopier;
+
+impl FileCopier for OsFileCopier {
+    fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
+        std::fs::copy(source, destination)
+    }
+}
+
+/// Buffered file copier that reads and writes files in chunks.
+/// This can be more efficient for large files or cross-filesystem copies.
+#[derive(Debug, Clone)]
+pub struct BufferedFileCopier {
+    /// Size of the buffer used for copying (in bytes)
+    buffer_size: usize,
+}
+
+impl BufferedFileCopier {
+    /// Creates a new buffered file copier with the specified buffer size.
+    pub fn new(buffer_size: usize) -> Self {
+        Self { buffer_size }
+    }
+    
+    /// Default buffer size (8 MiB)
+    pub const DEFAULT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+    
+    /// Creates a new buffered file copier with the default buffer size.
+    pub fn default() -> Self {
+        Self::new(Self::DEFAULT_BUFFER_SIZE)
+    }
+}
+
+impl Default for BufferedFileCopier {
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_BUFFER_SIZE)
+    }
+}
+
+impl FileCopier for BufferedFileCopier {
+    fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
+        use std::io::{Read, Write};
+        
+        let mut source_file = std::fs::File::open(source)?;
+        let mut dest_file = std::fs::File::create(destination)?;
+        
+        let mut buffer = vec![0u8; self.buffer_size];
+        let mut total_copied = 0u64;
+        
+        loop {
+            let bytes_read = source_file.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break; // EOF
+            }
+            
+            dest_file.write_all(&buffer[..bytes_read])?;
+            total_copied += bytes_read as u64;
+        }
+        
+        Ok(total_copied)
+    }
+}
+
+/// Hybrid file copier that chooses between OS copy and buffered copy based on file size.
+/// Files smaller than the threshold use OS copy, larger files use buffered copy.
+#[derive(Debug, Clone)]
+pub struct HybridFileCopier {
+    /// Buffer size for buffered copy (in bytes)
+    buffer_size: usize,
+    /// File size threshold (in bytes) to use buffered copy instead of OS copy
+    threshold: u64,
+}
+
+impl HybridFileCopier {
+    /// Creates a new hybrid file copier with the specified buffer size and threshold.
+    pub fn new(buffer_size: usize, threshold: u64) -> Self {
+        Self { buffer_size, threshold }
+    }
+    
+    /// Creates a new hybrid file copier with default values.
+    /// - Buffer size: 8 MiB (8 * 1024 * 1024)
+    /// - Threshold: 1 MiB (1 * 1024 * 1024)
+    pub fn with_defaults() -> Self {
+        Self::new(
+            BufferedFileCopier::DEFAULT_BUFFER_SIZE,
+            1 * 1024 * 1024, // 1 MiB
+        )
+    }
+}
+
+impl Default for HybridFileCopier {
+    fn default() -> Self {
+        Self::with_defaults()
+    }
+}
+
+impl FileCopier for HybridFileCopier {
+    fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
+        // Get file size to decide which copier to use
+        let metadata = std::fs::metadata(source)?;
+        let file_size = metadata.len();
+        
+        if file_size < self.threshold {
+            // Use OS copy for small files
+            OsFileCopier.copy_file(source, destination)
+        } else {
+            // Use buffered copy for large files
+            let buffered_copier = BufferedFileCopier::new(self.buffer_size);
+            buffered_copier.copy_file(source, destination)
+        }
+    }
+}
+
 pub trait CopyBackend {
     fn copy_batch(
         &self,
@@ -39,8 +158,32 @@ pub trait CopyBackend {
     ) -> Result<(), CaravanError>;
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-pub struct LocalFsCopyBackend;
+#[derive(Debug, Clone)]
+pub struct LocalFsCopyBackend {
+    file_copier: HybridFileCopier,
+}
+
+impl LocalFsCopyBackend {
+    /// Creates a new LocalFsCopyBackend with default file copier settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+    
+    /// Creates a new LocalFsCopyBackend with custom buffer size and threshold.
+    pub fn with_config(buffer_size: usize, threshold: u64) -> Self {
+        Self {
+            file_copier: HybridFileCopier::new(buffer_size, threshold),
+        }
+    }
+}
+
+impl Default for LocalFsCopyBackend {
+    fn default() -> Self {
+        Self {
+            file_copier: HybridFileCopier::default(),
+        }
+    }
+}
 
 impl CopyBackend for LocalFsCopyBackend {
     fn copy_batch(
@@ -83,7 +226,7 @@ impl CopyBackend for LocalFsCopyBackend {
                 }
             }
 
-            fs::copy(&source_path, &destination_path).map_err(|err| {
+            self.file_copier.copy_file(&source_path, &destination_path).map_err(|err| {
                 CaravanError::InvalidArguments(format!(
                     "failed to copy {} to {}: {err}",
                     source_path.display(),
