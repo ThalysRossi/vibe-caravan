@@ -1,9 +1,60 @@
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Mutex;
 
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::progress::ProgressReporter;
+
+/// Thread-local buffer pool for reusing allocation buffers between file copies.
+/// This eliminates the overhead of allocating large buffers (e.g., 64MiB) for each file.
+struct BufferPool {
+    /// Buffers of various sizes, keyed by their capacity
+    buffers: Mutex<Vec<Vec<u8>>>,
+}
+
+impl BufferPool {
+    /// Create a new empty buffer pool
+    fn new() -> Self {
+        Self {
+            buffers: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Get a buffer of at least the requested size.
+    /// Returns a buffer from the pool if available, otherwise allocates a new one.
+    fn get_buffer(&self, min_size: usize) -> Vec<u8> {
+        let mut buffers = self.buffers.lock().unwrap();
+        
+        // Try to find a buffer with sufficient capacity
+        if let Some(index) = buffers.iter().position(|buf| buf.capacity() >= min_size) {
+            let mut buffer = buffers.remove(index);
+            buffer.clear(); // Clear any existing data
+            buffer.resize(min_size, 0); // Ensure it has the right size
+            buffer
+        } else {
+            // Allocate new buffer with exact requested size
+            vec![0u8; min_size]
+        }
+    }
+
+    /// Return a buffer to the pool for reuse.
+    /// The pool keeps at most 4 buffers to avoid excessive memory usage.
+    fn return_buffer(&self, buffer: Vec<u8>) {
+        let mut buffers = self.buffers.lock().unwrap();
+        
+        // Keep at most 4 buffers in the pool (optimized for Ryzen 5 5600X + 16GB RAM)
+        if buffers.len() < 4 {
+            buffers.push(buffer);
+        }
+        // If pool is full, buffer is dropped (freed)
+    }
+}
+
+// Thread-local buffer pool instance
+thread_local! {
+    static BUFFER_POOL: BufferPool = BufferPool::new();
+}
 
 /// Trait for directory creation abstraction, primarily for testing.
 pub trait DirectoryCreator {
@@ -52,8 +103,8 @@ impl BufferedFileCopier {
         Self { buffer_size }
     }
     
-    /// Default buffer size (8 MiB)
-    pub const DEFAULT_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+    /// Default buffer size (16 MiB) - optimized for HDD performance
+    pub const DEFAULT_BUFFER_SIZE: usize = 16 * 1024 * 1024;
     
     /// Creates a new buffered file copier with the default buffer size.
     pub fn default() -> Self {
@@ -74,7 +125,8 @@ impl FileCopier for BufferedFileCopier {
         let mut source_file = std::fs::File::open(source)?;
         let mut dest_file = std::fs::File::create(destination)?;
         
-        let mut buffer = vec![0u8; self.buffer_size];
+        // Get buffer from pool instead of allocating new one
+        let mut buffer = BUFFER_POOL.with(|pool| pool.get_buffer(self.buffer_size));
         let mut total_copied = 0u64;
         
         loop {
@@ -86,6 +138,9 @@ impl FileCopier for BufferedFileCopier {
             dest_file.write_all(&buffer[..bytes_read])?;
             total_copied += bytes_read as u64;
         }
+        
+        // Return buffer to pool for reuse
+        BUFFER_POOL.with(|pool| pool.return_buffer(buffer));
         
         Ok(total_copied)
     }
@@ -108,13 +163,23 @@ impl HybridFileCopier {
     }
     
     /// Creates a new hybrid file copier with default values.
-    /// - Buffer size: 8 MiB (8 * 1024 * 1024)
-    /// - Threshold: 1 MiB (1 * 1024 * 1024)
+    /// - Buffer size: 16 MiB (16 * 1024 * 1024) - optimized for HDD performance
+    /// - Threshold: 8 MiB (8 * 1024 * 1024) - files smaller use OS copy
     pub fn with_defaults() -> Self {
         Self::new(
             BufferedFileCopier::DEFAULT_BUFFER_SIZE,
-            1 * 1024 * 1024, // 1 MiB
+            8 * 1024 * 1024, // 8 MiB
         )
+    }
+    
+    /// Get the buffer size in bytes
+    pub fn buffer_size(&self) -> usize {
+        self.buffer_size
+    }
+    
+    /// Get the threshold in bytes
+    pub fn threshold(&self) -> u64 {
+        self.threshold
     }
 }
 
@@ -130,11 +195,21 @@ impl FileCopier for HybridFileCopier {
         let metadata = std::fs::metadata(source)?;
         let file_size = metadata.len();
         
+        // Debug logging for copy decisions
+        let filename = source.file_name().unwrap_or_default().to_string_lossy();
+        let buffer_size_mb = self.buffer_size as f64 / (1024.0 * 1024.0);
+        let threshold_mb = self.threshold as f64 / (1024.0 * 1024.0);
+        let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
+        
         if file_size < self.threshold {
-            // Use OS copy for small files
+            // Debug: OS copy for small files
+            eprintln!("[DEBUG] Copying {} ({:.2} MiB) with OS copy (below {:.2} MiB threshold)", 
+                     filename, file_size_mb, threshold_mb);
             OsFileCopier.copy_file(source, destination)
         } else {
-            // Use buffered copy for large files
+            // Debug: Buffered copy for large files
+            eprintln!("[DEBUG] Copying {} ({:.2} MiB) with buffered copy ({} MiB buffer, above {:.2} MiB threshold)", 
+                     filename, file_size_mb, buffer_size_mb as u64, threshold_mb);
             let buffered_copier = BufferedFileCopier::new(self.buffer_size);
             buffered_copier.copy_file(source, destination)
         }

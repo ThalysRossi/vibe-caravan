@@ -314,6 +314,29 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         config.copy_buffer_size,
         config.buffered_copy_threshold,
     );
+    
+    // Hardware-aware warnings for inappropriate buffer sizes
+    {
+        let buffer_size_mb = config.copy_buffer_size as f64 / (1024.0 * 1024.0);
+        let threshold_mb = config.buffered_copy_threshold as f64 / (1024.0 * 1024.0);
+        
+        // Warn about small buffer sizes (common mistake when migrating from SSD to HDD)
+        if buffer_size_mb < 4.0 {
+            eprintln!("[WARNING] Copy buffer size is small ({:.2} MiB). For HDD performance, consider using at least 16 MiB buffer size.", buffer_size_mb);
+            eprintln!("  Use --copy-buffer-size 16MiB to optimize for 5400-7200 RPM HDDs.");
+        }
+        
+        // Warn about inappropriate thresholds
+        if threshold_mb < 1.0 {
+            eprintln!("[WARNING] Buffered copy threshold is very small ({:.2} MiB). OS copy is more efficient for files smaller than 8 MiB.", threshold_mb);
+            eprintln!("  Consider using --buffered-copy-threshold 8MiB for better HDD performance.");
+        }
+        
+        // Debug info about current configuration
+        eprintln!("[DEBUG] Using copy buffer size: {:.2} MiB, buffered copy threshold: {:.2} MiB", 
+                 buffer_size_mb, threshold_mb);
+    }
+    
     let mut processed_batches = 0_u32;
 
     // === PHASE 1: COPY ALL BATCHES ===

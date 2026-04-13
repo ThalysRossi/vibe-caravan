@@ -41,14 +41,17 @@ pub struct TransferConfig {
 }
 
 impl TransferConfig {
-    /// Default buffer size for file copying (8 MiB)
+    /// Default buffer size for file copying (16 MiB)
+    /// Optimized for HDD performance (5400-7200 RPM drives with 8-64MB cache)
     pub const fn default_copy_buffer_size() -> usize {
-        8 * 1024 * 1024
+        16 * 1024 * 1024
     }
     
-    /// Default threshold for using buffered copy (1 MiB)
+    /// Default threshold for using buffered copy (8 MiB)
+    /// Files smaller than this use OS copy (more efficient for small files)
+    /// Files larger than this use buffered copy (better for large sequential reads on HDD)
     pub const fn default_buffered_copy_threshold() -> u64 {
-        1 * 1024 * 1024
+        8 * 1024 * 1024
     }
 }
 
