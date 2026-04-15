@@ -4,11 +4,12 @@ use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::plan::PlanOptions;
 use crate::signal::{install_signal_handlers, ShutdownFlag};
-use crate::{migration_registry, plan, transfer};
+use crate::{migration_registry, plan, preflight, transfer};
 
 use super::shared::{
     ensure_no_operator_review_blocks_with_policy, persist_state_both_locations,
-    print_migration_complete, print_plan_summary, print_state_save_locations, OperatorReviewPolicy,
+    print_migration_complete, print_plan_summary, print_staging_preflight_warnings,
+    print_state_save_locations, OperatorReviewPolicy,
 };
 
 mod batch_handlers;
@@ -62,6 +63,8 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
         plan.source_file_count,
         plan.source_total_bytes,
     );
+    let preflight_report = preflight::analyze_staging_preflight(&config, &plan)?;
+    print_staging_preflight_warnings(&preflight_report.warnings);
 
     seed_state_batches(&mut state, &plan);
     persist_state_both_locations(&state_path, &secondary_state_path, &state)?;

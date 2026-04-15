@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::format;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, BatchState, JournalEntry};
+use crate::preflight::PreflightWarning;
 
 pub(crate) fn print_phase_banner(title: &str) {
     println!("\n=== {title} ===");
@@ -188,4 +189,15 @@ pub(crate) fn print_delete_source_batches_banner(batch_count: usize) {
         "\n=== Deleting source files for {} batch(es) ===",
         batch_count
     );
+}
+
+pub(crate) fn print_staging_preflight_warnings(warnings: &[PreflightWarning]) {
+    if warnings.is_empty() {
+        return;
+    }
+
+    println!("\n=== Staging Preflight Warnings ===");
+    for warning in warnings {
+        println!("  [{}] {}", warning.code.as_str(), warning.message);
+    }
 }
