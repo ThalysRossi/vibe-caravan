@@ -1,0 +1,59 @@
+# Caravan Session Handoff (2026-04-15)
+
+## Continuation Update (2026-04-15)
+- Continued from the "Resume Checklist" by decomposing `src/cli/commands/transfer.rs` into focused helpers while preserving behavior.
+- Transfer flow is now split into:
+  - setup helpers (`mode_name`, `register_migration`, `load_or_create_state`, `apply_transfer_config`, `seed_state_batches`)
+  - phase helpers (`run_copy_phase`, `run_verify_phase`, `run_delete_phase`)
+  - per-batch helpers (`copy_single_batch`, `verify_single_batch`)
+- Kept operator-review gating, conflict handling, verification failure behavior, and delete-approval flow intact.
+- Validation after refactor:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
+## Repository Snapshot
+- Branch: `main`
+- HEAD: `f26bf8b`
+- Last commit: `f26bf8b 2026-04-15 03:23:06 -0300 WIP: Refactor CLI monstrosity, break up cli.rs into modules`
+- Working tree at handoff: only `.codex` is untracked/modified.
+
+## What Was Completed In This Session
+- Completed CLI decomposition from monolith to module layout:
+  - `src/cli/commands.rs` is now a thin dispatcher.
+  - New command modules:
+    - `src/cli/commands/transfer.rs`
+    - `src/cli/commands/resume.rs`
+    - `src/cli/commands/status.rs`
+    - `src/cli/commands/shared.rs`
+- Extracted CLI config construction out of `src/cli.rs` into:
+  - `src/cli/config_builder.rs`
+- Preserved behavior while reducing `src/cli.rs` size and duplication.
+- Preserved and validated operator-review gating + resume/transfer state-machine behavior added in prior phases.
+
+## Current CLI Structure
+- `src/cli.rs`: CLI types + run entrypoint + delegates to builders/commands.
+- `src/cli/config_builder.rs`: `Cli -> Config` mapping and transfer-arg validation.
+- `src/cli/commands/*.rs`: command execution orchestration.
+
+## Verification Performed
+- `cargo test -q` (full suite): pass.
+- `cargo clippy --all-targets --all-features -- -D warnings`: pass.
+- `cargo fmt --all`: clean.
+
+## Resume Checklist For Fresh Session
+1. Open `src/cli/commands/transfer.rs` and assess remaining decomposition opportunities (it is still the largest command module).
+2. If continuing the original refactor roadmap, split transfer orchestration into smaller phase helpers (copy/verify/delete) without behavior drift.
+3. Keep TDD loop for any behavior changes: add failing test in `tests/` first, then implementation, then full validation.
+4. Re-run:
+   - `cargo fmt --all`
+   - `cargo test -q`
+   - `cargo clippy --all-targets --all-features -- -D warnings`
+
+## Notes
+- Safety policy currently fail-closed for `Failed` and failed-verification batches before destructive steps.
+- Resume path uses `plan_resume_step` and preserves batch IDs from persisted state.
+- Deletion path handles already-approved batches without re-prompting.
+
+## Original Plan Verification
+- Latest completed phase matches original plan direction: decomposed oversized CLI orchestration and extracted config-building responsibilities while preserving behavior and passing full validation.
