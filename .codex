@@ -166,6 +166,23 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 13 (2026-04-15)
+- Continued Windows staging scan performance work by reducing per-entry filesystem syscalls:
+  - Refactored `visit_dir_win32` in `src/scan.rs` to consume `WIN32_FIND_DATAW` directly for:
+    - entry type classification (directory/reparse/device)
+    - file size (`nFileSizeHigh/Low`)
+    - modified time (`ftLastWriteTime`) via FILETIME conversion helper
+  - Removed per-child `symlink_metadata` calls from the Win32 scan path.
+  - Preserved deterministic ordering, `.caravan` exclusion, and non-Windows fallback behavior.
+- Added focused conversion tests in `src/scan.rs` for FILETIME -> `SystemTime`:
+  - pre-UNIX epoch returns `None`
+  - UNIX epoch boundary conversion
+  - sub-second precision handling
+- Validation after this phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`

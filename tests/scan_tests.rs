@@ -156,3 +156,31 @@ fn std_backend_scan_is_deterministic_and_sorted() {
         vec!["a/a.txt", "a/b.txt", "x/a.txt", "x/z.txt"]
     );
 }
+
+#[cfg(windows)]
+mod windows_filetime_tests {
+    use caravan::scan::windows_filetime_ticks_to_system_time;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    const WINDOWS_TO_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
+
+    #[test]
+    fn windows_filetime_ticks_before_unix_epoch_returns_none() {
+        assert!(windows_filetime_ticks_to_system_time(0).is_none());
+        assert!(windows_filetime_ticks_to_system_time(WINDOWS_TO_UNIX_EPOCH_100NS - 1).is_none());
+    }
+
+    #[test]
+    fn windows_filetime_ticks_at_unix_epoch_returns_epoch() {
+        let converted = windows_filetime_ticks_to_system_time(WINDOWS_TO_UNIX_EPOCH_100NS)
+            .expect("unix epoch should be representable");
+        assert_eq!(converted, UNIX_EPOCH);
+    }
+
+    #[test]
+    fn windows_filetime_ticks_preserve_subsecond_precision() {
+        let ticks = WINDOWS_TO_UNIX_EPOCH_100NS + 1_250_000; // 125ms in 100ns units
+        let converted = windows_filetime_ticks_to_system_time(ticks).expect("valid conversion");
+        assert_eq!(converted, UNIX_EPOCH + Duration::from_millis(125));
+    }
+}

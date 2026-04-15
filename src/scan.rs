@@ -5,6 +5,20 @@ use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
 
 #[cfg(windows)]
+const WINDOWS_TO_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
+
+#[cfg(windows)]
+#[doc(hidden)]
+pub fn windows_filetime_ticks_to_system_time(ticks_100ns: u64) -> Option<std::time::SystemTime> {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let unix_ticks = ticks_100ns.checked_sub(WINDOWS_TO_UNIX_EPOCH_100NS)?;
+    let secs = unix_ticks / 10_000_000;
+    let nanos = ((unix_ticks % 10_000_000) * 100) as u32;
+    Some(UNIX_EPOCH + Duration::new(secs, nanos))
+}
+
+#[cfg(windows)]
 #[derive(Debug)]
 struct WinFindHandle(windows_sys::Win32::Foundation::HANDLE);
 
@@ -139,12 +153,21 @@ fn visit_dir_win32(
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_NO_MORE_FILES};
     use windows_sys::Win32::Storage::FileSystem::{
         FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
+        FILE_ATTRIBUTE_DEVICE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
         FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
     };
 
     fn wide_to_os_string(wide: &[u16]) -> OsString {
         let len = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
         OsString::from_wide(&wide[..len])
+    }
+
+    #[derive(Debug)]
+    struct WinEnumeratedEntry {
+        path: PathBuf,
+        attributes: u32,
+        size_bytes: u64,
+        modified_time: Option<std::time::SystemTime>,
     }
 
     let search_pattern = current_dir.join("*");
@@ -175,17 +198,27 @@ fn visit_dir_win32(
         ));
     };
 
-    let mut children: Vec<PathBuf> = Vec::new();
+    let mut children: Vec<WinEnumeratedEntry> = Vec::new();
     loop {
         let name = wide_to_os_string(&find_data.cFileName);
         let name_lossy = name.to_string_lossy();
         if name_lossy != "." && name_lossy != ".." {
-            children.push(current_dir.join(&name));
+            let size_bytes =
+                ((find_data.nFileSizeHigh as u64) << 32) | find_data.nFileSizeLow as u64;
+            let modified_ticks = ((find_data.ftLastWriteTime.dwHighDateTime as u64) << 32)
+                | find_data.ftLastWriteTime.dwLowDateTime as u64;
+            children.push(WinEnumeratedEntry {
+                path: current_dir.join(&name),
+                attributes: find_data.dwFileAttributes,
+                size_bytes,
+                modified_time: windows_filetime_ticks_to_system_time(modified_ticks),
+            });
         }
 
         // SAFETY: `find_handle` is a valid search handle and `find_data` is writable.
         let has_next = unsafe { FindNextFileW(find_handle.as_raw(), &mut find_data) };
         if has_next == 0 {
+            // SAFETY: reads thread-local Win32 last-error code after failed Win32 API call.
             let error_code = unsafe { GetLastError() };
             if error_code == ERROR_NO_MORE_FILES {
                 break;
@@ -197,31 +230,34 @@ fn visit_dir_win32(
         }
     }
 
-    children.sort();
+    children.sort_by(|a, b| a.path.cmp(&b.path));
 
     for child in children {
-        let metadata =
-            fs::symlink_metadata(&child).map_err(map_io("failed to read source file metadata"))?;
-        if metadata.is_dir() {
-            if let Some(file_name) = child.file_name() {
+        let is_dir = child.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+        let is_reparse_point = child.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        let is_device = child.attributes & FILE_ATTRIBUTE_DEVICE != 0;
+
+        if is_reparse_point || is_device {
+            continue;
+        }
+
+        if is_dir {
+            if let Some(file_name) = child.path.file_name() {
                 if file_name == ".caravan" {
                     continue;
                 }
             }
-            visit_dir_win32(source_root, &child, output)?;
-            continue;
-        }
-        if !metadata.is_file() {
+            visit_dir_win32(source_root, &child.path, output)?;
             continue;
         }
 
-        let relative_path = child.strip_prefix(source_root).map_err(|_| {
+        let relative_path = child.path.strip_prefix(source_root).map_err(|_| {
             CaravanError::InvalidArguments("failed to derive relative path during scan".to_string())
         })?;
         output.push(FileEntry {
             relative_path: relative_path.to_path_buf(),
-            size_bytes: metadata.len(),
-            modified_time: metadata.modified().ok(),
+            size_bytes: child.size_bytes,
+            modified_time: child.modified_time,
         });
     }
 
