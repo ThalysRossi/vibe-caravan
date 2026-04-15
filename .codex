@@ -27,6 +27,19 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 3 (2026-04-15)
+- Continued CLI modularization by splitting `src/cli/commands/shared.rs` into:
+  - `src/cli/commands/shared/mod.rs` (re-export surface)
+  - `src/cli/commands/shared/persistence.rs` (state persistence helpers)
+  - `src/cli/commands/shared/capacity_guard.rs` (destination capacity checks)
+  - `src/cli/commands/shared/operator_review.rs` (fail-closed review gating)
+  - `src/cli/commands/shared/deletion.rs` (approval + delete orchestration)
+- Preserved existing callers by keeping the same `super::shared::*` imports through re-exports.
+- Validation after shared split:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`
