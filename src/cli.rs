@@ -24,7 +24,7 @@ pub enum Command {
     Staging(TransferArgs),
     Migrate(MigrateArgs),
     Status(StateArgs),
-    Resume(StateArgs),
+    Resume(ResumeArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -43,6 +43,8 @@ pub struct TransferArgs {
     pub verification: VerificationArg,
     #[arg(long, default_value_t = false)]
     pub skip_conflicts: bool,
+    #[arg(long, default_value_t = false)]
+    pub recover_failed: bool,
     #[arg(long)]
     pub copy_buffer_size: Option<String>,
     #[arg(long)]
@@ -61,6 +63,14 @@ pub struct MigrateArgs {
 pub struct StateArgs {
     #[arg(long, default_value = ".caravan/state.json")]
     pub state: PathBuf,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ResumeArgs {
+    #[arg(long, default_value = ".caravan/state.json")]
+    pub state: PathBuf,
+    #[arg(long, default_value_t = false)]
+    pub recover_failed: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -103,7 +113,8 @@ pub fn run() -> Result<(), CaravanError> {
         Config::Resume {
             state,
             log_level: _,
-        } => commands::execute_resume(&state),
+            recover_failed,
+        } => commands::execute_resume(&state, recover_failed),
     }
 }
 

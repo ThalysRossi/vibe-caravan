@@ -7,8 +7,8 @@ use crate::signal::{install_signal_handlers, ShutdownFlag};
 use crate::{migration_registry, plan, transfer};
 
 use super::shared::{
-    ensure_no_operator_review_blocks, persist_state_both_locations, print_migration_complete,
-    print_plan_summary, print_state_save_locations,
+    ensure_no_operator_review_blocks_with_policy, persist_state_both_locations,
+    print_migration_complete, print_plan_summary, print_state_save_locations, OperatorReviewPolicy,
 };
 
 mod batch_handlers;
@@ -42,7 +42,12 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     let mut state = load_or_create_state(&config, &state_path, mode, &source_str, &dest_str)?;
     apply_transfer_config(&mut state, &config);
 
-    ensure_no_operator_review_blocks(&state)?;
+    ensure_no_operator_review_blocks_with_policy(
+        &state,
+        OperatorReviewPolicy {
+            allow_failed_batches: config.recover_failed,
+        },
+    )?;
 
     print_state_save_locations(&state_path, &secondary_state_path);
 

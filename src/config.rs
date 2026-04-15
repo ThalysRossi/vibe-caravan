@@ -27,6 +27,8 @@ pub struct TransferConfig {
     pub verification: VerificationMode,
     pub log_level: String,
     pub skip_conflicts: bool,
+    #[serde(default)]
+    pub recover_failed: bool,
 
     /// Buffer size for file copying (in bytes).
     /// Default: 8 MiB (8 * 1024 * 1024)
@@ -59,6 +61,13 @@ impl TransferConfig {
 pub enum Config {
     Staging(TransferConfig),
     Migrate(TransferConfig),
-    Status { state: PathBuf, log_level: String },
-    Resume { state: PathBuf, log_level: String },
+    Status {
+        state: PathBuf,
+        log_level: String,
+    },
+    Resume {
+        state: PathBuf,
+        log_level: String,
+        recover_failed: bool,
+    },
 }

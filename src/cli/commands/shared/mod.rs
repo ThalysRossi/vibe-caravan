@@ -10,7 +10,10 @@ pub(super) use batch_ops::{
 };
 pub(super) use capacity_guard::ensure_destination_capacity;
 pub(super) use deletion::approve_and_delete_verified_batches;
-pub(super) use operator_review::ensure_no_operator_review_blocks;
+pub(super) use operator_review::{
+    ensure_no_operator_review_blocks, ensure_no_operator_review_blocks_with_policy,
+    OperatorReviewPolicy,
+};
 pub(super) use output::{
     print_all_verified_banner, print_copy_batch_banner, print_delete_source_batches_banner,
     print_deletion_not_approved, print_last_snapshot, print_migration_complete, print_phase_banner,

@@ -1,6 +1,11 @@
 use crate::error::CaravanError;
 use crate::models::state::{BatchPhase, MigrationState};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct OperatorReviewPolicy {
+    pub allow_failed_batches: bool,
+}
+
 fn failed_batches_requiring_review(state: &MigrationState) -> Vec<String> {
     state
         .batches
@@ -54,7 +59,21 @@ fn ensure_no_failed_verification_batches(state: &MigrationState) -> Result<(), C
 }
 
 pub(crate) fn ensure_no_operator_review_blocks(state: &MigrationState) -> Result<(), CaravanError> {
-    ensure_no_failed_batches(state)?;
+    ensure_no_operator_review_blocks_with_policy(
+        state,
+        OperatorReviewPolicy {
+            allow_failed_batches: false,
+        },
+    )
+}
+
+pub(crate) fn ensure_no_operator_review_blocks_with_policy(
+    state: &MigrationState,
+    policy: OperatorReviewPolicy,
+) -> Result<(), CaravanError> {
+    if !policy.allow_failed_batches {
+        ensure_no_failed_batches(state)?;
+    }
     ensure_no_failed_verification_batches(state)?;
     Ok(())
 }

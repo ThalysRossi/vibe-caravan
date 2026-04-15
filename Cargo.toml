@@ -21,3 +21,6 @@ tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
 mockall = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }

@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use caravan::capacity::{check_capacity_with_probe, CapacityDecision, SpaceInfo, SpaceProbe};
+use caravan::capacity::{
+    check_capacity_with_probe, format_capacity_decision_trace, CapacityDecision, SpaceInfo,
+    SpaceProbe,
+};
 use caravan::error::CaravanError;
 
 #[derive(Debug, Clone, Copy)]
@@ -141,4 +144,24 @@ fn missing_directory_error_is_clear() {
     assert!(err_str.contains("failed to read destination total capacity"));
     // The test expects the old error message, but after our fix, the error should be clearer
     // For now, we just test that it fails
+}
+
+#[test]
+fn capacity_trace_includes_destination_volume_and_raw_bytes() {
+    let probe = StubProbe {
+        total: 10_000,
+        available: 9_000,
+    };
+
+    let report = check_capacity_with_probe(Path::new("/fake/destination"), 2_000, 500, &probe)
+        .expect("capacity check should succeed");
+
+    let trace = format_capacity_decision_trace(Path::new("/fake/destination"), &report);
+    assert!(trace.contains("destination=/fake/destination"));
+    assert!(trace.contains("volume_root=/"));
+    assert!(trace.contains("available_raw_bytes=9000"));
+    assert!(trace.contains("required_raw_bytes=2500"));
+    assert!(trace.contains("planned_raw_bytes=2000"));
+    assert!(trace.contains("reserve_raw_bytes=500"));
+    assert!(trace.contains("decision=proceed"));
 }

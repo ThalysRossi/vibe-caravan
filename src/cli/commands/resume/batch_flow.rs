@@ -29,7 +29,7 @@ fn plan_next_step(
     config: &TransferConfig,
 ) -> resume_ops::ResumeStepPlan {
     let recon = resume_ops::reconcile_batch_destination(batch, &config.dest);
-    resume_ops::plan_resume_step(batch_state, &recon, batch)
+    resume_ops::plan_resume_step_with_recovery(batch_state, &recon, batch, config.recover_failed)
 }
 
 fn process_resume_batch(

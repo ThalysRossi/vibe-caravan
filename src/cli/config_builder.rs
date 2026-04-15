@@ -42,6 +42,7 @@ pub(super) fn to_config(cli: Cli) -> Result<Config, CaravanError> {
         Some(Command::Resume(args)) => Ok(Config::Resume {
             state: args.state,
             log_level,
+            recover_failed: args.recover_failed,
         }),
         None => Err(CaravanError::InvalidArguments(
             "missing subcommand".to_string(),
@@ -71,6 +72,7 @@ fn build_transfer_config(
         verification: args.verification.into(),
         log_level,
         skip_conflicts: args.skip_conflicts,
+        recover_failed: args.recover_failed,
         copy_buffer_size,
         buffered_copy_threshold,
     })

@@ -72,6 +72,13 @@ pub struct ReconciliationResult {
     pub size_mismatches: Vec<String>,
 }
 
+pub fn reconciliation_summary(recon: &ReconciliationResult) -> String {
+    format!(
+        "missing_in_destination={:?}; size_mismatches={:?}",
+        recon.missing_in_destination, recon.size_mismatches
+    )
+}
+
 /// For each file in the batch, check destination exists and size matches the planned entry.
 pub fn reconcile_batch_destination(batch: &Batch, dest_root: &Path) -> ReconciliationResult {
     let mut missing_in_destination = Vec::new();
@@ -153,12 +160,41 @@ pub fn load_state_for_resume(path: &Path) -> Result<MigrationState, CaravanError
 pub fn plan_resume_step(
     batch_state: &BatchState,
     recon: &ReconciliationResult,
+    batch: &Batch,
+) -> ResumeStepPlan {
+    plan_resume_step_with_recovery(batch_state, recon, batch, false)
+}
+
+pub fn plan_resume_step_with_recovery(
+    batch_state: &BatchState,
+    recon: &ReconciliationResult,
     _batch: &Batch,
+    allow_failed_recovery: bool,
 ) -> ResumeStepPlan {
     match batch_state.phase {
-        BatchPhase::Failed => ResumeStepPlan::ConflictOperatorReview {
-            reason: "batch is marked failed; operator review required".to_string(),
-        },
+        BatchPhase::Failed => {
+            if !allow_failed_recovery {
+                return ResumeStepPlan::ConflictOperatorReview {
+                    reason: format!(
+                        "batch is marked failed; operator review required ({})",
+                        reconciliation_summary(recon)
+                    ),
+                };
+            }
+
+            if recon.all_destination_files_ready {
+                ResumeStepPlan::VerifyBatch
+            } else if !recon.size_mismatches.is_empty() {
+                ResumeStepPlan::ConflictOperatorReview {
+                    reason: format!(
+                        "failed-batch recovery blocked due to destination size mismatches ({})",
+                        reconciliation_summary(recon)
+                    ),
+                }
+            } else {
+                ResumeStepPlan::CopyBatch
+            }
+        }
         BatchPhase::Planned => ResumeStepPlan::CopyBatch,
         BatchPhase::CopyStarted => {
             if recon.all_destination_files_ready {

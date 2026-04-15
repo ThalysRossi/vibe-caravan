@@ -6,9 +6,10 @@ use crate::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
 use crate::{resume as resume_ops, state_store, transfer};
 
 use super::shared::{
-    approve_and_delete_verified_batches, ensure_no_operator_review_blocks, print_resume_complete,
+    approve_and_delete_verified_batches, ensure_no_operator_review_blocks,
+    ensure_no_operator_review_blocks_with_policy, print_resume_complete,
     print_resume_completed_batches, print_resume_state_details, print_resume_state_header,
-    print_resuming_transfer,
+    print_resuming_transfer, OperatorReviewPolicy,
 };
 
 mod batch_flow;
@@ -18,7 +19,7 @@ mod step_handlers;
 use batch_flow::run_resume_batches;
 use config::transfer_config_from_state;
 
-pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
+pub(super) fn execute_resume(state_path: &Path, recover_failed: bool) -> Result<(), CaravanError> {
     let shutdown_flag = ShutdownFlag::new();
     install_signal_handlers(&shutdown_flag)?;
 
@@ -35,9 +36,16 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();
     print_resume_completed_batches(completed_count, state.batches.len());
 
-    ensure_no_operator_review_blocks(&state)?;
+    ensure_no_operator_review_blocks_with_policy(
+        &state,
+        OperatorReviewPolicy {
+            // Failed batches are evaluated per-batch during resume planning so
+            // operators can see destination reconciliation details.
+            allow_failed_batches: true,
+        },
+    )?;
 
-    let config = transfer_config_from_state(&state)?;
+    let config = transfer_config_from_state(&state, recover_failed)?;
 
     print_resuming_transfer();
 

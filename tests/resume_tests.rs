@@ -10,8 +10,9 @@ use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::resume::{
     classify_capacity_failure_message, classify_copy_failure_message,
     classify_verification_failure_message, load_state_for_resume, plan_resume_step,
-    reconcile_batch_destination, recovery_message, require_delete_permission_for_resume,
-    resume_run, FailureClass, ReconciliationResult, ResumeOptions, ResumeStepPlan,
+    plan_resume_step_with_recovery, reconcile_batch_destination, recovery_message,
+    require_delete_permission_for_resume, resume_run, FailureClass, ReconciliationResult,
+    ResumeOptions, ResumeStepPlan,
 };
 use caravan::state_store::{load_state, persist_state};
 use tempfile::TempDir;
@@ -224,6 +225,48 @@ fn failed_phase_requires_operator_review() {
         plan_resume_step(&state, &recon, &batch),
         ResumeStepPlan::ConflictOperatorReview { .. }
     ));
+}
+
+#[test]
+fn failed_phase_with_recovery_enabled_and_missing_files_plans_copy() {
+    let batch = sample_batch();
+    let state = BatchState {
+        batch_id: batch.id.clone(),
+        phase: BatchPhase::Failed,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    };
+    let recon = ReconciliationResult {
+        all_destination_files_ready: false,
+        missing_in_destination: vec!["a.txt".into()],
+        size_mismatches: vec![],
+    };
+    assert_eq!(
+        plan_resume_step_with_recovery(&state, &recon, &batch, true),
+        ResumeStepPlan::CopyBatch
+    );
+}
+
+#[test]
+fn failed_phase_with_recovery_enabled_and_complete_destination_plans_verify() {
+    let batch = sample_batch();
+    let state = BatchState {
+        batch_id: batch.id.clone(),
+        phase: BatchPhase::Failed,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    };
+    let recon = ReconciliationResult {
+        all_destination_files_ready: true,
+        missing_in_destination: vec![],
+        size_mismatches: vec![],
+    };
+    assert_eq!(
+        plan_resume_step_with_recovery(&state, &recon, &batch, true),
+        ResumeStepPlan::VerifyBatch
+    );
 }
 
 #[test]
@@ -526,6 +569,7 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
         verification: VerificationMode::Structural,
         log_level: "error".to_string(),
         skip_conflicts: false,
+        recover_failed: false,
         copy_buffer_size: TransferConfig::default_copy_buffer_size(),
         buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
     };

@@ -227,3 +227,41 @@ fn zero_buffered_copy_threshold_is_rejected() {
 
     assert!(result.is_err());
 }
+
+#[test]
+fn staging_recover_failed_flag_is_parsed() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--recover-failed",
+    ])
+    .expect("staging with recover-failed should parse");
+
+    match result {
+        Config::Staging(cfg) => assert!(cfg.recover_failed),
+        _ => panic!("expected staging config"),
+    }
+}
+
+#[test]
+fn resume_recover_failed_flag_defaults_to_false_and_can_be_enabled() {
+    let off = parse_cli_from(["caravan", "resume"]).expect("resume parse should pass");
+    let on = parse_cli_from(["caravan", "resume", "--recover-failed"])
+        .expect("resume parse with recover-failed should pass");
+
+    match off {
+        Config::Resume { recover_failed, .. } => assert!(!recover_failed),
+        _ => panic!("expected resume config"),
+    }
+
+    match on {
+        Config::Resume { recover_failed, .. } => assert!(recover_failed),
+        _ => panic!("expected resume config"),
+    }
+}

@@ -6,6 +6,7 @@ use crate::models::state::MigrationState;
 
 pub(super) fn transfer_config_from_state(
     state: &MigrationState,
+    recover_failed: bool,
 ) -> Result<TransferConfig, CaravanError> {
     Ok(TransferConfig {
         mode: match state.mode.as_str() {
@@ -27,6 +28,7 @@ pub(super) fn transfer_config_from_state(
         verification: state.verification_mode.clone(),
         log_level: "info".to_string(),
         skip_conflicts: false,
+        recover_failed,
         copy_buffer_size: state.copy_buffer_size,
         buffered_copy_threshold: state.buffered_copy_threshold,
     })
