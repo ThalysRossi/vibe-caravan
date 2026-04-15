@@ -122,6 +122,19 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 10 (2026-04-15)
+- Continued structural command cleanup for resume flow:
+  - Added `src/cli/commands/resume/step_handlers.rs` for step execution logic
+    (`copy`/`verify` handlers + `ResumeStepPlan` match handling).
+  - Refactored `src/cli/commands/resume/batch_flow.rs` to orchestration-only concerns:
+    batch lookup, batch definition load, step planning, and step dispatch.
+  - Updated `src/cli/commands/resume/mod.rs` to include the new module.
+- Behavior preserved; this phase is internal structure only.
+- Validation after resume structural split:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`

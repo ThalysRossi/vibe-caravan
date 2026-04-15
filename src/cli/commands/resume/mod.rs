@@ -13,6 +13,7 @@ use super::shared::{
 
 mod batch_flow;
 mod config;
+mod step_handlers;
 
 use batch_flow::run_resume_batches;
 use config::transfer_config_from_state;
