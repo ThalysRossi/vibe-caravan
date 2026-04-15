@@ -4,9 +4,12 @@ use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::plan::PlanOptions;
 use crate::signal::{install_signal_handlers, ShutdownFlag};
-use crate::{format, migration_registry, plan, transfer};
+use crate::{migration_registry, plan, transfer};
 
-use super::shared::{ensure_no_operator_review_blocks, persist_state_both_locations};
+use super::shared::{
+    ensure_no_operator_review_blocks, persist_state_both_locations, print_migration_complete,
+    print_plan_summary, print_state_save_locations,
+};
 
 mod copy_phase;
 mod delete_phase;
@@ -40,11 +43,7 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
 
     ensure_no_operator_review_blocks(&state)?;
 
-    println!(
-        "State will be saved to: {} (primary) and {} (backward compatibility)",
-        state_path.display(),
-        secondary_state_path.display()
-    );
+    print_state_save_locations(&state_path, &secondary_state_path);
 
     let plan_opts = PlanOptions {
         batch_size_bytes: config.batch_size_bytes,
@@ -52,11 +51,10 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     };
     let plan = plan::build_plan(&config.source, &plan_opts)?;
 
-    println!(
-        "Planned {} batches for {} files ({} total)",
+    print_plan_summary(
         plan.batches.len(),
         plan.source_file_count,
-        format::format_bytes(plan.source_total_bytes)
+        plan.source_total_bytes,
     );
 
     seed_state_batches(&mut state, &plan);
@@ -95,9 +93,6 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     )?;
 
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();
-    println!(
-        "\n=== Migration complete! {} batches processed, {} total completed ===",
-        processed_batches, completed_count
-    );
+    print_migration_complete(processed_batches, completed_count);
     Ok(())
 }

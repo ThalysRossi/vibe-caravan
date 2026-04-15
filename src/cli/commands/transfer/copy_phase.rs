@@ -6,11 +6,12 @@ use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, MigrationPhase, MigrationState};
 use crate::prompt::PromptBackend;
 use crate::signal::{check_shutdown, ShutdownFlag};
-use crate::{format, prompt, transfer};
+use crate::{prompt, transfer};
 
 use super::super::shared::{
     copy_batch_with_state_updates, ensure_destination_capacity, persist_state_both_locations,
-    CopyBatchOp,
+    print_copy_batch_banner, print_phase_banner, print_skip_already_completed,
+    print_skip_copy_already_completed, CopyBatchOp,
 };
 use super::setup::planned_batch_state;
 
@@ -22,12 +23,7 @@ fn copy_single_batch(
     secondary_state_path: &Path,
     copy_backend: &transfer::LocalFsCopyBackend,
 ) -> Result<(), CaravanError> {
-    println!(
-        "\n=== Copying {} ({} files, {}) ===",
-        batch.id,
-        batch.file_count,
-        format::format_bytes(batch.total_bytes)
-    );
+    print_copy_batch_banner(batch);
 
     let mut batch_state = state
         .batch(&batch.id)
@@ -95,7 +91,7 @@ pub(super) fn run_copy_phase(
 ) -> Result<u32, CaravanError> {
     state.migration_phase = MigrationPhase::Copying;
     persist_state_both_locations(state_path, secondary_state_path, state)?;
-    println!("\n=== Copying all batches ===");
+    print_phase_banner("Copying all batches");
 
     let mut processed_batches = 0_u32;
     for batch in &plan.batches {
@@ -103,7 +99,7 @@ pub(super) fn run_copy_phase(
 
         if let Some(existing_batch) = state.batch(&batch.id) {
             if existing_batch.deleted {
-                println!("Skipping {}: already completed", batch.id);
+                print_skip_already_completed(&batch.id);
                 processed_batches += 1;
                 continue;
             }
@@ -115,10 +111,7 @@ pub(super) fn run_copy_phase(
                     | BatchPhase::DeleteCompleted
                     | BatchPhase::SnapshotCompleted
             ) {
-                println!(
-                    "Skipping {}: copy already completed (phase: {:?})",
-                    batch.id, existing_batch.phase
-                );
+                print_skip_copy_already_completed(&batch.id, existing_batch.phase);
                 continue;
             }
         }

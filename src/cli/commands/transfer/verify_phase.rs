@@ -2,12 +2,15 @@ use std::path::Path;
 
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
-use crate::format;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, MigrationPhase, MigrationState};
 use crate::signal::{check_shutdown, ShutdownFlag};
 
-use super::super::shared::{persist_state_both_locations, verify_batch_with_state_updates};
+use super::super::shared::{
+    persist_state_both_locations, print_phase_banner, print_skip_verification_already_completed,
+    print_skip_verification_requires_operator_review, print_verification_passed,
+    print_verify_batch_banner, verify_batch_with_state_updates,
+};
 
 fn verify_single_batch(
     batch: &Batch,
@@ -16,12 +19,7 @@ fn verify_single_batch(
     state_path: &Path,
     secondary_state_path: &Path,
 ) -> Result<(), CaravanError> {
-    println!(
-        "\n=== Verifying {} ({} files, {}) ===",
-        batch.id,
-        batch.file_count,
-        format::format_bytes(batch.total_bytes)
-    );
+    print_verify_batch_banner(batch);
 
     let mut persist_state = |current_state: &MigrationState| {
         persist_state_both_locations(state_path, secondary_state_path, current_state)
@@ -41,7 +39,7 @@ fn verify_single_batch(
         },
     )?;
 
-    println!("Verification passed!");
+    print_verification_passed();
     Ok(())
 }
 
@@ -55,7 +53,7 @@ pub(super) fn run_verify_phase(
 ) -> Result<u32, CaravanError> {
     state.migration_phase = MigrationPhase::Verifying;
     persist_state_both_locations(state_path, secondary_state_path, state)?;
-    println!("\n=== Verifying all batches ===");
+    print_phase_banner("Verifying all batches");
 
     let mut processed_batches = 0_u32;
     for batch in &plan.batches {
@@ -66,10 +64,7 @@ pub(super) fn run_verify_phase(
                 continue;
             }
             if existing_batch.phase == BatchPhase::Failed {
-                println!(
-                    "Skipping {}: requires operator review before verification",
-                    batch.id
-                );
+                print_skip_verification_requires_operator_review(&batch.id);
                 continue;
             }
             if existing_batch.verification_passed
@@ -81,10 +76,7 @@ pub(super) fn run_verify_phase(
                         | BatchPhase::SnapshotCompleted
                 )
             {
-                println!(
-                    "Skipping {}: verification already completed (phase: {:?})",
-                    batch.id, existing_batch.phase
-                );
+                print_skip_verification_already_completed(&batch.id, existing_batch.phase);
                 processed_batches += 1;
                 continue;
             }

@@ -4,11 +4,12 @@ use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
 use crate::signal::{check_shutdown, ShutdownFlag};
-use crate::{format, plan, resume as resume_ops, state_store, transfer};
+use crate::{plan, resume as resume_ops, state_store, transfer};
 
 use super::super::shared::{
-    copy_batch_with_state_updates, ensure_destination_capacity, verify_batch_with_state_updates,
-    CopyBatchOp,
+    copy_batch_with_state_updates, ensure_destination_capacity, print_resume_continue_to_deletion,
+    print_resume_processing_batch_banner, print_resume_skip_already_completed,
+    print_resume_verification_passed, verify_batch_with_state_updates, CopyBatchOp,
 };
 
 fn verify_batch_for_resume(
@@ -35,7 +36,7 @@ fn verify_batch_for_resume(
         },
     )?;
 
-    println!("✅ Verification passed!");
+    print_resume_verification_passed();
     Ok(())
 }
 
@@ -46,12 +47,7 @@ fn copy_batch_for_resume(
     state_path: &Path,
     copy_backend: &transfer::LocalFsCopyBackend,
 ) -> Result<(), CaravanError> {
-    println!(
-        "\n=== Processing {} ({} files, {}) ===",
-        batch.id,
-        batch.file_count,
-        format::format_bytes(batch.total_bytes)
-    );
+    print_resume_processing_batch_banner(batch);
 
     ensure_destination_capacity(&config.dest, batch.total_bytes)?;
     let mut persist_state =
@@ -95,7 +91,7 @@ fn process_resume_batch(
         .clone();
 
     if batch_state.deleted {
-        println!("⏭️  Skipping {}: already completed", batch_state.batch_id);
+        print_resume_skip_already_completed(&batch_state.batch_id);
         return Ok(());
     }
 
@@ -111,7 +107,7 @@ fn process_resume_batch(
     match step {
         resume_ops::ResumeStepPlan::BatchFullyCompleted
         | resume_ops::ResumeStepPlan::PostDeleteSnapshot => {
-            println!("⏭️  Skipping {}: already completed", batch.id);
+            print_resume_skip_already_completed(&batch.id);
             Ok(())
         }
         resume_ops::ResumeStepPlan::ConflictOperatorReview { reason } => {
@@ -128,10 +124,7 @@ fn process_resume_batch(
         }
         resume_ops::ResumeStepPlan::DeleteSource
         | resume_ops::ResumeStepPlan::PendingDeleteApproval => {
-            println!(
-                "✅ {} already verified, will continue to deletion phase",
-                batch.id
-            );
+            print_resume_continue_to_deletion(&batch.id);
             Ok(())
         }
         resume_ops::ResumeStepPlan::VerifyBatch => {

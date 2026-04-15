@@ -7,6 +7,10 @@ use crate::plan;
 use crate::prompt;
 use crate::signal::{check_shutdown, ShutdownFlag};
 
+use super::{
+    print_all_verified_banner, print_delete_source_batches_banner, print_deletion_not_approved,
+};
+
 pub(crate) fn approve_and_delete_verified_batches(
     state: &mut MigrationState,
     source_root: &Path,
@@ -28,10 +32,7 @@ pub(crate) fn approve_and_delete_verified_batches(
     let batches_needing_approval = state.batches_needing_approval();
     if !batches_needing_approval.is_empty() {
         let prompt_backend = prompt::InteractivePrompt;
-        println!(
-            "\n=== All {} batches have been verified successfully ===",
-            batches_needing_approval.len()
-        );
+        print_all_verified_banner(batches_needing_approval.len());
 
         let approved = prompt::request_approval_for_batches(
             Some(&prompt_backend),
@@ -41,7 +42,7 @@ pub(crate) fn approve_and_delete_verified_batches(
         )?;
 
         if !approved {
-            println!("Deletion not approved. Stopping.");
+            print_deletion_not_approved();
             return Ok(());
         }
 
@@ -73,10 +74,7 @@ fn delete_batches_by_id(
         return Ok(());
     }
 
-    println!(
-        "\n=== Deleting source files for {} batch(es) ===",
-        batch_ids.len()
-    );
+    print_delete_source_batches_banner(batch_ids.len());
 
     for batch_id in batch_ids {
         check_shutdown(shutdown_flag)?;

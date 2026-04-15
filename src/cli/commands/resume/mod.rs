@@ -5,7 +5,11 @@ use crate::models::state::MigrationState;
 use crate::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
 use crate::{resume as resume_ops, state_store, transfer};
 
-use super::shared::{approve_and_delete_verified_batches, ensure_no_operator_review_blocks};
+use super::shared::{
+    approve_and_delete_verified_batches, ensure_no_operator_review_blocks, print_resume_complete,
+    print_resume_completed_batches, print_resume_state_details, print_resume_state_header,
+    print_resuming_transfer,
+};
 
 mod batch_flow;
 mod config;
@@ -19,24 +23,22 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
 
     let mut state = resume_ops::resume_run(state_path)?;
 
-    println!("=== Resuming from saved state ===");
-    println!("Mode: {}", state.mode);
-    println!("Source: {}", state.source);
-    println!("Destination: {}", state.destination);
-    println!("Total batches: {}", state.batches.len());
+    print_resume_state_header();
+    print_resume_state_details(
+        &state.mode,
+        &state.source,
+        &state.destination,
+        state.batches.len(),
+    );
 
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();
-    println!(
-        "Completed batches: {} / {}",
-        completed_count,
-        state.batches.len()
-    );
+    print_resume_completed_batches(completed_count, state.batches.len());
 
     ensure_no_operator_review_blocks(&state)?;
 
     let config = transfer_config_from_state(&state)?;
 
-    println!("Resuming transfer...\n");
+    print_resuming_transfer();
 
     let copy_backend = transfer::LocalFsCopyBackend::with_config(
         config.copy_buffer_size,
@@ -66,11 +68,7 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
     )?;
 
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();
-    println!(
-        "\n✅ Resume complete! {} batches processed, {} total completed",
-        state.batches.len(),
-        completed_count
-    );
+    print_resume_complete(state.batches.len(), completed_count);
 
     Ok(())
 }

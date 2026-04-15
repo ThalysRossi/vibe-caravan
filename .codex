@@ -81,6 +81,36 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 7 (2026-04-15)
+- Continued command-layer cleanup by extracting repeated command output strings into:
+  - `src/cli/commands/shared/output.rs`
+- Rewired transfer/resume command flows to use shared output helpers:
+  - `src/cli/commands/transfer/copy_phase.rs`
+  - `src/cli/commands/transfer/verify_phase.rs`
+  - `src/cli/commands/resume/batch_flow.rs`
+  - `src/cli/commands/shared/mod.rs` re-export surface updated
+- Output text was preserved exactly; only formatting call sites were centralized.
+- Validation after output-helper phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
+## Continuation Update 8 (2026-04-15)
+- Extended shared output centralization to remaining command surfaces:
+  - `src/cli/commands/status.rs`
+  - `src/cli/commands/transfer/mod.rs`
+  - `src/cli/commands/resume/mod.rs`
+  - `src/cli/commands/shared/deletion.rs`
+- Expanded `src/cli/commands/shared/output.rs` with helpers for:
+  - status rendering lines
+  - transfer/resume top-level summaries
+  - deletion approval/delete banners
+- Preserved output text exactly while reducing inline `println!` duplication.
+- Validation after this phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`
