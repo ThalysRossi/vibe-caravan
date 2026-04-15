@@ -19,6 +19,10 @@ pub struct DestinationSpaceSnapshot {
     pub volume_free_bytes: u64,
 }
 
+pub trait FilesystemTypeProbe {
+    fn filesystem_type(&self, path: &Path) -> Result<Option<String>, CaravanError>;
+}
+
 pub trait DestinationProbe {
     fn destination_flags(&self, destination: &Path) -> Result<DestinationFlags, CaravanError>;
 
@@ -49,6 +53,15 @@ impl DestinationProbe for SystemDestinationProbe {
             available_bytes: space.available_bytes,
             volume_free_bytes: space.volume_free_bytes,
         }))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SystemFilesystemTypeProbe;
+
+impl FilesystemTypeProbe for SystemFilesystemTypeProbe {
+    fn filesystem_type(&self, path: &Path) -> Result<Option<String>, CaravanError> {
+        detect_filesystem_type(path)
     }
 }
 
@@ -89,6 +102,135 @@ fn query_destination_flags(_destination: &Path) -> Result<DestinationFlags, Cara
     })
 }
 
+#[cfg(target_os = "linux")]
+fn detect_filesystem_type(path: &Path) -> Result<Option<String>, CaravanError> {
+    let probe_path = resolve_probe_path(path);
+    let content = std::fs::read_to_string("/proc/self/mountinfo").map_err(|err| {
+        CaravanError::InvalidArguments(format!("failed to read /proc/self/mountinfo: {err}"))
+    })?;
+
+    let mut best_match: Option<(usize, String)> = None;
+    let probe_rendered = probe_path.to_string_lossy().to_string();
+
+    for line in content.lines() {
+        let Some((left, right)) = line.split_once(" - ") else {
+            continue;
+        };
+        let left_fields: Vec<&str> = left.split_whitespace().collect();
+        if left_fields.len() < 5 {
+            continue;
+        }
+
+        let mount_point = decode_mountinfo_path(left_fields[4]);
+        if !path_is_within_mount(&probe_rendered, &mount_point) {
+            continue;
+        }
+
+        let mut right_fields = right.split_whitespace();
+        let Some(fs_type) = right_fields.next() else {
+            continue;
+        };
+
+        let mount_len = mount_point.len();
+        let should_replace = best_match
+            .as_ref()
+            .map(|(best_len, _)| mount_len > *best_len)
+            .unwrap_or(true);
+        if should_replace {
+            best_match = Some((mount_len, fs_type.to_string()));
+        }
+    }
+
+    Ok(best_match.map(|(_, fs_type)| fs_type))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn detect_filesystem_type(_path: &Path) -> Result<Option<String>, CaravanError> {
+    Ok(None)
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_probe_path(path: &Path) -> std::path::PathBuf {
+    if path.exists() {
+        return path.to_path_buf();
+    }
+    let mut candidate = path;
+    while let Some(parent) = candidate.parent() {
+        if parent.exists() {
+            return parent.to_path_buf();
+        }
+        candidate = parent;
+    }
+    path.to_path_buf()
+}
+
+#[cfg(target_os = "linux")]
+fn decode_mountinfo_path(value: &str) -> String {
+    let mut decoded_path = String::new();
+    let mut char_stream = value.chars().peekable();
+
+    while let Some(current_char) = char_stream.next() {
+        if current_char != '\\' {
+            decoded_path.push(current_char);
+            continue;
+        }
+
+        let first_digit = char_stream.next();
+        let second_digit = char_stream.next();
+        let third_digit = char_stream.next();
+
+        if let (Some(first_digit), Some(second_digit), Some(third_digit)) =
+            (first_digit, second_digit, third_digit)
+        {
+            if let Some(decoded_char) = decode_octal_escape(first_digit, second_digit, third_digit)
+            {
+                decoded_path.push(decoded_char);
+                continue;
+            }
+
+            decoded_path.push('\\');
+            decoded_path.push(first_digit);
+            decoded_path.push(second_digit);
+            decoded_path.push(third_digit);
+            continue;
+        }
+
+        decoded_path.push('\\');
+        if let Some(first_digit) = first_digit {
+            decoded_path.push(first_digit);
+        }
+        if let Some(second_digit) = second_digit {
+            decoded_path.push(second_digit);
+        }
+        if let Some(third_digit) = third_digit {
+            decoded_path.push(third_digit);
+        }
+    }
+
+    decoded_path
+}
+
+#[cfg(target_os = "linux")]
+fn decode_octal_escape(first_digit: char, second_digit: char, third_digit: char) -> Option<char> {
+    let first_value = first_digit.to_digit(8)?;
+    let second_value = second_digit.to_digit(8)?;
+    let third_value = third_digit.to_digit(8)?;
+    let byte = ((first_value << 6) | (second_value << 3) | third_value) as u8;
+    Some(byte as char)
+}
+
+#[cfg(target_os = "linux")]
+fn path_is_within_mount(path: &str, mount_point: &str) -> bool {
+    if mount_point == "/" {
+        return path.starts_with('/');
+    }
+    path == mount_point
+        || path
+            .strip_prefix(mount_point)
+            .map(|tail| tail.starts_with('/'))
+            .unwrap_or(false)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PreflightWarningCode {
     DestinationCompressed,
@@ -96,6 +238,10 @@ pub enum PreflightWarningCode {
     PathLengthPressure,
     CaseCollisionRisk,
     SpaceAccountingDivergence,
+    SourceFilesystemNotNtfsLike,
+    DestinationFilesystemNotBtrfs,
+    SourceFilesystemUnknown,
+    DestinationFilesystemUnknown,
 }
 
 impl PreflightWarningCode {
@@ -106,6 +252,12 @@ impl PreflightWarningCode {
             PreflightWarningCode::PathLengthPressure => "path_length_pressure",
             PreflightWarningCode::CaseCollisionRisk => "case_collision_risk",
             PreflightWarningCode::SpaceAccountingDivergence => "space_accounting_divergence",
+            PreflightWarningCode::SourceFilesystemNotNtfsLike => "source_filesystem_not_ntfs_like",
+            PreflightWarningCode::DestinationFilesystemNotBtrfs => {
+                "destination_filesystem_not_btrfs"
+            }
+            PreflightWarningCode::SourceFilesystemUnknown => "source_filesystem_unknown",
+            PreflightWarningCode::DestinationFilesystemUnknown => "destination_filesystem_unknown",
         }
     }
 }
@@ -157,6 +309,26 @@ pub fn analyze_staging_preflight(
 ) -> Result<PreflightReport, CaravanError> {
     let probe = SystemDestinationProbe;
     analyze_staging_preflight_with_probe(config, snapshot, &probe)
+}
+
+pub fn analyze_transfer_preflight(
+    config: &TransferConfig,
+    snapshot: &PlanningSnapshot,
+) -> Result<PreflightReport, CaravanError> {
+    let destination_probe = SystemDestinationProbe;
+    let filesystem_probe = SystemFilesystemTypeProbe;
+    analyze_transfer_preflight_with_probes(config, snapshot, &destination_probe, &filesystem_probe)
+}
+
+pub fn analyze_transfer_preflight_with_probes(
+    config: &TransferConfig,
+    snapshot: &PlanningSnapshot,
+    destination_probe: &dyn DestinationProbe,
+    filesystem_probe: &dyn FilesystemTypeProbe,
+) -> Result<PreflightReport, CaravanError> {
+    let staging = analyze_staging_preflight_with_probe(config, snapshot, destination_probe)?;
+    let migrate = analyze_migrate_preflight_with_probe(config, filesystem_probe)?;
+    Ok(merge_preflight_reports(staging, migrate))
 }
 
 pub fn analyze_staging_preflight_with_probe(
@@ -277,4 +449,87 @@ pub fn analyze_staging_preflight_with_probe(
         max_estimated_destination_path_len,
         case_collision_count: case_collision_pairs.len(),
     })
+}
+
+pub fn analyze_migrate_preflight(config: &TransferConfig) -> Result<PreflightReport, CaravanError> {
+    let probe = SystemFilesystemTypeProbe;
+    analyze_migrate_preflight_with_probe(config, &probe)
+}
+
+pub fn analyze_migrate_preflight_with_probe(
+    config: &TransferConfig,
+    probe: &dyn FilesystemTypeProbe,
+) -> Result<PreflightReport, CaravanError> {
+    if config.mode != Mode::Migrate {
+        return Ok(PreflightReport {
+            warnings: Vec::new(),
+            max_estimated_destination_path_len: 0,
+            case_collision_count: 0,
+        });
+    }
+
+    let mut warnings = Vec::new();
+
+    let source_fs = probe.filesystem_type(&config.source)?;
+    match source_fs {
+        Some(source_fs) if is_ntfs_like_filesystem(&source_fs) => {}
+        Some(source_fs) => warnings.push(PreflightWarning {
+            code: PreflightWarningCode::SourceFilesystemNotNtfsLike,
+            message: format!(
+                "source '{}' appears to be '{}' (expected NTFS-like: ntfs, ntfs3, fuseblk); verify staging mount before migration",
+                config.source.display(),
+                source_fs
+            ),
+        }),
+        None => warnings.push(PreflightWarning {
+            code: PreflightWarningCode::SourceFilesystemUnknown,
+            message: format!(
+                "could not determine source filesystem type for '{}'; expected NTFS-like staging source",
+                config.source.display()
+            ),
+        }),
+    }
+
+    let destination_fs = probe.filesystem_type(&config.dest)?;
+    match destination_fs {
+        Some(destination_fs) if destination_fs.eq_ignore_ascii_case("btrfs") => {}
+        Some(destination_fs) => warnings.push(PreflightWarning {
+            code: PreflightWarningCode::DestinationFilesystemNotBtrfs,
+            message: format!(
+                "destination '{}' appears to be '{}' (expected btrfs) for migrate mode safety features",
+                config.dest.display(),
+                destination_fs
+            ),
+        }),
+        None => warnings.push(PreflightWarning {
+            code: PreflightWarningCode::DestinationFilesystemUnknown,
+            message: format!(
+                "could not determine destination filesystem type for '{}'; expected btrfs destination",
+                config.dest.display()
+            ),
+        }),
+    }
+
+    Ok(PreflightReport {
+        warnings,
+        max_estimated_destination_path_len: 0,
+        case_collision_count: 0,
+    })
+}
+
+fn is_ntfs_like_filesystem(filesystem_type: &str) -> bool {
+    let fs = filesystem_type.to_ascii_lowercase();
+    fs == "ntfs" || fs == "ntfs3" || fs == "fuseblk" || fs == "fuse.ntfs-3g" || fs == "ntfs-3g"
+}
+
+fn merge_preflight_reports(left: PreflightReport, right: PreflightReport) -> PreflightReport {
+    let mut warnings = left.warnings;
+    warnings.extend(right.warnings);
+    PreflightReport {
+        warnings,
+        max_estimated_destination_path_len: left
+            .max_estimated_destination_path_len
+            .max(right.max_estimated_destination_path_len),
+        case_collision_count: left.case_collision_count + right.case_collision_count,
+    }
 }

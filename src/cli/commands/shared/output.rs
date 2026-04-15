@@ -191,12 +191,12 @@ pub(crate) fn print_delete_source_batches_banner(batch_count: usize) {
     );
 }
 
-pub(crate) fn print_staging_preflight_warnings(warnings: &[PreflightWarning]) {
+pub(crate) fn print_preflight_warnings(warnings: &[PreflightWarning]) {
     if warnings.is_empty() {
         return;
     }
 
-    println!("\n=== Staging Preflight Warnings ===");
+    println!("\n=== Preflight Warnings ===");
     for warning in warnings {
         println!("  [{}] {}", warning.code.as_str(), warning.message);
     }

@@ -5,8 +5,9 @@ use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::plan::PlanningSnapshot;
 use caravan::preflight::{
-    analyze_staging_preflight_with_probe, DestinationFlags, DestinationProbe,
-    DestinationSpaceSnapshot, PreflightWarningCode,
+    analyze_migrate_preflight_with_probe, analyze_staging_preflight_with_probe,
+    analyze_transfer_preflight_with_probes, DestinationFlags, DestinationProbe,
+    DestinationSpaceSnapshot, FilesystemTypeProbe, PreflightWarningCode,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -31,6 +32,27 @@ impl DestinationProbe for StubProbe {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StubFilesystemProbe {
+    source_fs: Option<String>,
+    dest_fs: Option<String>,
+}
+
+impl FilesystemTypeProbe for StubFilesystemProbe {
+    fn filesystem_type(
+        &self,
+        path: &std::path::Path,
+    ) -> Result<Option<String>, caravan::error::CaravanError> {
+        if path.to_string_lossy() == "/src" {
+            return Ok(self.source_fs.clone());
+        }
+        if path.to_string_lossy() == "/dest" {
+            return Ok(self.dest_fs.clone());
+        }
+        Ok(None)
+    }
+}
+
 fn file(relative: &str, size: u64) -> FileEntry {
     FileEntry {
         relative_path: PathBuf::from(relative),
@@ -40,7 +62,10 @@ fn file(relative: &str, size: u64) -> FileEntry {
 }
 
 fn snapshot_with_files(files: Vec<FileEntry>) -> PlanningSnapshot {
-    let total = files.iter().map(|f| f.size_bytes).sum::<u64>();
+    let total = files
+        .iter()
+        .map(|file_entry| file_entry.size_bytes)
+        .sum::<u64>();
     PlanningSnapshot {
         source_file_count: files.len(),
         source_total_bytes: total,
@@ -57,6 +82,25 @@ fn staging_config(dest: &str) -> TransferConfig {
     TransferConfig {
         mode: Mode::Staging,
         source: PathBuf::from("/src"),
+        dest: PathBuf::from(dest),
+        batch_size_bytes: 1024,
+        max_files: None,
+        snapshot_every: None,
+        interactive: false,
+        verification: VerificationMode::Digest,
+        log_level: "info".to_string(),
+        skip_conflicts: false,
+        recover_failed: false,
+        copy_strategy: CopyStrategy::Auto,
+        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
+        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
+    }
+}
+
+fn migrate_config(source: &str, dest: &str) -> TransferConfig {
+    TransferConfig {
+        mode: Mode::Migrate,
+        source: PathBuf::from(source),
         dest: PathBuf::from(dest),
         batch_size_bytes: 1024,
         max_files: None,
@@ -90,11 +134,11 @@ fn warns_when_destination_has_compression_or_reparse_flags() {
     assert!(report
         .warnings
         .iter()
-        .any(|w| w.code == PreflightWarningCode::DestinationCompressed));
+        .any(|warning| warning.code == PreflightWarningCode::DestinationCompressed));
     assert!(report
         .warnings
         .iter()
-        .any(|w| w.code == PreflightWarningCode::DestinationReparsePoint));
+        .any(|warning| warning.code == PreflightWarningCode::DestinationReparsePoint));
 }
 
 #[test]
@@ -118,7 +162,7 @@ fn warns_when_case_collisions_exist_in_planned_paths() {
     assert!(report
         .warnings
         .iter()
-        .any(|w| w.code == PreflightWarningCode::CaseCollisionRisk));
+        .any(|warning| warning.code == PreflightWarningCode::CaseCollisionRisk));
 }
 
 #[test]
@@ -140,7 +184,7 @@ fn warns_when_estimated_destination_path_length_is_near_windows_limit() {
     assert!(report
         .warnings
         .iter()
-        .any(|w| w.code == PreflightWarningCode::PathLengthPressure));
+        .any(|warning| warning.code == PreflightWarningCode::PathLengthPressure));
 }
 
 #[test]
@@ -165,7 +209,7 @@ fn warns_when_available_and_volume_free_space_diverge_on_windows_destination() {
     assert!(report
         .warnings
         .iter()
-        .any(|w| w.code == PreflightWarningCode::SpaceAccountingDivergence));
+        .any(|warning| warning.code == PreflightWarningCode::SpaceAccountingDivergence));
 }
 
 #[test]
@@ -190,5 +234,113 @@ fn does_not_warn_when_available_and_volume_free_are_close() {
     assert!(report
         .warnings
         .iter()
-        .all(|w| w.code != PreflightWarningCode::SpaceAccountingDivergence));
+        .all(|warning| warning.code != PreflightWarningCode::SpaceAccountingDivergence));
+}
+
+#[test]
+fn migrate_warns_when_source_is_not_ntfs_like() {
+    let config = migrate_config("/src", "/dest");
+    let probe = StubFilesystemProbe {
+        source_fs: Some("ext4".to_string()),
+        dest_fs: Some("btrfs".to_string()),
+    };
+
+    let report = analyze_migrate_preflight_with_probe(&config, &probe)
+        .expect("migrate preflight should succeed");
+
+    assert!(report
+        .warnings
+        .iter()
+        .any(|warning| warning.code == PreflightWarningCode::SourceFilesystemNotNtfsLike));
+    assert!(report
+        .warnings
+        .iter()
+        .all(|warning| warning.code != PreflightWarningCode::DestinationFilesystemNotBtrfs));
+}
+
+#[test]
+fn migrate_warns_when_destination_is_not_btrfs() {
+    let config = migrate_config("/src", "/dest");
+    let probe = StubFilesystemProbe {
+        source_fs: Some("ntfs3".to_string()),
+        dest_fs: Some("ext4".to_string()),
+    };
+
+    let report = analyze_migrate_preflight_with_probe(&config, &probe)
+        .expect("migrate preflight should succeed");
+
+    assert!(report
+        .warnings
+        .iter()
+        .any(|warning| warning.code == PreflightWarningCode::DestinationFilesystemNotBtrfs));
+    assert!(report
+        .warnings
+        .iter()
+        .all(|warning| warning.code != PreflightWarningCode::SourceFilesystemNotNtfsLike));
+}
+
+#[test]
+fn migrate_does_not_warn_for_ntfs_like_source_and_btrfs_destination() {
+    let config = migrate_config("/src", "/dest");
+    let probe = StubFilesystemProbe {
+        source_fs: Some("fuseblk".to_string()),
+        dest_fs: Some("btrfs".to_string()),
+    };
+
+    let report = analyze_migrate_preflight_with_probe(&config, &probe)
+        .expect("migrate preflight should succeed");
+
+    assert!(report.warnings.is_empty());
+}
+
+#[test]
+fn transfer_preflight_includes_migrate_filesystem_warnings() {
+    let config = TransferConfig {
+        mode: Mode::Migrate,
+        source: PathBuf::from("/src"),
+        dest: PathBuf::from("/dest"),
+        batch_size_bytes: 1024,
+        max_files: None,
+        snapshot_every: None,
+        interactive: false,
+        verification: VerificationMode::Digest,
+        log_level: "info".to_string(),
+        skip_conflicts: false,
+        recover_failed: false,
+        copy_strategy: CopyStrategy::Auto,
+        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
+        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
+    };
+    let snapshot = snapshot_with_files(vec![
+        file("Movies/File.MKV", 100),
+        file("movies/file.mkv", 100),
+    ]);
+    let destination_probe = StubProbe {
+        flags: DestinationFlags {
+            is_compressed: false,
+            is_reparse_point: false,
+        },
+        space: None,
+    };
+    let filesystem_probe = StubFilesystemProbe {
+        source_fs: Some("ext4".to_string()),
+        dest_fs: Some("xfs".to_string()),
+    };
+
+    let report = analyze_transfer_preflight_with_probes(
+        &config,
+        &snapshot,
+        &destination_probe,
+        &filesystem_probe,
+    )
+    .expect("combined preflight should succeed");
+
+    assert!(report
+        .warnings
+        .iter()
+        .any(|warning| warning.code == PreflightWarningCode::SourceFilesystemNotNtfsLike));
+    assert!(report
+        .warnings
+        .iter()
+        .any(|warning| warning.code == PreflightWarningCode::DestinationFilesystemNotBtrfs));
 }
