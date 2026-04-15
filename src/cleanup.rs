@@ -6,13 +6,42 @@ use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
 
+pub trait FileRemover {
+    fn remove_file(&self, path: &Path) -> std::io::Result<()>;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FsFileRemover;
+
+impl FileRemover for FsFileRemover {
+    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+        fs::remove_file(path)
+    }
+}
+
 pub fn cleanup_batch(
     batch: &Batch,
     source_root: &Path,
     state: &mut MigrationState,
     execution_context: &str,
 ) -> Result<(), CaravanError> {
-    let batch_state = state.batch(&batch.id).ok_or_else(|| {
+    cleanup_batch_with_remover(
+        batch,
+        source_root,
+        state,
+        execution_context,
+        &FsFileRemover,
+    )
+}
+
+pub fn cleanup_batch_with_remover(
+    batch: &Batch,
+    source_root: &Path,
+    state: &mut MigrationState,
+    execution_context: &str,
+    remover: &dyn FileRemover,
+) -> Result<(), CaravanError> {
+    let batch_state = state.batch(&batch.id).cloned().ok_or_else(|| {
         CaravanError::InvalidArguments(format!(
             "missing batch state for {} before cleanup",
             batch.id
@@ -33,15 +62,37 @@ pub fn cleanup_batch(
         return Ok(());
     }
 
+    state.journal.push(JournalEntry {
+        event: "delete_started".to_string(),
+        batch_id: batch.id.clone(),
+        timestamp_unix_secs: now_unix_secs(),
+        context: execution_context.to_string(),
+    });
+
     for file in &batch.files {
         let path = source_root.join(&file.relative_path);
         if path.exists() {
-            fs::remove_file(&path).map_err(|err| {
-                CaravanError::InvalidArguments(format!(
+            if let Err(err) = remover.remove_file(&path) {
+                let mut failed = batch_state.clone();
+                failed.phase = BatchPhase::Failed;
+                failed.deleted = false;
+                state.upsert_batch(failed);
+                state.journal.push(JournalEntry {
+                    event: "delete_failed".to_string(),
+                    batch_id: batch.id.clone(),
+                    timestamp_unix_secs: now_unix_secs(),
+                    context: format!(
+                        "{} | file={} | error={}",
+                        execution_context,
+                        path.display(),
+                        err
+                    ),
+                });
+                return Err(CaravanError::InvalidArguments(format!(
                     "failed to delete source file {}: {err}",
                     path.display()
-                ))
-            })?;
+                )));
+            }
         }
     }
 
