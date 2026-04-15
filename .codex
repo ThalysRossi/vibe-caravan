@@ -40,6 +40,22 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 4 (2026-04-15)
+- Continued deduplication across `transfer` and `resume` by introducing:
+  - `src/cli/commands/shared/batch_ops.rs`
+    - `copy_batch_with_state_updates`
+    - `verify_batch_with_state_updates`
+    - `CopyBatchOp` context struct
+- Rewired callers to use the shared helpers:
+  - `src/cli/commands/transfer/copy_phase.rs`
+  - `src/cli/commands/transfer/verify_phase.rs`
+  - `src/cli/commands/resume/batch_flow.rs`
+- Preserved command-specific logging and persistence backends by passing closures from each caller.
+- Validation after deduplication phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`

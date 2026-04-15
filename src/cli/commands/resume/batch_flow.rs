@@ -2,12 +2,14 @@ use std::path::Path;
 
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
-use crate::models;
-use crate::models::state::{BatchPhase, MigrationState};
+use crate::models::state::MigrationState;
 use crate::signal::{check_shutdown, ShutdownFlag};
-use crate::{format, plan, resume as resume_ops, state_store, transfer, verify};
+use crate::{format, plan, resume as resume_ops, state_store, transfer};
 
-use super::super::shared::ensure_destination_capacity;
+use super::super::shared::{
+    copy_batch_with_state_updates, ensure_destination_capacity, verify_batch_with_state_updates,
+    CopyBatchOp,
+};
 
 fn verify_batch_for_resume(
     batch: &crate::models::batch::Batch,
@@ -16,38 +18,22 @@ fn verify_batch_for_resume(
     state_path: &Path,
 ) -> Result<(), CaravanError> {
     println!("Verifying {}...", batch.id);
-    let mut progress = crate::progress::TerminalProgress::new();
-    let verification_report = verify::verify_batch_with_progress(
+    let mut persist_state =
+        |current_state: &MigrationState| state_store::persist_state(state_path, current_state);
+    verify_batch_with_state_updates(
         batch,
         &config.source,
         &config.dest,
-        config.verification.clone(),
-        &mut progress,
+        &config.verification,
+        state,
+        &mut persist_state,
+        &|batch_id| {
+            CaravanError::InvalidArguments(format!(
+                "batch {} disappeared from state during verification",
+                batch_id
+            ))
+        },
     )?;
-
-    let mut current_state = state.batch(&batch.id).cloned().ok_or_else(|| {
-        CaravanError::InvalidArguments(format!(
-            "batch {} disappeared from state during verification",
-            batch.id
-        ))
-    })?;
-    current_state.phase = BatchPhase::VerifyCompleted;
-    current_state.verification_passed =
-        verification_report.status == models::verification::VerificationStatus::Pass;
-    state.upsert_batch(current_state.clone());
-    state_store::persist_state(state_path, state)?;
-
-    if !current_state.verification_passed {
-        eprintln!(
-            "Verification failed: {}",
-            verification_report.recommended_action
-        );
-        eprintln!("Missing: {:?}", verification_report.missing_files);
-        eprintln!("Mismatched: {:?}", verification_report.mismatched_files);
-        return Err(CaravanError::InvalidArguments(
-            "verification failed".to_string(),
-        ));
-    }
 
     println!("✅ Verification passed!");
     Ok(())
@@ -68,29 +54,25 @@ fn copy_batch_for_resume(
     );
 
     ensure_destination_capacity(&config.dest, batch.total_bytes)?;
-
-    let mut current_state = state.batch(&batch.id).cloned().ok_or_else(|| {
-        CaravanError::InvalidArguments(format!(
-            "batch {} disappeared from state during copy",
-            batch.id
-        ))
-    })?;
-    current_state.phase = BatchPhase::CopyStarted;
-    state.upsert_batch(current_state.clone());
-    state_store::persist_state(state_path, state)?;
-
-    let mut progress = crate::progress::TerminalProgress::new();
-    transfer::transfer_batch_with_progress(
+    let mut persist_state =
+        |current_state: &MigrationState| state_store::persist_state(state_path, current_state);
+    copy_batch_with_state_updates(
         batch,
-        &config.source,
-        &config.dest,
-        copy_backend,
-        &mut progress,
+        state,
+        CopyBatchOp {
+            source_root: &config.source,
+            dest_root: &config.dest,
+            copy_backend,
+            reset_verification_passed: false,
+        },
+        &mut persist_state,
+        &|batch_id| {
+            CaravanError::InvalidArguments(format!(
+                "batch {} disappeared from state during copy",
+                batch_id
+            ))
+        },
     )?;
-
-    current_state.phase = BatchPhase::CopyCompleted;
-    state.upsert_batch(current_state);
-    state_store::persist_state(state_path, state)?;
 
     Ok(())
 }

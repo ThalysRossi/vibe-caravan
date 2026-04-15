@@ -8,7 +8,10 @@ use crate::prompt::PromptBackend;
 use crate::signal::{check_shutdown, ShutdownFlag};
 use crate::{format, prompt, transfer};
 
-use super::super::shared::{ensure_destination_capacity, persist_state_both_locations};
+use super::super::shared::{
+    copy_batch_with_state_updates, ensure_destination_capacity, persist_state_both_locations,
+    CopyBatchOp,
+};
 use super::setup::planned_batch_state;
 
 fn copy_single_batch(
@@ -56,23 +59,27 @@ fn copy_single_batch(
         }
     }
 
-    batch_state.phase = BatchPhase::CopyStarted;
-    state.upsert_batch(batch_state.clone());
-    persist_state_both_locations(state_path, secondary_state_path, state)?;
-
-    let mut progress = crate::progress::TerminalProgress::new();
-    transfer::transfer_batch_with_progress(
-        batch,
-        &config.source,
-        &config.dest,
-        copy_backend,
-        &mut progress,
-    )?;
-
-    batch_state.phase = BatchPhase::CopyCompleted;
-    batch_state.verification_passed = false;
     state.upsert_batch(batch_state);
-    persist_state_both_locations(state_path, secondary_state_path, state)?;
+    let mut persist_state = |current_state: &MigrationState| {
+        persist_state_both_locations(state_path, secondary_state_path, current_state)
+    };
+    copy_batch_with_state_updates(
+        batch,
+        state,
+        CopyBatchOp {
+            source_root: &config.source,
+            dest_root: &config.dest,
+            copy_backend,
+            reset_verification_passed: true,
+        },
+        &mut persist_state,
+        &|batch_id| {
+            CaravanError::InvalidArguments(format!(
+                "batch {} disappeared from state during copy",
+                batch_id
+            ))
+        },
+    )?;
 
     Ok(())
 }
