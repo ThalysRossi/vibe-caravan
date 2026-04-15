@@ -489,10 +489,18 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
                 processed_batches += 1;
                 continue;
             }
-            if existing_batch.phase == BatchPhase::CopyCompleted
-                || existing_batch.phase == BatchPhase::VerifyCompleted
-            {
-                println!("Skipping {}: already copied", batch.id);
+            if matches!(
+                existing_batch.phase,
+                BatchPhase::CopyCompleted
+                    | BatchPhase::VerifyCompleted
+                    | BatchPhase::ApprovedForDelete
+                    | BatchPhase::DeleteCompleted
+                    | BatchPhase::SnapshotCompleted
+            ) {
+                println!(
+                    "Skipping {}: copy already completed (phase: {:?})",
+                    batch.id, existing_batch.phase
+                );
                 continue;
             }
         }
