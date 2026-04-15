@@ -50,6 +50,25 @@ fn failed_batches_requiring_review(state: &MigrationState) -> Vec<String> {
         .collect()
 }
 
+fn failed_verification_batches_requiring_review(state: &MigrationState) -> Vec<String> {
+    state
+        .batches
+        .iter()
+        .filter(|batch| {
+            !batch.deleted
+                && !batch.verification_passed
+                && matches!(
+                    batch.phase,
+                    BatchPhase::VerifyCompleted
+                        | BatchPhase::ApprovedForDelete
+                        | BatchPhase::DeleteCompleted
+                        | BatchPhase::SnapshotCompleted
+                )
+        })
+        .map(|batch| batch.batch_id.clone())
+        .collect()
+}
+
 fn ensure_no_failed_batches(state: &MigrationState) -> Result<(), CaravanError> {
     let failed_batches = failed_batches_requiring_review(state);
     if !failed_batches.is_empty() {
@@ -58,6 +77,23 @@ fn ensure_no_failed_batches(state: &MigrationState) -> Result<(), CaravanError> 
             failed_batches.join(", ")
         )));
     }
+    Ok(())
+}
+
+fn ensure_no_failed_verification_batches(state: &MigrationState) -> Result<(), CaravanError> {
+    let failed_verification_batches = failed_verification_batches_requiring_review(state);
+    if !failed_verification_batches.is_empty() {
+        return Err(CaravanError::InvalidArguments(format!(
+            "one or more batches failed verification and require operator review before continuing: {}",
+            failed_verification_batches.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn ensure_no_operator_review_blocks(state: &MigrationState) -> Result<(), CaravanError> {
+    ensure_no_failed_batches(state)?;
+    ensure_no_failed_verification_batches(state)?;
     Ok(())
 }
 
@@ -427,7 +463,7 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     // Check for shutdown before proceeding to deletion phase
     check_shutdown(&shutdown_flag)?;
 
-    ensure_no_failed_batches(&state)?;
+    ensure_no_operator_review_blocks(&state)?;
 
     let mut persist_state = |current_state: &MigrationState| {
         persist_state_both_locations(&state_path, &secondary_state_path, current_state)
@@ -506,7 +542,7 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         state.batches.len()
     );
 
-    ensure_no_failed_batches(&state)?;
+    ensure_no_operator_review_blocks(&state)?;
 
     // Reconstruct TransferConfig from saved state
     let config = TransferConfig {
@@ -669,7 +705,7 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
 
     // Check for shutdown before proceeding to deletion phase
     check_shutdown(&shutdown_flag)?;
-    ensure_no_failed_batches(&state)?;
+    ensure_no_operator_review_blocks(&state)?;
 
     let mut persist_state =
         |current_state: &MigrationState| state_store::persist_state(state_path, current_state);
