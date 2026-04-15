@@ -1,9 +1,9 @@
 use std::path::Path;
 
 use crate::error::CaravanError;
-use crate::models::state::MigrationState;
+use crate::models::state::{BatchPhase, MigrationState};
 use crate::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
-use crate::{resume as resume_ops, state_store, transfer};
+use crate::{plan, resume as resume_ops, state_store, transfer};
 
 use super::shared::{
     approve_and_delete_verified_batches, ensure_no_operator_review_blocks,
@@ -19,7 +19,47 @@ mod step_handlers;
 use batch_flow::run_resume_batches;
 use config::transfer_config_from_state;
 
-pub(super) fn execute_resume(state_path: &Path, recover_failed: bool) -> Result<(), CaravanError> {
+fn inspect_failed_batches(
+    state: &MigrationState,
+    config: &crate::config::TransferConfig,
+) -> Result<(), CaravanError> {
+    let failed_batch_ids: Vec<String> = state
+        .batches
+        .iter()
+        .filter(|batch| batch.phase == BatchPhase::Failed && !batch.deleted)
+        .map(|batch| batch.batch_id.clone())
+        .collect();
+
+    println!("\n=== Failed Batch Inspection ===");
+    if failed_batch_ids.is_empty() {
+        println!("No failed batches found in state.");
+        return Ok(());
+    }
+
+    println!("Found {} failed batch(es).", failed_batch_ids.len());
+    for batch_id in failed_batch_ids {
+        let batch = plan::load_batch_definition(
+            &config.source,
+            &batch_id,
+            state.batch_size_bytes,
+            state.max_files,
+        )?;
+        let recon = resume_ops::reconcile_batch_destination(&batch, &config.dest);
+        println!(
+            "{}: {}",
+            batch_id,
+            resume_ops::reconciliation_summary(&recon)
+        );
+    }
+
+    Ok(())
+}
+
+pub(super) fn execute_resume(
+    state_path: &Path,
+    recover_failed: bool,
+    inspect_failed: bool,
+) -> Result<(), CaravanError> {
     let shutdown_flag = ShutdownFlag::new();
     install_signal_handlers(&shutdown_flag)?;
 
@@ -36,6 +76,12 @@ pub(super) fn execute_resume(state_path: &Path, recover_failed: bool) -> Result<
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();
     print_resume_completed_batches(completed_count, state.batches.len());
 
+    let config = transfer_config_from_state(&state, recover_failed)?;
+    if inspect_failed {
+        inspect_failed_batches(&state, &config)?;
+        return Ok(());
+    }
+
     ensure_no_operator_review_blocks_with_policy(
         &state,
         OperatorReviewPolicy {
@@ -44,8 +90,6 @@ pub(super) fn execute_resume(state_path: &Path, recover_failed: bool) -> Result<
             allow_failed_batches: true,
         },
     )?;
-
-    let config = transfer_config_from_state(&state, recover_failed)?;
 
     print_resuming_transfer();
 

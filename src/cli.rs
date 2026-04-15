@@ -71,6 +71,8 @@ pub struct ResumeArgs {
     pub state: PathBuf,
     #[arg(long, default_value_t = false)]
     pub recover_failed: bool,
+    #[arg(long, default_value_t = false)]
+    pub inspect_failed: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -114,7 +116,8 @@ pub fn run() -> Result<(), CaravanError> {
             state,
             log_level: _,
             recover_failed,
-        } => commands::execute_resume(&state, recover_failed),
+            inspect_failed,
+        } => commands::execute_resume(&state, recover_failed, inspect_failed),
     }
 }
 

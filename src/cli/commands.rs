@@ -16,6 +16,10 @@ pub(super) fn execute_status(state_path: &Path) -> Result<(), CaravanError> {
     status::execute_status(state_path)
 }
 
-pub(super) fn execute_resume(state_path: &Path, recover_failed: bool) -> Result<(), CaravanError> {
-    resume::execute_resume(state_path, recover_failed)
+pub(super) fn execute_resume(
+    state_path: &Path,
+    recover_failed: bool,
+    inspect_failed: bool,
+) -> Result<(), CaravanError> {
+    resume::execute_resume(state_path, recover_failed, inspect_failed)
 }

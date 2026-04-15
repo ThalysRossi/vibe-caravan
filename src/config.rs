@@ -69,5 +69,6 @@ pub enum Config {
         state: PathBuf,
         log_level: String,
         recover_failed: bool,
+        inspect_failed: bool,
     },
 }

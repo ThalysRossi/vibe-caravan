@@ -66,6 +66,15 @@ fn skip_conflicts_marks_batch_failed_instead_of_copy_completed() {
         serde_json::Value::String("Failed".to_string())
     );
     assert_eq!(state_json["batches"][0]["verification_passed"], false);
+    let journal_entries = state_json["journal"]
+        .as_array()
+        .expect("journal must be array");
+    assert!(
+        journal_entries
+            .iter()
+            .any(|entry| entry["event"] == "copy_failed_conflict"),
+        "state journal should include explicit conflict failure reason"
+    );
 }
 
 #[test]

@@ -1,9 +1,10 @@
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
-use crate::models::state::{BatchPhase, MigrationState};
+use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
 use crate::prompt::PromptBackend;
 use crate::{prompt, transfer};
 
@@ -49,6 +50,19 @@ pub(super) fn copy_single_batch(
             batch_state.phase = BatchPhase::Failed;
             batch_state.verification_passed = false;
             state.upsert_batch(batch_state);
+            state.journal.push(JournalEntry {
+                event: "copy_failed_conflict".to_string(),
+                batch_id: batch.id.clone(),
+                timestamp_unix_secs: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                context: format!(
+                    "naming_conflicts={} size_mismatches={}",
+                    conflict_report.total_conflicts,
+                    conflict_report.size_mismatches.len()
+                ),
+            });
             persist_state_both_locations(state_path, secondary_state_path, state)?;
             return Ok(());
         }

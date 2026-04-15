@@ -265,3 +265,20 @@ fn resume_recover_failed_flag_defaults_to_false_and_can_be_enabled() {
         _ => panic!("expected resume config"),
     }
 }
+
+#[test]
+fn resume_inspect_failed_flag_defaults_to_false_and_can_be_enabled() {
+    let off = parse_cli_from(["caravan", "resume"]).expect("resume parse should pass");
+    let on = parse_cli_from(["caravan", "resume", "--inspect-failed"])
+        .expect("resume parse with inspect-failed should pass");
+
+    match off {
+        Config::Resume { inspect_failed, .. } => assert!(!inspect_failed),
+        _ => panic!("expected resume config"),
+    }
+
+    match on {
+        Config::Resume { inspect_failed, .. } => assert!(inspect_failed),
+        _ => panic!("expected resume config"),
+    }
+}

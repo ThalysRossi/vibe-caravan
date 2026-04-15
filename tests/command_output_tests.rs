@@ -136,3 +136,64 @@ fn resume_output_includes_header_and_completion_banner_for_approved_state() {
     assert!(stdout.contains("=== Deleting source files for 1 batch(es) ==="));
     assert!(stdout.contains("✅ Resume complete! 1 batches processed, 1 total completed"));
 }
+
+#[test]
+fn resume_inspect_failed_outputs_destination_diff_without_mutating_state() {
+    let tmp = TempDir::new().expect("create temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    let state_path = tmp.path().join("resume-state.json");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create destination");
+    fs::write(source_dir.join("file1.txt"), "content").expect("write source file");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::Failed,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+    persist_state(&state_path, &state).expect("persist resume state");
+
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("state path utf8"),
+            "--inspect-failed",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("run resume inspect command");
+
+    assert!(output.status.success(), "inspect mode should succeed");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(stdout.contains("=== Failed Batch Inspection ==="));
+    assert!(stdout.contains("batch-000001"));
+    assert!(stdout.contains("missing_in_destination"));
+    assert!(stdout.contains("file1.txt"));
+    assert!(
+        !stdout.contains("Resuming transfer"),
+        "inspect mode should not enter transfer execution"
+    );
+
+    let state_after = caravan::state_store::load_state(&state_path).expect("load state");
+    let batch = state_after
+        .batch("batch-000001")
+        .expect("batch should still exist");
+    assert_eq!(batch.phase, BatchPhase::Failed);
+    assert!(
+        !dest_dir.join("file1.txt").exists(),
+        "inspect mode must not copy data"
+    );
+}
