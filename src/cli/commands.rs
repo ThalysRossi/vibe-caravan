@@ -27,6 +27,97 @@ fn persist_state_both_locations(
     Ok(())
 }
 
+fn ensure_destination_capacity(dest: &Path, required_bytes: u64) -> Result<(), CaravanError> {
+    let capacity_report = capacity::check_capacity(dest, required_bytes, 0)?;
+    if capacity_report.decision == capacity::CapacityDecision::Abort {
+        eprintln!(
+            "Capacity check failed: {}",
+            capacity_report.reason.unwrap_or_default()
+        );
+        return Err(CaravanError::InvalidArguments(
+            "insufficient destination space".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn failed_batches_requiring_review(state: &MigrationState) -> Vec<String> {
+    state
+        .batches
+        .iter()
+        .filter(|batch| batch.phase == BatchPhase::Failed && !batch.deleted)
+        .map(|batch| batch.batch_id.clone())
+        .collect()
+}
+
+fn ensure_no_failed_batches(state: &MigrationState) -> Result<(), CaravanError> {
+    let failed_batches = failed_batches_requiring_review(state);
+    if !failed_batches.is_empty() {
+        return Err(CaravanError::InvalidArguments(format!(
+            "one or more batches require operator review before continuing: {}",
+            failed_batches.join(", ")
+        )));
+    }
+    Ok(())
+}
+
+fn approve_and_delete_verified_batches(
+    state: &mut MigrationState,
+    source_root: &Path,
+    interactive: bool,
+    shutdown_flag: &ShutdownFlag,
+    persist_state: &mut dyn FnMut(&MigrationState) -> Result<(), CaravanError>,
+    delete_context: &str,
+) -> Result<(), CaravanError> {
+    let prompt_backend = prompt::InteractivePrompt;
+    let batches_needing_approval = state.batches_needing_approval();
+
+    if batches_needing_approval.is_empty() {
+        return Ok(());
+    }
+
+    println!(
+        "\n=== All {} batches have been verified successfully ===",
+        batches_needing_approval.len()
+    );
+
+    let approved = prompt::request_approval_for_batches(
+        Some(&prompt_backend),
+        interactive,
+        false,
+        &batches_needing_approval,
+    )?;
+
+    if !approved {
+        println!("Deletion not approved. Stopping.");
+        return Ok(());
+    }
+
+    state.approve_batches(&batches_needing_approval);
+    persist_state(state)?;
+
+    println!("\n=== Deleting source files for all batches ===");
+    for batch_id in &batches_needing_approval {
+        check_shutdown(shutdown_flag)?;
+
+        if let Some(batch_state) = state.batch(batch_id) {
+            if batch_state.deleted {
+                continue;
+            }
+            let batch = plan::load_batch_definition(
+                source_root,
+                batch_id,
+                state.batch_size_bytes,
+                state.max_files,
+            )?;
+            cleanup::cleanup_batch(&batch, source_root, state, delete_context)?;
+            persist_state(state)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     // Initialize shutdown flag and install signal handlers
     let shutdown_flag = ShutdownFlag::new();
@@ -202,17 +293,7 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
                 deleted: false,
             });
 
-        // Check capacity
-        let capacity_report = capacity::check_capacity(&config.dest, batch.total_bytes, 0)?;
-        if capacity_report.decision == capacity::CapacityDecision::Abort {
-            eprintln!(
-                "Capacity check failed: {}",
-                capacity_report.reason.unwrap_or_default()
-            );
-            return Err(CaravanError::InvalidArguments(
-                "insufficient destination space".to_string(),
-            ));
-        }
+        ensure_destination_capacity(&config.dest, batch.total_bytes)?;
 
         // Check for naming conflicts
         let conflict_report = crate::conflict::detect_batch_conflicts(batch, &config.dest)?;
@@ -346,67 +427,19 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     // Check for shutdown before proceeding to deletion phase
     check_shutdown(&shutdown_flag)?;
 
-    let failed_batches: Vec<_> = state
-        .batches
-        .iter()
-        .filter(|batch| batch.phase == BatchPhase::Failed && !batch.deleted)
-        .map(|batch| batch.batch_id.clone())
-        .collect();
-    if !failed_batches.is_empty() {
-        return Err(CaravanError::InvalidArguments(format!(
-            "one or more batches require operator review before continuing: {}",
-            failed_batches.join(", ")
-        )));
-    }
+    ensure_no_failed_batches(&state)?;
 
-    // After all batches are processed, request approval for deletion of all verified batches
-    let prompt_backend = prompt::InteractivePrompt;
-    let batches_needing_approval = state.batches_needing_approval();
-
-    if !batches_needing_approval.is_empty() {
-        println!(
-            "\n=== All {} batches have been verified successfully ===",
-            batches_needing_approval.len()
-        );
-
-        let approved = prompt::request_approval_for_batches(
-            Some(&prompt_backend),
-            config.interactive,
-            false,
-            &batches_needing_approval,
-        )?;
-
-        if !approved {
-            println!("Deletion not approved. Stopping.");
-            return Ok(());
-        }
-
-        // Mark all batches as approved
-        state.approve_batches(&batches_needing_approval);
-        persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
-
-        // Delete all approved batches
-        println!("\n=== Deleting source files for all batches ===");
-        for batch_id in &batches_needing_approval {
-            // Check for shutdown before each deletion
-            check_shutdown(&shutdown_flag)?;
-
-            if let Some(batch_state) = state.batch(batch_id) {
-                if batch_state.deleted {
-                    continue;
-                }
-                // Load batch definition
-                let batch = plan::load_batch_definition(
-                    &config.source,
-                    batch_id,
-                    state.batch_size_bytes,
-                    state.max_files,
-                )?;
-                cleanup::cleanup_batch(&batch, &config.source, &mut state, "execute_transfer")?;
-                persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
-            }
-        }
-    }
+    let mut persist_state = |current_state: &MigrationState| {
+        persist_state_both_locations(&state_path, &secondary_state_path, current_state)
+    };
+    approve_and_delete_verified_batches(
+        &mut state,
+        &config.source,
+        config.interactive,
+        &shutdown_flag,
+        &mut persist_state,
+        "execute_transfer",
+    )?;
 
     // Count completed batches (including previously deleted ones)
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();
@@ -473,6 +506,8 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         state.batches.len()
     );
 
+    ensure_no_failed_batches(&state)?;
+
     // Reconstruct TransferConfig from saved state
     let config = TransferConfig {
         mode: match state.mode.as_str() {
@@ -504,7 +539,6 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         config.copy_buffer_size,
         config.buffered_copy_threshold,
     );
-    let prompt_backend = prompt::InteractivePrompt;
 
     // Process batches directly from STATE, NOT rebuilding plan
     // Rebuilding plan would generate NEW DIFFERENT batch IDs that don't match existing state
@@ -579,17 +613,7 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
                     format::format_bytes(batch.total_bytes)
                 );
 
-                // Check capacity
-                let capacity_report = capacity::check_capacity(&config.dest, batch.total_bytes, 0)?;
-                if capacity_report.decision == capacity::CapacityDecision::Abort {
-                    eprintln!(
-                        "Capacity check failed: {}",
-                        capacity_report.reason.unwrap_or_default()
-                    );
-                    return Err(CaravanError::InvalidArguments(
-                        "insufficient destination space".to_string(),
-                    ));
-                }
+                ensure_destination_capacity(&config.dest, batch.total_bytes)?;
 
                 // Copy batch
                 current_state.phase = BatchPhase::CopyStarted;
@@ -645,53 +669,18 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
 
     // Check for shutdown before proceeding to deletion phase
     check_shutdown(&shutdown_flag)?;
+    ensure_no_failed_batches(&state)?;
 
-    // After processing all batches, request approval for deletion of all verified but not approved batches
-    let batches_needing_approval = state.batches_needing_approval();
-    if !batches_needing_approval.is_empty() {
-        println!(
-            "\n=== All {} batches have been verified successfully ===",
-            batches_needing_approval.len()
-        );
-
-        let approved = prompt::request_approval_for_batches(
-            Some(&prompt_backend),
-            config.interactive,
-            false,
-            &batches_needing_approval,
-        )?;
-
-        if !approved {
-            println!("Deletion not approved. Stopping.");
-            return Ok(());
-        }
-
-        // Mark all batches as approved
-        state.approve_batches(&batches_needing_approval);
-        state_store::persist_state(state_path, &state)?;
-
-        // Delete all approved batches
-        println!("\n=== Deleting source files for all batches ===");
-        for batch_id in &batches_needing_approval {
-            // Check for shutdown before each deletion
-            check_shutdown(&shutdown_flag)?;
-
-            if let Some(batch_state) = state.batch(batch_id) {
-                if batch_state.deleted {
-                    continue;
-                }
-                // Load batch definition
-                let batch = plan::load_batch_definition(
-                    &config.source,
-                    batch_id,
-                    state.batch_size_bytes,
-                    state.max_files,
-                )?;
-                cleanup::cleanup_batch(&batch, &config.source, &mut state, "resume")?;
-                state_store::persist_state(state_path, &state)?;
-            }
-        }
-    }
+    let mut persist_state =
+        |current_state: &MigrationState| state_store::persist_state(state_path, current_state);
+    approve_and_delete_verified_batches(
+        &mut state,
+        &config.source,
+        config.interactive,
+        &shutdown_flag,
+        &mut persist_state,
+        "resume",
+    )?;
 
     // Count completed batches (including previously deleted ones)
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();
