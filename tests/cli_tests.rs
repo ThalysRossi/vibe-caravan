@@ -359,3 +359,32 @@ fn allow_unsafe_filesystems_flag_is_parsed_for_transfer_commands() {
         _ => panic!("expected migrate config"),
     }
 }
+
+#[test]
+fn snapshot_dir_is_parsed_for_migrate_command() {
+    let parsed = parse_cli_from([
+        "caravan",
+        "migrate",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--snapshot-dir",
+        "/dst/snapshots",
+    ])
+    .expect("migrate parse with snapshot-dir should pass");
+
+    match parsed {
+        Config::Migrate(cfg) => {
+            assert_eq!(
+                cfg.snapshot_dir
+                    .as_deref()
+                    .map(|value| value.to_string_lossy().to_string()),
+                Some("/dst/snapshots".to_string())
+            );
+        }
+        _ => panic!("expected migrate config"),
+    }
+}

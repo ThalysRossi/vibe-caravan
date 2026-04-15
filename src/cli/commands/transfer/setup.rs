@@ -59,6 +59,10 @@ pub(super) fn apply_transfer_config(state: &mut MigrationState, config: &Transfe
     state.batch_size_bytes = config.batch_size_bytes;
     state.max_files = config.max_files;
     state.snapshot_every = config.snapshot_every;
+    state.snapshot_dir = config
+        .snapshot_dir
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string());
     state.verification_mode = config.verification.clone();
     state.copy_strategy = config.copy_strategy;
     state.copy_buffer_size = config.copy_buffer_size;

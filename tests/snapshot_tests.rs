@@ -1,9 +1,11 @@
+use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::path::Path;
 
 use caravan::config::Mode;
 use caravan::error::CaravanError;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
-use caravan::snapshot::{snapshot_if_needed, SnapshotBackend};
+use caravan::snapshot::{process_pending_snapshots, snapshot_if_needed, SnapshotBackend};
 
 struct StubSnapshotBackend {
     snapshot_name: Option<String>,
@@ -14,6 +16,7 @@ impl SnapshotBackend for StubSnapshotBackend {
     fn create_snapshot(
         &self,
         _destination_root: &Path,
+        _snapshot_root: Option<&Path>,
         _batch_id: &str,
     ) -> Result<String, CaravanError> {
         if let Some(message) = &self.fail_message {
@@ -22,6 +25,66 @@ impl SnapshotBackend for StubSnapshotBackend {
         self.snapshot_name
             .clone()
             .ok_or_else(|| CaravanError::InvalidArguments("missing snapshot name".to_string()))
+    }
+}
+
+struct ScriptedSnapshotBackend {
+    failing_batches: HashSet<String>,
+    calls: RefCell<Vec<String>>,
+}
+
+impl ScriptedSnapshotBackend {
+    fn with_failing_batches(failing_batches: &[&str]) -> Self {
+        Self {
+            failing_batches: failing_batches
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+            calls: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> Vec<String> {
+        self.calls.borrow().clone()
+    }
+}
+
+impl SnapshotBackend for ScriptedSnapshotBackend {
+    fn create_snapshot(
+        &self,
+        _destination_root: &Path,
+        _snapshot_root: Option<&Path>,
+        batch_id: &str,
+    ) -> Result<String, CaravanError> {
+        self.calls.borrow_mut().push(batch_id.to_string());
+        if self.failing_batches.contains(batch_id) {
+            return Err(CaravanError::InvalidArguments(format!(
+                "snapshot backend failure for {batch_id}"
+            )));
+        }
+        Ok(format!("snap-{batch_id}"))
+    }
+}
+
+struct SnapshotRootAssertingBackend;
+
+impl SnapshotBackend for SnapshotRootAssertingBackend {
+    fn create_snapshot(
+        &self,
+        _destination_root: &Path,
+        snapshot_root: Option<&Path>,
+        _batch_id: &str,
+    ) -> Result<String, CaravanError> {
+        let snapshot_root = snapshot_root.ok_or_else(|| {
+            CaravanError::InvalidArguments("snapshot root should be provided".to_string())
+        })?;
+        if snapshot_root != Path::new("/dst/snapshots") {
+            return Err(CaravanError::InvalidArguments(format!(
+                "unexpected snapshot root '{}'",
+                snapshot_root.display()
+            )));
+        }
+        Ok("snap-with-custom-root".to_string())
     }
 }
 
@@ -39,6 +102,7 @@ fn snapshots_are_rejected_in_staging_mode() {
         1,
         "batch-1",
         Path::new("/dst"),
+        None,
         &mut state,
         &backend,
     )
@@ -70,6 +134,7 @@ fn snapshot_creation_is_invoked_only_in_migrate_mode_and_cadence() {
         1,
         "batch-2",
         Path::new("/dst"),
+        None,
         &mut state,
         &backend,
     )
@@ -82,6 +147,7 @@ fn snapshot_creation_is_invoked_only_in_migrate_mode_and_cadence() {
         2,
         "batch-2",
         Path::new("/dst"),
+        None,
         &mut state,
         &backend,
     )
@@ -103,6 +169,7 @@ fn snapshot_failures_are_recorded() {
         1,
         "batch-3",
         Path::new("/dst"),
+        None,
         &mut state,
         &backend,
     )
@@ -133,6 +200,7 @@ fn snapshot_metadata_is_persisted_in_state() {
         1,
         "batch-4",
         Path::new("/dst"),
+        None,
         &mut state,
         &backend,
     )
@@ -146,4 +214,172 @@ fn snapshot_metadata_is_persisted_in_state() {
     assert_eq!(state.journal[0].event, "snapshot_completed");
     let batch = state.batch("batch-4").expect("batch should exist");
     assert_eq!(batch.phase, BatchPhase::SnapshotCompleted);
+}
+
+#[test]
+fn process_pending_snapshots_applies_cadence_to_deleted_batches() {
+    let mut state = MigrationState::new("migrate", "/src", "/dst");
+    for batch_id in [
+        "batch-000001",
+        "batch-000002",
+        "batch-000003",
+        "batch-000004",
+    ] {
+        state.upsert_batch(BatchState {
+            batch_id: batch_id.to_string(),
+            phase: BatchPhase::DeleteCompleted,
+            verification_passed: true,
+            approved_for_delete: true,
+            deleted: true,
+        });
+    }
+
+    let backend = ScriptedSnapshotBackend::with_failing_batches(&[]);
+    let persist_count = Cell::new(0u32);
+    let mut persist_state = |_current_state: &MigrationState| {
+        persist_count.set(persist_count.get().saturating_add(1));
+        Ok::<(), CaravanError>(())
+    };
+
+    process_pending_snapshots(
+        Mode::Migrate,
+        Some(2),
+        Path::new("/dst"),
+        None,
+        &mut state,
+        &backend,
+        &mut persist_state,
+    )
+    .expect("snapshot phase should succeed");
+
+    assert_eq!(
+        backend.calls(),
+        vec!["batch-000002".to_string(), "batch-000004".to_string()]
+    );
+    assert_eq!(persist_count.get(), 2);
+    assert_eq!(
+        state.batch("batch-000002").unwrap().phase,
+        BatchPhase::SnapshotCompleted
+    );
+    assert_eq!(
+        state.batch("batch-000004").unwrap().phase,
+        BatchPhase::SnapshotCompleted
+    );
+}
+
+#[test]
+fn process_pending_snapshots_continues_after_snapshot_failure() {
+    let mut state = MigrationState::new("migrate", "/src", "/dst");
+    for batch_id in ["batch-000001", "batch-000002"] {
+        state.upsert_batch(BatchState {
+            batch_id: batch_id.to_string(),
+            phase: BatchPhase::DeleteCompleted,
+            verification_passed: true,
+            approved_for_delete: true,
+            deleted: true,
+        });
+    }
+
+    let backend = ScriptedSnapshotBackend::with_failing_batches(&["batch-000001"]);
+    let persist_count = Cell::new(0u32);
+    let mut persist_state = |_current_state: &MigrationState| {
+        persist_count.set(persist_count.get().saturating_add(1));
+        Ok::<(), CaravanError>(())
+    };
+
+    process_pending_snapshots(
+        Mode::Migrate,
+        Some(1),
+        Path::new("/dst"),
+        None,
+        &mut state,
+        &backend,
+        &mut persist_state,
+    )
+    .expect("snapshot failures should be non-fatal");
+
+    assert_eq!(
+        backend.calls(),
+        vec!["batch-000001".to_string(), "batch-000002".to_string()]
+    );
+    assert_eq!(persist_count.get(), 2);
+    assert!(state
+        .journal
+        .iter()
+        .any(|entry| entry.event == "snapshot_failed"));
+    assert!(state
+        .journal
+        .iter()
+        .any(|entry| entry.event == "snapshot_completed"));
+}
+
+#[test]
+fn process_pending_snapshots_skips_batches_already_snapshot_completed() {
+    let mut state = MigrationState::new("migrate", "/src", "/dst");
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::SnapshotCompleted,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: true,
+    });
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000002".to_string(),
+        phase: BatchPhase::DeleteCompleted,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: true,
+    });
+
+    let backend = ScriptedSnapshotBackend::with_failing_batches(&[]);
+    let persist_count = Cell::new(0u32);
+    let mut persist_state = |_current_state: &MigrationState| {
+        persist_count.set(persist_count.get().saturating_add(1));
+        Ok::<(), CaravanError>(())
+    };
+
+    process_pending_snapshots(
+        Mode::Migrate,
+        Some(1),
+        Path::new("/dst"),
+        None,
+        &mut state,
+        &backend,
+        &mut persist_state,
+    )
+    .expect("snapshot phase should succeed");
+
+    assert_eq!(backend.calls(), vec!["batch-000002".to_string()]);
+    assert_eq!(persist_count.get(), 1);
+}
+
+#[test]
+fn process_pending_snapshots_forwards_custom_snapshot_root() {
+    let mut state = MigrationState::new("migrate", "/src", "/dst");
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::DeleteCompleted,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: true,
+    });
+
+    let backend = SnapshotRootAssertingBackend;
+    let mut persist_state = |_current_state: &MigrationState| Ok::<(), CaravanError>(());
+
+    process_pending_snapshots(
+        Mode::Migrate,
+        Some(1),
+        Path::new("/dst"),
+        Some(Path::new("/dst/snapshots")),
+        &mut state,
+        &backend,
+        &mut persist_state,
+    )
+    .expect("snapshot run should use custom snapshot root");
+
+    assert_eq!(
+        state.last_successful_snapshot_name,
+        Some("snap-with-custom-root".to_string())
+    );
 }

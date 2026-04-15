@@ -2,9 +2,10 @@ use std::path::PathBuf;
 
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
+use crate::models::state::MigrationState;
 use crate::plan::PlanOptions;
 use crate::signal::{install_signal_handlers, ShutdownFlag};
-use crate::{migration_registry, plan, preflight, transfer};
+use crate::{migration_registry, plan, preflight, snapshot, transfer};
 
 use super::shared::{
     ensure_no_operator_review_blocks_with_policy, persist_state_both_locations,
@@ -97,6 +98,19 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
         &state_path,
         &secondary_state_path,
         &shutdown_flag,
+    )?;
+    let snapshot_backend = snapshot::SystemSnapshotBackend;
+    let mut persist_state = |current_state: &MigrationState| {
+        persist_state_both_locations(&state_path, &secondary_state_path, current_state)
+    };
+    snapshot::process_pending_snapshots(
+        config.mode.clone(),
+        config.snapshot_every,
+        &config.dest,
+        config.snapshot_dir.as_deref(),
+        &mut state,
+        &snapshot_backend,
+        &mut persist_state,
     )?;
 
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();

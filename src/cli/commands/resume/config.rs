@@ -24,6 +24,7 @@ pub(super) fn transfer_config_from_state(
         batch_size_bytes: state.batch_size_bytes,
         max_files: state.max_files,
         snapshot_every: state.snapshot_every,
+        snapshot_dir: state.snapshot_dir.as_ref().map(PathBuf::from),
         interactive: true,
         verification: state.verification_mode.clone(),
         log_level: "info".to_string(),

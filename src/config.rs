@@ -31,6 +31,7 @@ pub struct TransferConfig {
     pub batch_size_bytes: u64,
     pub max_files: Option<u64>,
     pub snapshot_every: Option<u32>,
+    pub snapshot_dir: Option<PathBuf>,
     pub interactive: bool,
     pub verification: VerificationMode,
     pub log_level: String,

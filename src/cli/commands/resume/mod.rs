@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::error::CaravanError;
 use crate::models::state::{BatchPhase, MigrationState};
 use crate::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
-use crate::{plan, resume as resume_ops, state_store, transfer};
+use crate::{plan, resume as resume_ops, snapshot, state_store, transfer};
 
 use super::shared::{
     approve_and_delete_verified_batches, ensure_no_operator_review_blocks,
@@ -115,6 +115,16 @@ pub(super) fn execute_resume(
         &shutdown_flag,
         &mut persist_state,
         "resume",
+    )?;
+    let snapshot_backend = snapshot::SystemSnapshotBackend;
+    snapshot::process_pending_snapshots(
+        config.mode.clone(),
+        config.snapshot_every,
+        &config.dest,
+        config.snapshot_dir.as_deref(),
+        &mut state,
+        &snapshot_backend,
+        &mut persist_state,
     )?;
 
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();

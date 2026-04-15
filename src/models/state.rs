@@ -50,6 +50,8 @@ pub struct MigrationState {
     pub max_files: Option<u64>,
     #[serde(default)]
     pub snapshot_every: Option<u32>,
+    #[serde(default)]
+    pub snapshot_dir: Option<String>,
     #[serde(default = "default_verification_mode")]
     pub verification_mode: VerificationMode,
     #[serde(default = "default_copy_strategy")]
@@ -73,6 +75,7 @@ impl MigrationState {
             batch_size_bytes: 0,
             max_files: None,
             snapshot_every: None,
+            snapshot_dir: None,
             verification_mode: default_verification_mode(),
             copy_strategy: default_copy_strategy(),
             copy_buffer_size: TransferConfig::default_copy_buffer_size(),

@@ -565,6 +565,7 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
         batch_size_bytes: 10, // Small enough to force 3 separate batches
         max_files: None,
         snapshot_every: None,
+        snapshot_dir: None,
         interactive: false,
         verification: VerificationMode::Structural,
         log_level: "error".to_string(),

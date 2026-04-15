@@ -61,6 +61,8 @@ pub struct MigrateArgs {
     pub base: TransferArgs,
     #[arg(long)]
     pub snapshot_every: Option<u32>,
+    #[arg(long)]
+    pub snapshot_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, clap::Args)]

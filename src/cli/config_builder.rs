@@ -15,7 +15,7 @@ pub(super) fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                 ));
             }
 
-            let transfer = build_transfer_config(Mode::Staging, args, None, log_level)?;
+            let transfer = build_transfer_config(Mode::Staging, args, None, None, log_level)?;
             Ok(Config::Staging(transfer))
         }
         Some(Command::Migrate(args)) => {
@@ -31,8 +31,13 @@ pub(super) fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                 ));
             }
 
-            let transfer =
-                build_transfer_config(Mode::Migrate, args.base, args.snapshot_every, log_level)?;
+            let transfer = build_transfer_config(
+                Mode::Migrate,
+                args.base,
+                args.snapshot_every,
+                args.snapshot_dir,
+                log_level,
+            )?;
             Ok(Config::Migrate(transfer))
         }
         Some(Command::Status(args)) => Ok(Config::Status {
@@ -55,6 +60,7 @@ fn build_transfer_config(
     mode: Mode,
     args: TransferArgs,
     snapshot_every: Option<u32>,
+    snapshot_dir: Option<std::path::PathBuf>,
     log_level: String,
 ) -> Result<TransferConfig, CaravanError> {
     let (copy_buffer_size, buffered_copy_threshold) = args::parse_copy_options(
@@ -69,6 +75,7 @@ fn build_transfer_config(
         batch_size_bytes: args.batch_size,
         max_files: args.max_files,
         snapshot_every,
+        snapshot_dir,
         interactive: args.interactive,
         verification: args.verification.into(),
         log_level,
