@@ -12,6 +12,21 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 2 (2026-04-15)
+- Continued CLI modularization by splitting `src/cli/commands/resume.rs` into:
+  - `src/cli/commands/resume/mod.rs` (orchestration)
+  - `src/cli/commands/resume/config.rs` (state -> `TransferConfig` reconstruction)
+  - `src/cli/commands/resume/batch_flow.rs` (copy/verify/per-batch resume flow)
+- Preserved resume behavior:
+  - operator-review fail-closed checks
+  - deterministic per-batch resume step planning
+  - verification failure stop-before-delete guarantees
+  - deletion approval/deletion continuation behavior
+- Validation after resume split:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`
