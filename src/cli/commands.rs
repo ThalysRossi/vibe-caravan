@@ -105,35 +105,70 @@ fn approve_and_delete_verified_batches(
     persist_state: &mut dyn FnMut(&MigrationState) -> Result<(), CaravanError>,
     delete_context: &str,
 ) -> Result<(), CaravanError> {
-    let prompt_backend = prompt::InteractivePrompt;
-    let batches_needing_approval = state.batches_needing_approval();
+    // If a prior run already approved deletion, continue deletion without prompting.
+    let already_approved = state.batches_approved_but_not_deleted();
+    delete_batches_by_id(
+        state,
+        source_root,
+        &already_approved,
+        shutdown_flag,
+        persist_state,
+        delete_context,
+    )?;
 
-    if batches_needing_approval.is_empty() {
+    let batches_needing_approval = state.batches_needing_approval();
+    if !batches_needing_approval.is_empty() {
+        let prompt_backend = prompt::InteractivePrompt;
+        println!(
+            "\n=== All {} batches have been verified successfully ===",
+            batches_needing_approval.len()
+        );
+
+        let approved = prompt::request_approval_for_batches(
+            Some(&prompt_backend),
+            interactive,
+            false,
+            &batches_needing_approval,
+        )?;
+
+        if !approved {
+            println!("Deletion not approved. Stopping.");
+            return Ok(());
+        }
+
+        state.approve_batches(&batches_needing_approval);
+        persist_state(state)?;
+
+        delete_batches_by_id(
+            state,
+            source_root,
+            &batches_needing_approval,
+            shutdown_flag,
+            persist_state,
+            delete_context,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn delete_batches_by_id(
+    state: &mut MigrationState,
+    source_root: &Path,
+    batch_ids: &[String],
+    shutdown_flag: &ShutdownFlag,
+    persist_state: &mut dyn FnMut(&MigrationState) -> Result<(), CaravanError>,
+    delete_context: &str,
+) -> Result<(), CaravanError> {
+    if batch_ids.is_empty() {
         return Ok(());
     }
 
     println!(
-        "\n=== All {} batches have been verified successfully ===",
-        batches_needing_approval.len()
+        "\n=== Deleting source files for {} batch(es) ===",
+        batch_ids.len()
     );
-
-    let approved = prompt::request_approval_for_batches(
-        Some(&prompt_backend),
-        interactive,
-        false,
-        &batches_needing_approval,
-    )?;
-
-    if !approved {
-        println!("Deletion not approved. Stopping.");
-        return Ok(());
-    }
-
-    state.approve_batches(&batches_needing_approval);
-    persist_state(state)?;
-
-    println!("\n=== Deleting source files for all batches ===");
-    for batch_id in &batches_needing_approval {
+    for batch_id in batch_ids {
         check_shutdown(shutdown_flag)?;
 
         if let Some(batch_state) = state.batch(batch_id) {
@@ -152,6 +187,158 @@ fn approve_and_delete_verified_batches(
     }
 
     Ok(())
+}
+
+fn verify_batch_for_resume(
+    batch: &crate::models::batch::Batch,
+    config: &TransferConfig,
+    state: &mut MigrationState,
+    state_path: &Path,
+) -> Result<(), CaravanError> {
+    println!("Verifying {}...", batch.id);
+    let mut progress = crate::progress::TerminalProgress::new();
+    let verification_report = verify::verify_batch_with_progress(
+        batch,
+        &config.source,
+        &config.dest,
+        config.verification.clone(),
+        &mut progress,
+    )?;
+
+    let mut current_state = state.batch(&batch.id).cloned().ok_or_else(|| {
+        CaravanError::InvalidArguments(format!(
+            "batch {} disappeared from state during verification",
+            batch.id
+        ))
+    })?;
+    current_state.phase = BatchPhase::VerifyCompleted;
+    current_state.verification_passed =
+        verification_report.status == models::verification::VerificationStatus::Pass;
+    state.upsert_batch(current_state.clone());
+    state_store::persist_state(state_path, state)?;
+
+    if !current_state.verification_passed {
+        eprintln!(
+            "Verification failed: {}",
+            verification_report.recommended_action
+        );
+        eprintln!("Missing: {:?}", verification_report.missing_files);
+        eprintln!("Mismatched: {:?}", verification_report.mismatched_files);
+        return Err(CaravanError::InvalidArguments(
+            "verification failed".to_string(),
+        ));
+    }
+
+    println!("✅ Verification passed!");
+    Ok(())
+}
+
+fn copy_batch_for_resume(
+    batch: &crate::models::batch::Batch,
+    config: &TransferConfig,
+    state: &mut MigrationState,
+    state_path: &Path,
+    copy_backend: &transfer::LocalFsCopyBackend,
+) -> Result<(), CaravanError> {
+    println!(
+        "\n=== Processing {} ({} files, {}) ===",
+        batch.id,
+        batch.file_count,
+        format::format_bytes(batch.total_bytes)
+    );
+
+    ensure_destination_capacity(&config.dest, batch.total_bytes)?;
+
+    let mut current_state = state.batch(&batch.id).cloned().ok_or_else(|| {
+        CaravanError::InvalidArguments(format!(
+            "batch {} disappeared from state during copy",
+            batch.id
+        ))
+    })?;
+    current_state.phase = BatchPhase::CopyStarted;
+    state.upsert_batch(current_state.clone());
+    state_store::persist_state(state_path, state)?;
+
+    let mut progress = crate::progress::TerminalProgress::new();
+    transfer::transfer_batch_with_progress(
+        batch,
+        &config.source,
+        &config.dest,
+        copy_backend,
+        &mut progress,
+    )?;
+
+    current_state.phase = BatchPhase::CopyCompleted;
+    state.upsert_batch(current_state);
+    state_store::persist_state(state_path, state)?;
+
+    Ok(())
+}
+
+fn process_resume_batch(
+    batch_id: &str,
+    config: &TransferConfig,
+    state: &mut MigrationState,
+    state_path: &Path,
+    copy_backend: &transfer::LocalFsCopyBackend,
+) -> Result<(), CaravanError> {
+    let batch_state = state
+        .batch(batch_id)
+        .ok_or_else(|| {
+            CaravanError::InvalidArguments(format!(
+                "Batch {} disappeared from state during resume iteration",
+                batch_id
+            ))
+        })?
+        .clone();
+
+    if batch_state.deleted {
+        println!("⏭️  Skipping {}: already completed", batch_state.batch_id);
+        return Ok(());
+    }
+
+    let batch = plan::load_batch_definition(
+        &config.source,
+        &batch_state.batch_id,
+        state.batch_size_bytes,
+        state.max_files,
+    )?;
+    let recon = resume::reconcile_batch_destination(&batch, &config.dest);
+    let step = resume::plan_resume_step(&batch_state, &recon, &batch);
+
+    match step {
+        resume::ResumeStepPlan::BatchFullyCompleted
+        | resume::ResumeStepPlan::PostDeleteSnapshot => {
+            println!("⏭️  Skipping {}: already completed", batch.id);
+            Ok(())
+        }
+        resume::ResumeStepPlan::ConflictOperatorReview { reason } => {
+            Err(CaravanError::InvalidArguments(format!(
+                "batch {} requires operator review before continuing: {}",
+                batch.id, reason
+            )))
+        }
+        resume::ResumeStepPlan::BlockedFailedVerification => {
+            Err(CaravanError::InvalidArguments(format!(
+                "batch {} failed verification and requires operator review before continuing",
+                batch.id
+            )))
+        }
+        resume::ResumeStepPlan::DeleteSource | resume::ResumeStepPlan::PendingDeleteApproval => {
+            println!(
+                "✅ {} already verified, will continue to deletion phase",
+                batch.id
+            );
+            Ok(())
+        }
+        resume::ResumeStepPlan::VerifyBatch => {
+            verify_batch_for_resume(&batch, config, state, state_path)
+        }
+        resume::ResumeStepPlan::CopyBatch => {
+            copy_batch_for_resume(&batch, config, state, state_path, copy_backend)?;
+            verify_batch_for_resume(&batch, config, state, state_path)
+        }
+    }
 }
 
 pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
@@ -585,122 +772,7 @@ pub(super) fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
     for batch_id in batch_ids {
         // Check for shutdown before starting batch
         check_shutdown(&shutdown_flag)?;
-
-        // Clone immediately to release immutable borrow on state
-        let batch_state = state
-            .batch(&batch_id)
-            .ok_or_else(|| {
-                CaravanError::InvalidArguments(format!(
-                    "Batch {} disappeared from state during resume iteration",
-                    batch_id
-                ))
-            })?
-            .clone();
-
-        if batch_state.deleted {
-            println!("⏭️  Skipping {}: already completed", batch_state.batch_id);
-            continue;
-        }
-
-        // Check current batch phase to decide what to do next
-        match batch_state.phase {
-            BatchPhase::VerifyCompleted if batch_state.verification_passed => {
-                println!(
-                    "✅ {} already copied & verified, ready for delete",
-                    batch_state.batch_id
-                );
-            }
-            BatchPhase::CopyCompleted => {
-                println!(
-                    "✅ {} already copied, will verify next",
-                    batch_state.batch_id
-                );
-            }
-            BatchPhase::CopyStarted => {
-                println!("⚠️  {} partially copied, will retry", batch_state.batch_id);
-            }
-            phase => {
-                println!(
-                    "🔄 Processing {}: at phase {:?}",
-                    batch_state.batch_id, phase
-                );
-            }
-        }
-
-        // We need the actual batch file list to copy/verify
-        let mut current_state = batch_state.clone();
-
-        // Load original batch definition from disk (IDs are deterministic)
-        let batch = plan::load_batch_definition(
-            &config.source,
-            &batch_state.batch_id,
-            state.batch_size_bytes,
-            state.max_files,
-        )?;
-
-        // Skip verification if already done
-        if current_state.phase != BatchPhase::VerifyCompleted {
-            // Copy batch if not already completed
-            if current_state.phase != BatchPhase::CopyCompleted {
-                println!(
-                    "\n=== Processing {} ({} files, {}) ===",
-                    batch.id,
-                    batch.file_count,
-                    format::format_bytes(batch.total_bytes)
-                );
-
-                ensure_destination_capacity(&config.dest, batch.total_bytes)?;
-
-                // Copy batch
-                current_state.phase = BatchPhase::CopyStarted;
-                state.upsert_batch(current_state.clone());
-                state_store::persist_state(state_path, &state)?;
-
-                let mut progress = crate::progress::TerminalProgress::new();
-                transfer::transfer_batch_with_progress(
-                    &batch,
-                    &config.source,
-                    &config.dest,
-                    &copy_backend,
-                    &mut progress,
-                )?;
-
-                current_state.phase = BatchPhase::CopyCompleted;
-                state.upsert_batch(current_state.clone());
-                state_store::persist_state(state_path, &state)?;
-            }
-
-            // Verify batch
-            println!("Verifying {}...", batch.id);
-            let mut progress = crate::progress::TerminalProgress::new();
-            let verification_report = verify::verify_batch_with_progress(
-                &batch,
-                &config.source,
-                &config.dest,
-                config.verification.clone(),
-                &mut progress,
-            )?;
-
-            current_state.phase = BatchPhase::VerifyCompleted;
-            current_state.verification_passed =
-                verification_report.status == models::verification::VerificationStatus::Pass;
-            state.upsert_batch(current_state.clone());
-            state_store::persist_state(state_path, &state)?;
-
-            if !current_state.verification_passed {
-                eprintln!(
-                    "Verification failed: {}",
-                    verification_report.recommended_action
-                );
-                eprintln!("Missing: {:?}", verification_report.missing_files);
-                eprintln!("Mismatched: {:?}", verification_report.mismatched_files);
-                return Err(CaravanError::InvalidArguments(
-                    "verification failed".to_string(),
-                ));
-            }
-
-            println!("✅ Verification passed!");
-        }
+        process_resume_batch(&batch_id, &config, &mut state, state_path, &copy_backend)?;
     }
 
     // Check for shutdown before proceeding to deletion phase
