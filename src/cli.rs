@@ -261,17 +261,9 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     // Try to load existing state file, or create new state
     let mut state = if state_path.exists() {
         // Load existing state
-        match state_store::load_state(&state_path) {
-            Ok(loaded_state) => {
-                println!("Loaded existing state from: {}", state_path.display());
-                loaded_state
-            }
-            Err(err) => {
-                println!("Warning: Failed to load existing state from {}: {}. Creating new state.", 
-                    state_path.display(), err);
-                MigrationState::new(mode_str, &source_str, &dest_str)
-            }
-        }
+        let loaded_state = state_store::load_state(&state_path)?;
+        println!("Loaded existing state from: {}", state_path.display());
+        loaded_state
     } else {
         // No existing state file, create new state
         // Check if source directory is writable before creating new state
@@ -403,8 +395,9 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
                 println!("⚠️  Skipping batch '{}' due to {} naming conflict(s)", 
                     batch.id, conflict_report.total_conflicts);
                 
-                // Mark batch as skipped (we'll treat it as completed to avoid retrying)
-                batch_state.phase = BatchPhase::CopyCompleted;
+                // Mark batch as failed so later phases do not treat it as copied.
+                // A later rerun can retry after the operator resolves the conflict.
+                batch_state.phase = BatchPhase::Failed;
                 batch_state.verification_passed = false;
                 state.upsert_batch(batch_state.clone());
                 persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
@@ -442,6 +435,10 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         // Skip batches already verified or deleted
         if let Some(existing_batch) = state.batch(&batch.id) {
             if existing_batch.deleted {
+                continue;
+            }
+            if existing_batch.phase == BatchPhase::Failed {
+                println!("Skipping {}: requires operator review before verification", batch.id);
                 continue;
             }
             if existing_batch.verification_passed && existing_batch.phase == BatchPhase::VerifyCompleted {
@@ -482,6 +479,19 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     
     // Check for shutdown before proceeding to deletion phase
     check_shutdown(&shutdown_flag)?;
+
+    let failed_batches: Vec<_> = state
+        .batches
+        .iter()
+        .filter(|batch| batch.phase == BatchPhase::Failed && !batch.deleted)
+        .map(|batch| batch.batch_id.clone())
+        .collect();
+    if !failed_batches.is_empty() {
+        return Err(CaravanError::InvalidArguments(format!(
+            "one or more batches require operator review before continuing: {}",
+            failed_batches.join(", ")
+        )));
+    }
     
     // After all batches are processed, request approval for deletion of all verified batches
     let prompt_backend = prompt::InteractivePrompt;
