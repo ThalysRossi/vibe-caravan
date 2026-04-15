@@ -1,5 +1,6 @@
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -125,6 +126,23 @@ fn copy_strategy_resolution_is_mode_aware() {
     assert_eq!(
         resolve_copy_strategy(CopyStrategy::Auto, &Mode::Staging),
         ResolvedCopyStrategy::Hybrid
+    );
+}
+
+#[test]
+fn migrate_backend_enables_durable_writes_by_default() {
+    let staging_backend =
+        LocalFsCopyBackend::with_strategy(1024 * 1024, 1024, CopyStrategy::Auto, &Mode::Staging);
+    let migrate_backend =
+        LocalFsCopyBackend::with_strategy(1024 * 1024, 1024, CopyStrategy::Auto, &Mode::Migrate);
+
+    assert!(
+        !staging_backend.durable_writes_enabled(),
+        "staging backend should avoid migrate durability barriers"
+    );
+    assert!(
+        migrate_backend.durable_writes_enabled(),
+        "migrate backend should enable durability barriers"
     );
 }
 
@@ -385,6 +403,29 @@ impl FileCopier for HintTrackingCopier {
     }
 }
 
+#[derive(Debug, Default)]
+struct PartialWriteThenFailCopier;
+
+impl FileCopier for PartialWriteThenFailCopier {
+    fn copy_file(&self, source: &Path, destination: &Path) -> io::Result<u64> {
+        self.copy_file_with_size_hint(source, destination, None)
+    }
+
+    fn copy_file_with_size_hint(
+        &self,
+        _source: &Path,
+        destination: &Path,
+        _size_hint: Option<u64>,
+    ) -> io::Result<u64> {
+        let mut file = fs::File::create(destination)?;
+        file.write_all(b"partial-write-before-failure")?;
+        Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            "simulated mid-copy interruption",
+        ))
+    }
+}
+
 #[test]
 fn copy_batch_with_components_surfaces_file_copier_failures() {
     let src = TempDir::new().expect("source temp dir");
@@ -495,4 +536,52 @@ fn copy_batch_with_components_passes_planned_size_hints_to_copier() {
     let hints = copier.observed_hints();
     let expected: Vec<Option<u64>> = batch.files.iter().map(|f| Some(f.size_bytes)).collect();
     assert_eq!(hints, expected);
+}
+
+#[test]
+fn copy_batch_with_components_cleans_temp_file_and_keeps_destination_atomic_on_failure() {
+    let src = TempDir::new().expect("source temp dir");
+    let dst = TempDir::new().expect("destination temp dir");
+    create_file(src.path(), "movie.mkv", &[7u8; 1024]);
+
+    let plan = build_plan(
+        src.path(),
+        &PlanOptions {
+            batch_size_bytes: 2048,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+    let batch = &plan.batches[0];
+
+    let copier = PartialWriteThenFailCopier;
+    let creator = TrackingDirectoryCreator::default();
+    let mut progress = NoopProgress;
+
+    let err = copy_batch_with_components(
+        batch,
+        src.path(),
+        dst.path(),
+        &copier,
+        &creator,
+        &mut progress,
+    )
+    .expect_err("copy should fail after partial temp write");
+
+    assert!(
+        err.to_string().contains("failed to copy"),
+        "error should bubble up as copy failure"
+    );
+
+    let final_destination = dst.path().join("movie.mkv");
+    assert!(
+        !final_destination.exists(),
+        "final destination must not appear on failed copy"
+    );
+
+    let temp_destination = dst.path().join("movie.mkv.caravan.part");
+    assert!(
+        !temp_destination.exists(),
+        "temp file should be cleaned after failed copy"
+    );
 }

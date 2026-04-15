@@ -1,6 +1,7 @@
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use crate::config::{CopyStrategy, Mode, TransferConfig};
@@ -335,6 +336,7 @@ enum LocalFileCopier {
 #[derive(Debug, Clone)]
 pub struct LocalFsCopyBackend {
     file_copier: LocalFileCopier,
+    durable_writes: bool,
 }
 
 impl LocalFsCopyBackend {
@@ -350,6 +352,7 @@ impl LocalFsCopyBackend {
     pub fn with_config(buffer_size: usize, threshold: u64) -> Self {
         Self {
             file_copier: LocalFileCopier::Hybrid(HybridFileCopier::new(buffer_size, threshold)),
+            durable_writes: false,
         }
     }
 
@@ -359,6 +362,7 @@ impl LocalFsCopyBackend {
         strategy: CopyStrategy,
         mode: &Mode,
     ) -> Self {
+        let durable_writes = matches!(mode, Mode::Migrate);
         let file_copier = match resolve_copy_strategy(strategy, mode) {
             ResolvedCopyStrategy::Hybrid => {
                 LocalFileCopier::Hybrid(HybridFileCopier::new(buffer_size, threshold))
@@ -370,7 +374,10 @@ impl LocalFsCopyBackend {
                 LocalFileCopier::Buffered(BufferedFileCopier::new(buffer_size))
             }
         };
-        Self { file_copier }
+        Self {
+            file_copier,
+            durable_writes,
+        }
     }
 
     pub fn with_transfer_config(config: &TransferConfig) -> Self {
@@ -380,6 +387,10 @@ impl LocalFsCopyBackend {
             config.copy_strategy,
             &config.mode,
         )
+    }
+
+    pub fn durable_writes_enabled(&self) -> bool {
+        self.durable_writes
     }
 }
 
@@ -421,13 +432,14 @@ impl CopyBackend for LocalFsCopyBackend {
         destination_root: &Path,
         progress: &mut dyn ProgressReporter,
     ) -> Result<(), CaravanError> {
-        copy_batch_with_components(
+        copy_batch_with_components_and_durability(
             batch,
             source_root,
             destination_root,
             &self.file_copier,
             &FsDirectoryCreator,
             progress,
+            self.durable_writes,
         )
     }
 }
@@ -486,9 +498,30 @@ pub fn copy_batch_with_components(
     dir_creator: &dyn DirectoryCreator,
     progress: &mut dyn ProgressReporter,
 ) -> Result<(), CaravanError> {
+    copy_batch_with_components_and_durability(
+        batch,
+        source_root,
+        destination_root,
+        file_copier,
+        dir_creator,
+        progress,
+        false,
+    )
+}
+
+pub fn copy_batch_with_components_and_durability(
+    batch: &Batch,
+    source_root: &Path,
+    destination_root: &Path,
+    file_copier: &dyn FileCopier,
+    dir_creator: &dyn DirectoryCreator,
+    progress: &mut dyn ProgressReporter,
+    durable_writes: bool,
+) -> Result<(), CaravanError> {
     progress.start(batch.files.len(), "Copying");
 
     let mut created_dirs = HashSet::new();
+    let mut touched_parent_dirs = HashSet::new();
 
     for (index, file) in batch.files.iter().enumerate() {
         let source_path = source_root.join(&file.relative_path);
@@ -507,19 +540,128 @@ pub fn copy_batch_with_components(
             }
         }
 
-        file_copier
-            .copy_file_with_size_hint(&source_path, &destination_path, Some(file.size_bytes))
-            .map_err(|err| {
-                CaravanError::InvalidArguments(format!(
-                    "failed to copy {} to {}: {err}",
-                    source_path.display(),
-                    destination_path.display()
-                ))
-            })?;
+        copy_file_atomically(
+            file_copier,
+            &source_path,
+            &destination_path,
+            file.size_bytes,
+            durable_writes,
+        )?;
+
+        if durable_writes {
+            if let Some(parent) = destination_path.parent() {
+                touched_parent_dirs.insert(parent.to_path_buf());
+            }
+        }
 
         progress.advance(index + 1, Some(&file.relative_path.to_string_lossy()));
     }
 
+    if durable_writes {
+        sync_parent_directories(touched_parent_dirs)?;
+    }
+
     progress.finish();
+    Ok(())
+}
+
+fn copy_file_atomically(
+    file_copier: &dyn FileCopier,
+    source_path: &Path,
+    destination_path: &Path,
+    size_hint: u64,
+    durable_writes: bool,
+) -> Result<(), CaravanError> {
+    let temp_destination_path = temp_destination_path(destination_path);
+    clear_stale_temp_file(&temp_destination_path, destination_path)?;
+
+    if let Err(err) =
+        file_copier.copy_file_with_size_hint(source_path, &temp_destination_path, Some(size_hint))
+    {
+        let _ = std::fs::remove_file(&temp_destination_path);
+        return Err(CaravanError::InvalidArguments(format!(
+            "failed to copy {} to {}: {err}",
+            source_path.display(),
+            destination_path.display()
+        )));
+    }
+
+    if durable_writes {
+        if let Err(err) = sync_file_data(&temp_destination_path) {
+            let _ = std::fs::remove_file(&temp_destination_path);
+            return Err(CaravanError::InvalidArguments(format!(
+                "failed to flush copied file before finalize {}: {err}",
+                destination_path.display()
+            )));
+        }
+    }
+
+    if let Err(err) = std::fs::rename(&temp_destination_path, destination_path) {
+        let _ = std::fs::remove_file(&temp_destination_path);
+        return Err(CaravanError::InvalidArguments(format!(
+            "failed to finalize copied file {}: {err}",
+            destination_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+fn temp_destination_path(destination_path: &Path) -> PathBuf {
+    let file_name = destination_path
+        .file_name()
+        .map(|name| {
+            let mut temp_name = OsString::from(name);
+            temp_name.push(".caravan.part");
+            temp_name
+        })
+        .unwrap_or_else(|| OsString::from(".caravan.part"));
+
+    if let Some(parent) = destination_path.parent() {
+        parent.join(file_name)
+    } else {
+        PathBuf::from(file_name)
+    }
+}
+
+fn clear_stale_temp_file(temp_path: &Path, destination_path: &Path) -> Result<(), CaravanError> {
+    match std::fs::remove_file(temp_path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(CaravanError::InvalidArguments(format!(
+            "failed to remove stale temporary file for {} ({}): {err}",
+            destination_path.display(),
+            temp_path.display()
+        ))),
+    }
+}
+
+fn sync_file_data(path: &Path) -> io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+fn sync_parent_directories(parents: HashSet<PathBuf>) -> Result<(), CaravanError> {
+    let mut parents: Vec<PathBuf> = parents.into_iter().collect();
+    parents.sort();
+
+    for parent in parents {
+        sync_directory(&parent).map_err(|err| {
+            CaravanError::InvalidArguments(format!(
+                "failed to flush destination directory {}: {err}",
+                parent.display()
+            ))
+        })?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> io::Result<()> {
+    std::fs::File::open(path)?.sync_all()
+}
+
+#[cfg(not(unix))]
+fn sync_directory(_path: &Path) -> io::Result<()> {
     Ok(())
 }

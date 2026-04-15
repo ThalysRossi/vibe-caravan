@@ -237,6 +237,67 @@ fn transfer_rerun_with_recover_failed_retries_failed_batch() {
     assert!(batch.verification_passed);
 }
 
+#[test]
+fn transfer_rerun_from_copy_started_retries_copy_without_conflict_skip() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "fresh source contents").expect("write source");
+    fs::write(dest_dir.join("file1.txt"), "stale partial contents").expect("write stale dest");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.batches.push(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::CopyStarted,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+    persist_state(&state_path, &state).expect("persist state");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("utf8 source"),
+            "--dest",
+            dest_dir.to_str().expect("utf8 dest"),
+            "--batch-size",
+            "1MiB",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
+
+    assert!(
+        !output.status.success(),
+        "non-interactive run should still fail-closed at delete approval gate"
+    );
+
+    assert_eq!(
+        fs::read_to_string(dest_dir.join("file1.txt")).expect("destination file should exist"),
+        "fresh source contents"
+    );
+
+    let state_after = caravan::state_store::load_state(&state_path).expect("load updated state");
+    let batch = state_after
+        .batch("batch-000001")
+        .expect("batch should exist in state");
+    assert_eq!(batch.phase, BatchPhase::VerifyCompleted);
+    assert!(batch.verification_passed);
+}
+
 #[cfg(unix)]
 #[test]
 fn approved_for_delete_batches_are_not_recopied_on_transfer_rerun() {
