@@ -1,11 +1,14 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use caravan::config::Mode;
 use caravan::error::CaravanError;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
-use caravan::snapshot::{process_pending_snapshots, snapshot_if_needed, SnapshotBackend};
+use caravan::snapshot::{
+    process_pending_snapshots, snapshot_if_needed, validate_snapshot_configuration, SnapshotBackend,
+};
+use tempfile::TempDir;
 
 struct StubSnapshotBackend {
     snapshot_name: Option<String>,
@@ -66,7 +69,9 @@ impl SnapshotBackend for ScriptedSnapshotBackend {
     }
 }
 
-struct SnapshotRootAssertingBackend;
+struct SnapshotRootAssertingBackend {
+    expected_snapshot_root: PathBuf,
+}
 
 impl SnapshotBackend for SnapshotRootAssertingBackend {
     fn create_snapshot(
@@ -78,7 +83,7 @@ impl SnapshotBackend for SnapshotRootAssertingBackend {
         let snapshot_root = snapshot_root.ok_or_else(|| {
             CaravanError::InvalidArguments("snapshot root should be provided".to_string())
         })?;
-        if snapshot_root != Path::new("/dst/snapshots") {
+        if snapshot_root != self.expected_snapshot_root.as_path() {
             return Err(CaravanError::InvalidArguments(format!(
                 "unexpected snapshot root '{}'",
                 snapshot_root.display()
@@ -355,6 +360,12 @@ fn process_pending_snapshots_skips_batches_already_snapshot_completed() {
 
 #[test]
 fn process_pending_snapshots_forwards_custom_snapshot_root() {
+    let temp = TempDir::new().expect("temp directory should be created");
+    let destination_root = temp.path().join("dest");
+    let snapshot_root = temp.path().join("snapshots");
+    std::fs::create_dir_all(&destination_root).expect("destination root should be created");
+    std::fs::create_dir_all(&snapshot_root).expect("snapshot root should be created");
+
     let mut state = MigrationState::new("migrate", "/src", "/dst");
     state.upsert_batch(BatchState {
         batch_id: "batch-000001".to_string(),
@@ -364,14 +375,16 @@ fn process_pending_snapshots_forwards_custom_snapshot_root() {
         deleted: true,
     });
 
-    let backend = SnapshotRootAssertingBackend;
+    let backend = SnapshotRootAssertingBackend {
+        expected_snapshot_root: snapshot_root.clone(),
+    };
     let mut persist_state = |_current_state: &MigrationState| Ok::<(), CaravanError>(());
 
     process_pending_snapshots(
         Mode::Migrate,
         Some(1),
-        Path::new("/dst"),
-        Some(Path::new("/dst/snapshots")),
+        &destination_root,
+        Some(&snapshot_root),
         &mut state,
         &backend,
         &mut persist_state,
@@ -382,4 +395,41 @@ fn process_pending_snapshots_forwards_custom_snapshot_root() {
         state.last_successful_snapshot_name,
         Some("snap-with-custom-root".to_string())
     );
+}
+
+#[test]
+fn validate_snapshot_configuration_rejects_snapshot_root_without_cadence() {
+    let err = validate_snapshot_configuration(
+        Mode::Migrate,
+        None,
+        Path::new("/dst"),
+        Some(Path::new("/dst/snapshots")),
+    )
+    .expect_err("snapshot root without cadence should fail");
+
+    assert!(err
+        .to_string()
+        .contains("snapshot-dir requires snapshot-every"));
+}
+
+#[test]
+fn validate_snapshot_configuration_rejects_non_directory_snapshot_root() {
+    let temp = TempDir::new().expect("temp directory should be created");
+    let destination_root = temp.path().join("dest");
+    let snapshot_file = temp.path().join("snapshot-file");
+    std::fs::create_dir_all(&destination_root).expect("destination root should be created");
+    std::fs::write(&snapshot_file, b"not-a-directory")
+        .expect("snapshot path fixture file should be created");
+
+    let err = validate_snapshot_configuration(
+        Mode::Migrate,
+        Some(1),
+        &destination_root,
+        Some(&snapshot_file),
+    )
+    .expect_err("non-directory snapshot root should fail");
+
+    assert!(err
+        .to_string()
+        .contains("snapshot destination must be an existing directory"));
 }

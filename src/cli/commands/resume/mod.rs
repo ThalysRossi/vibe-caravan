@@ -81,6 +81,12 @@ pub(super) fn execute_resume(
         inspect_failed_batches(&state, &config)?;
         return Ok(());
     }
+    snapshot::validate_snapshot_configuration(
+        config.mode.clone(),
+        config.snapshot_every,
+        &config.dest,
+        config.snapshot_dir.as_deref(),
+    )?;
 
     ensure_no_operator_review_blocks_with_policy(
         &state,

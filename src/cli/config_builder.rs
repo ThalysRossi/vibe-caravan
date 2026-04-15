@@ -25,6 +25,11 @@ pub(super) fn to_config(cli: Cli) -> Result<Config, CaravanError> {
                     "snapshot-every must be greater than zero when provided".to_string(),
                 ));
             }
+            if args.snapshot_dir.is_some() && args.snapshot_every.is_none() {
+                return Err(CaravanError::InvalidArguments(
+                    "snapshot-dir requires snapshot-every".to_string(),
+                ));
+            }
             if args.base.max_files == Some(0) {
                 return Err(CaravanError::InvalidArguments(
                     "max-files must be greater than zero".to_string(),

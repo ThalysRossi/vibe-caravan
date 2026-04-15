@@ -371,6 +371,8 @@ fn snapshot_dir_is_parsed_for_migrate_command() {
         "/dst",
         "--batch-size",
         "1GiB",
+        "--snapshot-every",
+        "1",
         "--snapshot-dir",
         "/dst/snapshots",
     ])
@@ -387,4 +389,25 @@ fn snapshot_dir_is_parsed_for_migrate_command() {
         }
         _ => panic!("expected migrate config"),
     }
+}
+
+#[test]
+fn snapshot_dir_requires_snapshot_every() {
+    let result = parse_cli_from([
+        "caravan",
+        "migrate",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--snapshot-dir",
+        "/dst/snapshots",
+    ]);
+
+    let err = result.expect_err("snapshot-dir without snapshot-every should fail");
+    assert!(err
+        .to_string()
+        .contains("snapshot-dir requires snapshot-every"));
 }

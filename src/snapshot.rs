@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::Mode;
@@ -87,6 +87,78 @@ pub fn snapshot_if_needed(
     }
 }
 
+pub fn validate_snapshot_configuration(
+    mode: Mode,
+    snapshot_every: Option<u32>,
+    destination_root: &Path,
+    snapshot_root: Option<&Path>,
+) -> Result<(), CaravanError> {
+    if snapshot_root.is_some() && snapshot_every.is_none() {
+        return Err(CaravanError::InvalidArguments(
+            "snapshot-dir requires snapshot-every".to_string(),
+        ));
+    }
+
+    if mode == Mode::Staging {
+        if snapshot_every.is_some() || snapshot_root.is_some() {
+            return Err(CaravanError::InvalidArguments(
+                "snapshots are only supported in migrate mode".to_string(),
+            ));
+        }
+        return Ok(());
+    }
+
+    if let Some(value) = snapshot_every {
+        if value == 0 {
+            return Err(CaravanError::InvalidArguments(
+                "snapshot cadence must be greater than zero".to_string(),
+            ));
+        }
+    } else {
+        return Ok(());
+    }
+
+    let Some(snapshot_root) = snapshot_root else {
+        return Ok(());
+    };
+
+    let snapshot_meta = std::fs::metadata(snapshot_root).map_err(|err| {
+        CaravanError::InvalidArguments(format!(
+            "snapshot destination '{}' is not accessible: {}",
+            snapshot_root.display(),
+            err
+        ))
+    })?;
+    if !snapshot_meta.is_dir() {
+        return Err(CaravanError::InvalidArguments(format!(
+            "snapshot destination must be an existing directory: '{}'",
+            snapshot_root.display()
+        )));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let destination_probe = resolve_existing_path(destination_root)?;
+        let destination_meta = std::fs::metadata(&destination_probe).map_err(|err| {
+            CaravanError::InvalidArguments(format!(
+                "destination '{}' is not accessible for snapshot checks: {}",
+                destination_probe.display(),
+                err
+            ))
+        })?;
+        if snapshot_meta.dev() != destination_meta.dev() {
+            return Err(CaravanError::InvalidArguments(format!(
+                "snapshot destination '{}' must be on the same filesystem as destination '{}'",
+                snapshot_root.display(),
+                destination_root.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
 pub fn process_pending_snapshots(
     mode: Mode,
     snapshot_every: Option<u32>,
@@ -96,6 +168,13 @@ pub fn process_pending_snapshots(
     backend: &dyn SnapshotBackend,
     persist_state: &mut dyn FnMut(&MigrationState) -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
+    validate_snapshot_configuration(
+        mode.clone(),
+        snapshot_every,
+        destination_root,
+        snapshot_root,
+    )?;
+
     if snapshot_every.is_none() {
         return Ok(());
     }
@@ -206,4 +285,19 @@ fn now_unix_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn resolve_existing_path(path: &Path) -> Result<PathBuf, CaravanError> {
+    let mut candidate: Option<&Path> = Some(path);
+    while let Some(current) = candidate {
+        if current.exists() {
+            return Ok(current.to_path_buf());
+        }
+        candidate = current.parent();
+    }
+
+    Err(CaravanError::InvalidArguments(format!(
+        "path '{}' and its parents do not exist",
+        path.display()
+    )))
 }
