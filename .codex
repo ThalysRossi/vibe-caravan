@@ -111,6 +111,17 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 9 (2026-04-15)
+- Added integration output-regression coverage under `tests/command_output_tests.rs`:
+  - `status` output sections and key lines
+  - interactive `staging` run output banners for approval/deletion/completion
+  - `resume` output header, delete banner, and completion summary for pre-approved state
+- This locks down output behavior while using shared output helpers.
+- Validation after regression-test phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`
