@@ -260,43 +260,14 @@ impl CopyBackend for LocalFsCopyBackend {
         destination_root: &Path,
         progress: &mut dyn ProgressReporter,
     ) -> Result<(), CaravanError> {
-        progress.start(batch.files.len(), "Copying");
-        
-        // Track directories we've already created to avoid redundant system calls
-        let mut created_dirs = HashSet::new();
-        let dir_creator = FsDirectoryCreator;
-        
-        for (index, file) in batch.files.iter().enumerate() {
-            let source_path = source_root.join(&file.relative_path);
-            let destination_path = destination_root.join(&file.relative_path);
-
-            // Create parent directory if needed, with deduplication
-            if let Some(parent) = destination_path.parent() {
-                if !created_dirs.contains(parent) {
-                    dir_creator.create_dir_all(parent).map_err(|err| {
-                        CaravanError::InvalidArguments(format!(
-                            "failed to create directory '{}' while processing file '{}': {err}",
-                            parent.display(),
-                            file.relative_path.display()
-                        ))
-                    })?;
-                    created_dirs.insert(parent.to_path_buf());
-                }
-            }
-
-            self.file_copier.copy_file(&source_path, &destination_path).map_err(|err| {
-                CaravanError::InvalidArguments(format!(
-                    "failed to copy {} to {}: {err}",
-                    source_path.display(),
-                    destination_path.display()
-                ))
-            })?;
-            
-            progress.advance(index + 1, Some(&file.relative_path.to_string_lossy()));
-        }
-
-        progress.finish();
-        Ok(())
+        copy_batch_with_components(
+            batch,
+            source_root,
+            destination_root,
+            &self.file_copier,
+            &FsDirectoryCreator,
+            progress,
+        )
     }
 }
 
@@ -317,4 +288,50 @@ pub fn transfer_batch_with_progress(
     progress: &mut dyn ProgressReporter,
 ) -> Result<(), CaravanError> {
     backend.copy_batch_with_progress(batch, source_root, destination_root, progress)
+}
+
+pub fn copy_batch_with_components(
+    batch: &Batch,
+    source_root: &Path,
+    destination_root: &Path,
+    file_copier: &dyn FileCopier,
+    dir_creator: &dyn DirectoryCreator,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), CaravanError> {
+    progress.start(batch.files.len(), "Copying");
+
+    let mut created_dirs = HashSet::new();
+
+    for (index, file) in batch.files.iter().enumerate() {
+        let source_path = source_root.join(&file.relative_path);
+        let destination_path = destination_root.join(&file.relative_path);
+
+        if let Some(parent) = destination_path.parent() {
+            if !created_dirs.contains(parent) {
+                dir_creator.create_dir_all(parent).map_err(|err| {
+                    CaravanError::InvalidArguments(format!(
+                        "failed to create directory '{}' while processing file '{}': {err}",
+                        parent.display(),
+                        file.relative_path.display()
+                    ))
+                })?;
+                created_dirs.insert(parent.to_path_buf());
+            }
+        }
+
+        file_copier
+            .copy_file(&source_path, &destination_path)
+            .map_err(|err| {
+                CaravanError::InvalidArguments(format!(
+                    "failed to copy {} to {}: {err}",
+                    source_path.display(),
+                    destination_path.display()
+                ))
+            })?;
+
+        progress.advance(index + 1, Some(&file.relative_path.to_string_lossy()));
+    }
+
+    progress.finish();
+    Ok(())
 }

@@ -1,8 +1,15 @@
 use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use tempfile::TempDir;
 use caravan::plan::{build_plan, PlanOptions};
-use caravan::transfer::{transfer_batch, CopyBackend, LocalFsCopyBackend};
+use caravan::progress::NoopProgress;
+use caravan::transfer::{
+    copy_batch_with_components, transfer_batch, CopyBackend, DirectoryCreator, FileCopier,
+    LocalFsCopyBackend,
+};
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
     let path = root.join(rel);
@@ -234,4 +241,117 @@ fn error_message_includes_file_path_when_directory_creation_fails() {
         perms.set_mode(0o755);
         fs::set_permissions(dst.path(), perms).unwrap();
     }
+}
+
+#[derive(Debug, Default)]
+struct TrackingDirectoryCreator {
+    calls: Mutex<Vec<PathBuf>>,
+    fail_on: Option<PathBuf>,
+}
+
+impl TrackingDirectoryCreator {
+    fn failing_on(path: PathBuf) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            fail_on: Some(path),
+        }
+    }
+}
+
+impl DirectoryCreator for TrackingDirectoryCreator {
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
+        self.calls.lock().expect("track dir calls").push(path.to_path_buf());
+        if self.fail_on.as_ref() == Some(&path.to_path_buf()) {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "simulated dir failure"))
+        } else {
+            fs::create_dir_all(path)
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct FailingSecondCopy {
+    calls: Mutex<usize>,
+}
+
+impl FileCopier for FailingSecondCopy {
+    fn copy_file(&self, source: &Path, destination: &Path) -> io::Result<u64> {
+        let mut calls = self.calls.lock().expect("track copy calls");
+        *calls += 1;
+        if *calls == 2 {
+            Err(io::Error::new(io::ErrorKind::BrokenPipe, "simulated copy failure"))
+        } else {
+            fs::copy(source, destination)
+        }
+    }
+}
+
+#[test]
+fn copy_batch_with_components_surfaces_file_copier_failures() {
+    let src = TempDir::new().expect("source temp dir");
+    let dst = TempDir::new().expect("destination temp dir");
+    create_file(src.path(), "a.txt", b"one");
+    create_file(src.path(), "b.txt", b"two");
+
+    let plan = build_plan(
+        src.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+    let batch = &plan.batches[0];
+
+    let copier = FailingSecondCopy::default();
+    let creator = TrackingDirectoryCreator::default();
+    let mut progress = NoopProgress;
+
+    let err = copy_batch_with_components(
+        batch,
+        src.path(),
+        dst.path(),
+        &copier,
+        &creator,
+        &mut progress,
+    )
+    .expect_err("copy should fail on second file");
+
+    assert!(err.to_string().contains("failed to copy"));
+    assert!(dst.path().join("a.txt").exists(), "first file should be copied before failure");
+    assert!(!dst.path().join("b.txt").exists(), "second file should not be copied after failure");
+}
+
+#[test]
+fn copy_batch_with_components_surfaces_directory_creator_failures() {
+    let src = TempDir::new().expect("source temp dir");
+    let dst = TempDir::new().expect("destination temp dir");
+    create_file(src.path(), "nested/file.txt", b"content");
+
+    let plan = build_plan(
+        src.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+    let batch = &plan.batches[0];
+
+    let failing_parent = dst.path().join("nested");
+    let creator = TrackingDirectoryCreator::failing_on(failing_parent.clone());
+    let mut progress = NoopProgress;
+
+    let err = copy_batch_with_components(
+        batch,
+        src.path(),
+        dst.path(),
+        &caravan::transfer::OsFileCopier,
+        &creator,
+        &mut progress,
+    )
+    .expect_err("directory creation should fail");
+
+    assert!(err.to_string().contains("nested/file.txt"));
+    assert!(!dst.path().join("nested/file.txt").exists());
 }
