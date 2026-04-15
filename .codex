@@ -135,6 +135,18 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 11 (2026-04-15)
+- Applied the same orchestration-vs-handler split pattern to transfer flow:
+  - Added `src/cli/commands/transfer/batch_handlers.rs` for per-batch copy/verify execution.
+  - Refactored `src/cli/commands/transfer/copy_phase.rs` and
+    `src/cli/commands/transfer/verify_phase.rs` to phase-loop orchestration only.
+  - Updated `src/cli/commands/transfer/mod.rs` to register the new module.
+- Behavior preserved; this phase is internal structure only.
+- Validation after transfer structural split:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`

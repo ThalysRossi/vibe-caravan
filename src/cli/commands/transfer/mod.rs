@@ -11,6 +11,7 @@ use super::shared::{
     print_plan_summary, print_state_save_locations,
 };
 
+mod batch_handlers;
 mod copy_phase;
 mod delete_phase;
 mod setup;

@@ -2,46 +2,14 @@ use std::path::Path;
 
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
-use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, MigrationPhase, MigrationState};
 use crate::signal::{check_shutdown, ShutdownFlag};
 
 use super::super::shared::{
     persist_state_both_locations, print_phase_banner, print_skip_verification_already_completed,
-    print_skip_verification_requires_operator_review, print_verification_passed,
-    print_verify_batch_banner, verify_batch_with_state_updates,
+    print_skip_verification_requires_operator_review,
 };
-
-fn verify_single_batch(
-    batch: &Batch,
-    config: &TransferConfig,
-    state: &mut MigrationState,
-    state_path: &Path,
-    secondary_state_path: &Path,
-) -> Result<(), CaravanError> {
-    print_verify_batch_banner(batch);
-
-    let mut persist_state = |current_state: &MigrationState| {
-        persist_state_both_locations(state_path, secondary_state_path, current_state)
-    };
-    verify_batch_with_state_updates(
-        batch,
-        &config.source,
-        &config.dest,
-        &config.verification,
-        state,
-        &mut persist_state,
-        &|batch_id| {
-            CaravanError::InvalidArguments(format!(
-                "missing batch state for {} before verification",
-                batch_id
-            ))
-        },
-    )?;
-
-    print_verification_passed();
-    Ok(())
-}
+use super::batch_handlers::verify_single_batch;
 
 pub(super) fn run_verify_phase(
     config: &TransferConfig,
