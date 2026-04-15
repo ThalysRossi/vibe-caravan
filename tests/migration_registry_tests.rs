@@ -1,6 +1,5 @@
 use tempfile::TempDir;
 use caravan::migration_registry::{MigrationRegistry, MigrationStatus, generate_state_filename, state_dir_in_source, state_file_in_source, check_source_writable};
-use std::path::Path;
 
 #[test]
 fn load_nonexistent_registry_returns_empty() {
@@ -76,7 +75,7 @@ fn find_by_source_dest_finds_existing_migration() {
     let mut registry = MigrationRegistry::new();
     
     let id1 = registry.add_migration("/source/a", "/dest/a", "staging", "state1.json");
-    let id2 = registry.add_migration("/source/b", "/dest/b", "migrate", "state2.json");
+    let _id2 = registry.add_migration("/source/b", "/dest/b", "migrate", "state2.json");
     
     // Should find exact match
     let found = registry.find_by_source_dest("/source/a", "/dest/a", "staging")

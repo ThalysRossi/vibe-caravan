@@ -1,8 +1,5 @@
 use std::fs;
-use std::path::Path;
 use tempfile::TempDir;
-use caravan::cli::execute_transfer;
-use caravan::config::{TransferConfig, Mode, VerificationMode};
 use caravan::models::state::{BatchPhase, BatchState, MigrationState, MigrationPhase};
 use caravan::state_store::persist_state;
 

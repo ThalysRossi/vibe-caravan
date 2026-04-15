@@ -43,6 +43,12 @@ impl ConflictReport {
     }
 }
 
+impl Default for ConflictReport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Detects naming conflicts for a batch before copying.
 ///
 /// Checks each file in the batch to see if it already exists at the destination.

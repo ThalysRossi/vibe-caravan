@@ -1,7 +1,6 @@
 use std::fs;
 use tempfile::TempDir;
 use assert_cmd::Command;
-use std::path::Path;
 
 #[test]
 fn destination_directory_created_when_top_level_missing() {
@@ -18,13 +17,13 @@ fn destination_directory_created_when_top_level_missing() {
     let binary_path = assert_cmd::cargo::cargo_bin("caravan");
     
     // Run staging command - should create dest directory
-    let output = Command::new(&binary_path)
+    let _output = Command::new(&binary_path)
         .args(["staging",
             "--source", source_dir.to_str().unwrap(),
             "--dest", dest_dir.to_str().unwrap(),
             "--batch-size", "1MiB",
             "--interactive"])
-        .current_dir(&tmp.path())
+        .current_dir(tmp.path())
         .output()
         .expect("Failed to execute caravan");
     
@@ -58,7 +57,7 @@ fn destination_subdirectory_fails_when_parent_missing() {
             "--dest", dest_dir.to_str().unwrap(),
             "--batch-size", "1MiB",
             "--interactive"])
-        .current_dir(&tmp.path())
+        .current_dir(tmp.path())
         .output()
         .expect("Failed to execute caravan");
     
@@ -85,12 +84,12 @@ fn capacity_error_message_improved_for_missing_directory() {
     fs::write(source_dir.join("test.txt"), "hello world").expect("write test file");
     
     // Test directly with capacity module
-    use caravan::capacity::{check_capacity, CapacityDecision};
+    use caravan::capacity::check_capacity;
     
     // Should create directory and succeed (no error about capacity)
     let report = check_capacity(&dest_dir, 1024, 0);
     assert!(report.is_ok(), "check_capacity should create directory and succeed");
-    let report = report.unwrap();
+    let _report = report.unwrap();
     
     // Directory should exist now
     assert!(dest_dir.exists(), "Destination directory should have been created");

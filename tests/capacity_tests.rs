@@ -26,6 +26,7 @@ struct ErrorProbe {
 #[derive(Debug, Clone, Copy)]
 enum ErrorKind {
     MissingDirectory,
+    #[allow(dead_code)]
     PermissionDenied,
 }
 

@@ -154,6 +154,12 @@ impl MigrationRegistry {
     }
 }
 
+impl Default for MigrationRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Generate a deterministic filename for migration state based on source and destination paths
 pub fn generate_state_filename(source: &str, dest: &str) -> String {
     use std::collections::hash_map::DefaultHasher;

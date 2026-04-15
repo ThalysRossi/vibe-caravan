@@ -118,7 +118,7 @@ fn directory_creation_deduplicated_for_files_in_same_directory() {
     // Verify all files were copied
     for i in 0..10 {
         let content = fs::read(dst.path().join(format!("data/file{}.txt", i)))
-            .expect(&format!("file {} should exist", i));
+            .unwrap_or_else(|_| panic!("file {} should exist", i));
         assert_eq!(content, b"content");
     }
     

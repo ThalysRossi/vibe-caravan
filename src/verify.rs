@@ -24,7 +24,7 @@ pub fn verify_batch(
     destination_root: &Path,
     mode: VerificationMode,
 ) -> Result<VerificationReport, CaravanError> {
-    verify_batch_with_progress(batch, source_root, destination_root, mode, &mut crate::progress::NoopProgress::default())
+    verify_batch_with_progress(batch, source_root, destination_root, mode, &mut crate::progress::NoopProgress)
 }
 
 pub fn verify_batch_with_progress(

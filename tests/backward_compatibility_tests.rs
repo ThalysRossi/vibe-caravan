@@ -1,7 +1,6 @@
 use std::fs;
 use tempfile::TempDir;
 use assert_cmd::Command;
-use std::path::Path;
 
 #[test]
 fn state_file_saved_in_both_locations() {
@@ -18,13 +17,13 @@ fn state_file_saved_in_both_locations() {
     let binary_path = assert_cmd::cargo::cargo_bin("caravan");
     
     // Run staging command
-    let output = Command::new(&binary_path)
+    let _output = Command::new(&binary_path)
         .args(["staging",
             "--source", source_dir.to_str().unwrap(),
             "--dest", dest_dir.to_str().unwrap(),
             "--batch-size", "1MiB",
             "--interactive"])
-        .current_dir(&tmp.path())
+        .current_dir(tmp.path())
         .output()
         .expect("Failed to execute caravan");
     
@@ -92,7 +91,7 @@ fn status_command_works_with_legacy_state_file() {
     // Status command should work with legacy state file
     let output = Command::new(&binary_path)
         .args(["status"])
-        .current_dir(&tmp.path())
+        .current_dir(tmp.path())
         .output()
         .expect("Failed to execute caravan status");
     
@@ -145,7 +144,7 @@ fn resume_command_works_with_primary_state_file() {
     // Since resume defaults to .caravan/state.json, we need to pass the path
     let output = Command::new(&binary_path)
         .args(["resume", "--state", primary_state_dir.join(&state_filename).to_str().unwrap()])
-        .current_dir(&tmp.path())
+        .current_dir(tmp.path())
         .output();
     
     // Resume should at least start (though it will fail because there's no actual batch data)

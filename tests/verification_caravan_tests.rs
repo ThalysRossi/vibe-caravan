@@ -28,17 +28,18 @@ fn verification_skips_caravan_files() {
         .expect("create dst state");
     
     // Create a batch that includes .caravan files (simulating old scan)
-    let mut files = Vec::new();
-    files.push(FileEntry {
-        relative_path: "file.txt".into(),
-        size_bytes: 7,
-        modified_time: None,
-    });
-    files.push(FileEntry {
-        relative_path: ".caravan/state.json".into(),
-        size_bytes: 33,
-        modified_time: None,
-    });
+    let files = vec![
+        FileEntry {
+            relative_path: "file.txt".into(),
+            size_bytes: 7,
+            modified_time: None,
+        },
+        FileEntry {
+            relative_path: ".caravan/state.json".into(),
+            size_bytes: 33,
+            modified_time: None,
+        },
+    ];
     let total_bytes = files.iter().map(|f| f.size_bytes).sum();
     let batch = Batch {
         id: "batch-000001".to_string(),
@@ -79,17 +80,18 @@ fn verification_skips_caravan_files_in_subdirectories() {
     fs::write(src_caravan.join("cache.json"), "new").expect("create src cache");
     fs::write(dst_caravan.join("cache.json"), "old").expect("create dst cache");
     
-    let mut files = Vec::new();
-    files.push(FileEntry {
-        relative_path: "docs/readme.txt".into(),
-        size_bytes: 6,
-        modified_time: None,
-    });
-    files.push(FileEntry {
-        relative_path: "docs/.caravan/cache.json".into(),
-        size_bytes: 3,
-        modified_time: None,
-    });
+    let files = vec![
+        FileEntry {
+            relative_path: "docs/readme.txt".into(),
+            size_bytes: 6,
+            modified_time: None,
+        },
+        FileEntry {
+            relative_path: "docs/.caravan/cache.json".into(),
+            size_bytes: 3,
+            modified_time: None,
+        },
+    ];
     let total_bytes = files.iter().map(|f| f.size_bytes).sum();
     let batch = Batch {
         id: "batch-000001".to_string(),

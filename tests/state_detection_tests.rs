@@ -1,10 +1,9 @@
 use std::fs;
-use std::path::PathBuf;
 
 use tempfile::TempDir;
 use caravan::detection::{detect_state_file, check_state_file_compatibility};
 use caravan::error::CaravanError;
-use caravan::models::state::{BatchPhase, BatchState, MigrationState};
+use caravan::models::state::MigrationState;
 use caravan::state_store::{persist_state, load_state};
 
 #[test]
@@ -129,7 +128,7 @@ fn prompt_user_when_batch_size_mismatch() {
         }
         
         fn ask_batch_size_mismatch(&self, _state_size: u64, _cli_size: u64) -> Result<BatchSizeMismatchChoice, CaravanError> {
-            Ok(self.choice.clone())
+            Ok(self.choice)
         }
     }
     
@@ -144,8 +143,6 @@ fn prompt_user_when_batch_size_mismatch() {
 fn automatic_resume_detection_in_cli_parsing() {
     // This test would require mocking the file system
     // For now, we'll create a simple integration test
-    use caravan::cli::parse_cli_from;
-    
     // Create a temporary directory with state file
     let tmp = TempDir::new().expect("temp dir");
     let source_dir = tmp.path().join("source");

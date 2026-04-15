@@ -11,7 +11,7 @@ impl PromptBackend for StubPrompt {
         Ok(self.answer)
     }
     
-    fn confirm_batch_deletion(&self, batch_ids: &[String]) -> Result<bool, CaravanError> {
+    fn confirm_batch_deletion(&self, _batch_ids: &[String]) -> Result<bool, CaravanError> {
         // For testing, return the answer for all batches
         Ok(self.answer)
     }

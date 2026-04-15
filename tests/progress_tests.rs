@@ -32,7 +32,7 @@ impl ProgressReporter for MockProgress {
 
 #[test]
 fn noop_progress_implements_all_methods() {
-    let mut progress = NoopProgress::default();
+    let mut progress = NoopProgress;
     progress.start(100, "test");
     progress.advance(50, None);
     progress.finish();

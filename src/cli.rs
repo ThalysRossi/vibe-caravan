@@ -688,14 +688,14 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
                 // Copy batch
                 current_state.phase = BatchPhase::CopyStarted;
                 state.upsert_batch(current_state.clone());
-                state_store::persist_state(&state_path, &state)?;
+                state_store::persist_state(state_path, &state)?;
                 
                 let mut progress = crate::progress::TerminalProgress::new();
                 transfer::transfer_batch_with_progress(&batch, &config.source, &config.dest, &copy_backend, &mut progress)?;
                 
                 current_state.phase = BatchPhase::CopyCompleted;
                 state.upsert_batch(current_state.clone());
-                state_store::persist_state(&state_path, &state)?;
+                state_store::persist_state(state_path, &state)?;
             }
             
             // Verify batch
@@ -708,7 +708,7 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
             current_state.phase = BatchPhase::VerifyCompleted;
             current_state.verification_passed = verification_report.status == models::verification::VerificationStatus::Pass;
             state.upsert_batch(current_state.clone());
-            state_store::persist_state(&state_path, &state)?;
+            state_store::persist_state(state_path, &state)?;
             
             if !current_state.verification_passed {
                 eprintln!("Verification failed: {}", verification_report.recommended_action);
@@ -743,7 +743,7 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         
         // Mark all batches as approved
         state.approve_batches(&batches_needing_approval);
-        state_store::persist_state(&state_path, &state)?;
+        state_store::persist_state(state_path, &state)?;
         
         // Delete all approved batches
         println!("\n=== Deleting source files for all batches ===");
@@ -763,7 +763,7 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
                     state.max_files,
                 )?;
                 cleanup::cleanup_batch(&batch, &config.source, &mut state, "resume")?;
-                state_store::persist_state(&state_path, &state)?;
+                state_store::persist_state(state_path, &state)?;
             }
         }
     }

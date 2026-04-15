@@ -536,7 +536,7 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
     assert_eq!(state.batches.len(), 3, "State must contain ALL planned batches, not only processed ones");
     
     // Count how many batches completed processing
-    let completed_count = state.batches.iter()
+    let _completed_count = state.batches.iter()
         .filter(|b| b.phase == BatchPhase::VerifyCompleted || b.deleted)
         .count();
     

@@ -113,10 +113,6 @@ impl BufferedFileCopier {
     /// Default buffer size (16 MiB) - optimized for HDD performance
     pub const DEFAULT_BUFFER_SIZE: usize = 16 * 1024 * 1024;
     
-    /// Creates a new buffered file copier with the default buffer size.
-    pub fn default() -> Self {
-        Self::new(Self::DEFAULT_BUFFER_SIZE)
-    }
 }
 
 impl Default for BufferedFileCopier {
@@ -202,21 +198,9 @@ impl FileCopier for HybridFileCopier {
         let metadata = std::fs::metadata(source)?;
         let file_size = metadata.len();
         
-        // Debug logging for copy decisions
-        let filename = source.file_name().unwrap_or_default().to_string_lossy();
-        let buffer_size_mb = self.buffer_size as f64 / (1024.0 * 1024.0);
-        let threshold_mb = self.threshold as f64 / (1024.0 * 1024.0);
-        let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
-        
         if file_size < self.threshold {
-            // Debug: OS copy for small files
-            eprintln!("[DEBUG] Copying {} ({:.2} MiB) with OS copy (below {:.2} MiB threshold)", 
-                     filename, file_size_mb, threshold_mb);
             OsFileCopier.copy_file(source, destination)
         } else {
-            // Debug: Buffered copy for large files
-            eprintln!("[DEBUG] Copying {} ({:.2} MiB) with buffered copy ({} MiB buffer, above {:.2} MiB threshold)", 
-                     filename, file_size_mb, buffer_size_mb as u64, threshold_mb);
             let buffered_copier = BufferedFileCopier::new(self.buffer_size);
             buffered_copier.copy_file(source, destination)
         }
@@ -240,7 +224,7 @@ pub trait CopyBackend {
     ) -> Result<(), CaravanError>;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LocalFsCopyBackend {
     file_copier: HybridFileCopier,
 }
@@ -259,14 +243,6 @@ impl LocalFsCopyBackend {
     }
 }
 
-impl Default for LocalFsCopyBackend {
-    fn default() -> Self {
-        Self {
-            file_copier: HybridFileCopier::default(),
-        }
-    }
-}
-
 impl CopyBackend for LocalFsCopyBackend {
     fn copy_batch(
         &self,
@@ -274,7 +250,7 @@ impl CopyBackend for LocalFsCopyBackend {
         source_root: &Path,
         destination_root: &Path,
     ) -> Result<(), CaravanError> {
-        self.copy_batch_with_progress(batch, source_root, destination_root, &mut crate::progress::NoopProgress::default())
+        self.copy_batch_with_progress(batch, source_root, destination_root, &mut crate::progress::NoopProgress)
     }
     
     fn copy_batch_with_progress(
@@ -330,7 +306,7 @@ pub fn transfer_batch(
     destination_root: &Path,
     backend: &dyn CopyBackend,
 ) -> Result<(), CaravanError> {
-    transfer_batch_with_progress(batch, source_root, destination_root, backend, &mut crate::progress::NoopProgress::default())
+    transfer_batch_with_progress(batch, source_root, destination_root, backend, &mut crate::progress::NoopProgress)
 }
 
 pub fn transfer_batch_with_progress(

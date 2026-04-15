@@ -115,6 +115,12 @@ impl TerminalProgress {
     }
 }
 
+impl Default for TerminalProgress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProgressReporter for TerminalProgress {
     fn start(&mut self, total_items: usize, operation: &str) {
         self.total = total_items;

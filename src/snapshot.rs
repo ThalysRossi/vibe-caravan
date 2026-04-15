@@ -41,7 +41,7 @@ pub fn snapshot_if_needed(
         None => return Ok(None),
     };
 
-    if completed_batch_count == 0 || !completed_batch_count.is_multiple_of(cadence) {
+    if completed_batch_count == 0 || completed_batch_count % cadence != 0 {
         return Ok(None);
     }
 
