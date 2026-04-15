@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
@@ -24,7 +24,7 @@ impl BufferPool {
     /// Get a buffer of at least the requested size.
     /// Returns a buffer from the pool if available, otherwise allocates a new one.
     fn get_buffer(&self, min_size: usize) -> Vec<u8> {
-        let mut buffers = self.buffers.lock().unwrap();
+        let mut buffers = self.lock_buffers();
         
         // Try to find a buffer with sufficient capacity
         if let Some(index) = buffers.iter().position(|buf| buf.capacity() >= min_size) {
@@ -41,13 +41,20 @@ impl BufferPool {
     /// Return a buffer to the pool for reuse.
     /// The pool keeps at most 4 buffers to avoid excessive memory usage.
     fn return_buffer(&self, buffer: Vec<u8>) {
-        let mut buffers = self.buffers.lock().unwrap();
+        let mut buffers = self.lock_buffers();
         
         // Keep at most 4 buffers in the pool (optimized for Ryzen 5 5600X + 16GB RAM)
         if buffers.len() < 4 {
             buffers.push(buffer);
         }
         // If pool is full, buffer is dropped (freed)
+    }
+
+    fn lock_buffers(&self) -> MutexGuard<'_, Vec<Vec<u8>>> {
+        match self.buffers.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 }
 

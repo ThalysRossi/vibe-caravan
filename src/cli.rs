@@ -453,7 +453,10 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
         
         let mut batch_state = state.batch(&batch.id)
             .cloned()
-            .expect("batch should exist in state");
+            .ok_or_else(|| CaravanError::InvalidArguments(format!(
+                "missing batch state for {} before verification",
+                batch.id
+            )))?;
         
         // Verify batch
         let mut progress = crate::progress::TerminalProgress::new();

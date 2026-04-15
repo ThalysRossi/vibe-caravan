@@ -118,3 +118,37 @@ fn persist_state_creates_parent_directories() {
     let loaded = load_state(&state_path).expect("should load state");
     assert_eq!(loaded, state);
 }
+
+#[cfg(unix)]
+#[test]
+fn persist_state_replaces_file_atomically_for_existing_readers() {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let tmp = TempDir::new().expect("temp dir");
+    let state_path = tmp.path().join("state.json");
+
+    let mut old_state = MigrationState::new("staging", "/source-a", "/dest-a");
+    old_state.batch_size_bytes = 1024;
+    persist_state(&state_path, &old_state).expect("persist initial state");
+
+    let mut open_reader = std::fs::File::open(&state_path).expect("open existing state");
+
+    let mut new_state = MigrationState::new("migrate", "/source-b", "/dest-b");
+    new_state.batch_size_bytes = 2048;
+    persist_state(&state_path, &new_state).expect("persist replacement state");
+
+    open_reader.seek(SeekFrom::Start(0)).expect("rewind old reader");
+    let mut old_view = String::new();
+    open_reader.read_to_string(&mut old_view).expect("read old fd");
+
+    let latest_view = std::fs::read_to_string(&state_path).expect("read new path");
+
+    assert!(
+        old_view.contains("\"source\": \"/source-a\""),
+        "existing file descriptor should still see the pre-replacement contents"
+    );
+    assert!(
+        latest_view.contains("\"source\": \"/source-b\""),
+        "path should resolve to the replacement contents"
+    );
+}
