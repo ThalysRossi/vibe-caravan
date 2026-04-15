@@ -166,5 +166,21 @@ fn load_batch_definition_fails_for_second_batch_with_wrong_batch_size() {
 
     // ❌ Current bug: using wrong batch size u64::MAX merges everything into 1 batch!
     // So it will only ever find batch-000001, not 000002
-    let _batch = load_batch_definition(tmp.path(), "batch-000002", u64::MAX).expect("this should fail");
+    let _batch = load_batch_definition(tmp.path(), "batch-000002", u64::MAX, None)
+        .expect("this should fail");
+}
+
+#[test]
+fn load_batch_definition_uses_original_max_files_for_deterministic_batches() {
+    let tmp = TempDir::new().expect("temp dir");
+    create_file(tmp.path(), "a.txt", 1);
+    create_file(tmp.path(), "b.txt", 1);
+    create_file(tmp.path(), "c.txt", 1);
+
+    let batch = load_batch_definition(tmp.path(), "batch-000002", 10, Some(2))
+        .expect("second batch should be reproducible with original max-files");
+
+    assert_eq!(batch.id, "batch-000002");
+    assert_eq!(batch.file_count, 1);
+    assert_eq!(batch.files[0].relative_path, std::path::PathBuf::from("c.txt"));
 }

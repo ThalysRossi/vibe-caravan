@@ -280,6 +280,11 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     };
     
     state.batch_size_bytes = config.batch_size_bytes;
+    state.max_files = config.max_files;
+    state.snapshot_every = config.snapshot_every;
+    state.verification_mode = config.verification.clone();
+    state.copy_buffer_size = config.copy_buffer_size;
+    state.buffered_copy_threshold = config.buffered_copy_threshold;
     
     println!("State will be saved to: {} (primary) and {} (backward compatibility)", 
         state_path.display(), secondary_state_path.display());
@@ -512,7 +517,12 @@ pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
                     continue;
                 }
                 // Load batch definition
-                let batch = plan::load_batch_definition(&config.source, batch_id, state.batch_size_bytes)?;
+                let batch = plan::load_batch_definition(
+                    &config.source,
+                    batch_id,
+                    state.batch_size_bytes,
+                    state.max_files,
+                )?;
                 cleanup::cleanup_batch(&batch, &config.source, &mut state, "execute_transfer")?;
                 persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
             }
@@ -580,15 +590,15 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         },
         source: PathBuf::from(&state.source),
         dest: PathBuf::from(&state.destination),
-        batch_size_bytes: 0, // We don't need this for resume, planning is already done
-        max_files: None,
-        snapshot_every: None,
+        batch_size_bytes: state.batch_size_bytes,
+        max_files: state.max_files,
+        snapshot_every: state.snapshot_every,
         interactive: true,
-        verification: VerificationMode::Digest,
+        verification: state.verification_mode.clone(),
         log_level: "info".to_string(),
         skip_conflicts: false, // Default to false for resume
-        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
-        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
+        copy_buffer_size: state.copy_buffer_size,
+        buffered_copy_threshold: state.buffered_copy_threshold,
     };
     
     println!("Resuming transfer...\n");
@@ -641,7 +651,12 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
         let mut current_state = batch_state.clone();
         
         // Load original batch definition from disk (IDs are deterministic)
-        let batch = plan::load_batch_definition(&config.source, &batch_state.batch_id, state.batch_size_bytes)?;
+        let batch = plan::load_batch_definition(
+            &config.source,
+            &batch_state.batch_id,
+            state.batch_size_bytes,
+            state.max_files,
+        )?;
         
         // Skip verification if already done
         if current_state.phase != BatchPhase::VerifyCompleted {
@@ -728,7 +743,12 @@ fn execute_resume(state_path: &Path) -> Result<(), CaravanError> {
                     continue;
                 }
                 // Load batch definition
-                let batch = plan::load_batch_definition(&config.source, batch_id, state.batch_size_bytes)?;
+                let batch = plan::load_batch_definition(
+                    &config.source,
+                    batch_id,
+                    state.batch_size_bytes,
+                    state.max_files,
+                )?;
                 cleanup::cleanup_batch(&batch, &config.source, &mut state, "resume")?;
                 state_store::persist_state(&state_path, &state)?;
             }

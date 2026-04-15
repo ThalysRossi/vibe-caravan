@@ -1,4 +1,5 @@
 use tempfile::TempDir;
+use caravan::config::VerificationMode;
 use caravan::models::state::{BatchPhase, BatchState, JournalEntry, MigrationState};
 use caravan::state_store::{load_state, persist_state};
 
@@ -8,6 +9,11 @@ fn migration_state_new_sets_expected_defaults() {
     assert_eq!(state.mode, "staging");
     assert_eq!(state.source, "/src");
     assert_eq!(state.destination, "/dst");
+    assert_eq!(state.max_files, None);
+    assert_eq!(state.snapshot_every, None);
+    assert_eq!(state.verification_mode, VerificationMode::Digest);
+    assert_eq!(state.copy_buffer_size, 16 * 1024 * 1024);
+    assert_eq!(state.buffered_copy_threshold, 8 * 1024 * 1024);
     assert_eq!(state.last_successful_snapshot_name, None);
     assert!(state.batches.is_empty());
     assert!(state.journal.is_empty());
@@ -43,6 +49,11 @@ fn persist_and_load_state_round_trip() {
     let state_path = tmp.path().join("state").join("state.json");
 
     let mut state = MigrationState::new("migrate", "/source", "/dest");
+    state.max_files = Some(128);
+    state.snapshot_every = Some(3);
+    state.verification_mode = VerificationMode::Strict;
+    state.copy_buffer_size = 4 * 1024 * 1024;
+    state.buffered_copy_threshold = 2 * 1024 * 1024;
     state.upsert_batch(BatchState {
         batch_id: "batch-123".to_string(),
         phase: BatchPhase::VerifyCompleted,
@@ -60,6 +71,31 @@ fn persist_and_load_state_round_trip() {
     persist_state(&state_path, &state).expect("state should persist");
     let loaded = load_state(&state_path).expect("state should load");
     assert_eq!(loaded, state);
+}
+
+#[test]
+fn load_legacy_state_defaults_new_resume_fields() {
+    let tmp = TempDir::new().expect("temp dir");
+    let state_path = tmp.path().join("legacy.json");
+    let legacy_json = r#"{
+  "mode": "staging",
+  "source": "/source",
+  "destination": "/dest",
+  "batch_size_bytes": 1048576,
+  "migration_phase": "Copying",
+  "last_successful_snapshot_name": null,
+  "batches": [],
+  "journal": []
+}"#;
+
+    std::fs::write(&state_path, legacy_json).expect("write legacy state");
+
+    let loaded = load_state(&state_path).expect("legacy state should load");
+    assert_eq!(loaded.max_files, None);
+    assert_eq!(loaded.snapshot_every, None);
+    assert_eq!(loaded.verification_mode, VerificationMode::Digest);
+    assert_eq!(loaded.copy_buffer_size, 16 * 1024 * 1024);
+    assert_eq!(loaded.buffered_copy_threshold, 8 * 1024 * 1024);
 }
 
 #[test]

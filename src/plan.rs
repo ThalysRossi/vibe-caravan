@@ -100,7 +100,12 @@ pub fn plan_batches(entries: Vec<FileEntry>, options: &PlanOptions) -> Result<Ve
 /// 
 /// When resuming we avoid rebuilding the whole plan which would generate different batch IDs,
 /// instead we scan the source again and find the exact batch matching the ID we need.
-pub fn load_batch_definition(source_root: &Path, batch_id: &str, batch_size_bytes: u64) -> Result<Batch, CaravanError> {
+pub fn load_batch_definition(
+    source_root: &Path,
+    batch_id: &str,
+    batch_size_bytes: u64,
+    max_files: Option<u64>,
+) -> Result<Batch, CaravanError> {
     // We scan source and rebuild batches to find the one with matching ID
     // This works because batch IDs are deterministic and reproducible
     let entries = scan_source(source_root)?;
@@ -108,7 +113,7 @@ pub fn load_batch_definition(source_root: &Path, batch_id: &str, batch_size_byte
     // ✅ Use the EXACT original batch size that was used when planning!
     let opts = PlanOptions {
         batch_size_bytes,
-        max_files: None,
+        max_files: max_files.map(|value| value as usize),
     };
     
     let batches = plan_batches(entries, &opts)?;

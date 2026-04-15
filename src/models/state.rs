@@ -1,3 +1,4 @@
+use crate::config::{TransferConfig, VerificationMode};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +46,16 @@ pub struct MigrationState {
     pub source: String,
     pub destination: String,
     pub batch_size_bytes: u64,
+    #[serde(default)]
+    pub max_files: Option<u64>,
+    #[serde(default)]
+    pub snapshot_every: Option<u32>,
+    #[serde(default = "default_verification_mode")]
+    pub verification_mode: VerificationMode,
+    #[serde(default = "TransferConfig::default_copy_buffer_size")]
+    pub copy_buffer_size: usize,
+    #[serde(default = "TransferConfig::default_buffered_copy_threshold")]
+    pub buffered_copy_threshold: u64,
     pub migration_phase: MigrationPhase,
     pub last_successful_snapshot_name: Option<String>,
     pub batches: Vec<BatchState>,
@@ -58,6 +69,11 @@ impl MigrationState {
             source: source.to_string(),
             destination: destination.to_string(),
             batch_size_bytes: 0,
+            max_files: None,
+            snapshot_every: None,
+            verification_mode: default_verification_mode(),
+            copy_buffer_size: TransferConfig::default_copy_buffer_size(),
+            buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
             migration_phase: MigrationPhase::NotStarted,
             last_successful_snapshot_name: None,
             batches: Vec::new(),
@@ -118,4 +134,8 @@ impl MigrationState {
             }
         }
     }
+}
+
+const fn default_verification_mode() -> VerificationMode {
+    VerificationMode::Digest
 }
