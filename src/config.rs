@@ -38,6 +38,8 @@ pub struct TransferConfig {
     #[serde(default)]
     pub recover_failed: bool,
     #[serde(default)]
+    pub allow_unsafe_filesystems: bool,
+    #[serde(default)]
     pub copy_strategy: CopyStrategy,
 
     /// Buffer size for file copying (in bytes).

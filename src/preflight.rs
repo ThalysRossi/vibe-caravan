@@ -331,6 +331,31 @@ pub fn analyze_transfer_preflight_with_probes(
     Ok(merge_preflight_reports(staging, migrate))
 }
 
+pub fn enforce_transfer_preflight_policy(
+    config: &TransferConfig,
+    report: &PreflightReport,
+) -> Result<(), CaravanError> {
+    if config.mode != Mode::Migrate || config.allow_unsafe_filesystems {
+        return Ok(());
+    }
+
+    let blocking_codes: Vec<&'static str> = report
+        .warnings
+        .iter()
+        .filter(|warning| is_blocking_migrate_warning(warning.code))
+        .map(|warning| warning.code.as_str())
+        .collect();
+
+    if blocking_codes.is_empty() {
+        return Ok(());
+    }
+
+    let joined_codes = blocking_codes.join(", ");
+    Err(CaravanError::InvalidArguments(format!(
+        "migrate preflight blocked due to unsafe filesystem topology ({joined_codes}); verify source/destination mounts or re-run with --allow-unsafe-filesystems"
+    )))
+}
+
 pub fn analyze_staging_preflight_with_probe(
     config: &TransferConfig,
     snapshot: &PlanningSnapshot,
@@ -532,4 +557,14 @@ fn merge_preflight_reports(left: PreflightReport, right: PreflightReport) -> Pre
             .max(right.max_estimated_destination_path_len),
         case_collision_count: left.case_collision_count + right.case_collision_count,
     }
+}
+
+fn is_blocking_migrate_warning(code: PreflightWarningCode) -> bool {
+    matches!(
+        code,
+        PreflightWarningCode::SourceFilesystemNotNtfsLike
+            | PreflightWarningCode::DestinationFilesystemNotBtrfs
+            | PreflightWarningCode::SourceFilesystemUnknown
+            | PreflightWarningCode::DestinationFilesystemUnknown
+    )
 }

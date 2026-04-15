@@ -74,6 +74,7 @@ fn build_transfer_config(
         log_level,
         skip_conflicts: args.skip_conflicts,
         recover_failed: args.recover_failed,
+        allow_unsafe_filesystems: args.allow_unsafe_filesystems,
         copy_strategy: args.copy_strategy.into(),
         copy_buffer_size,
         buffered_copy_threshold,

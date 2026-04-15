@@ -65,6 +65,7 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     );
     let preflight_report = preflight::analyze_transfer_preflight(&config, &plan)?;
     print_preflight_warnings(&preflight_report.warnings);
+    preflight::enforce_transfer_preflight_policy(&config, &preflight_report)?;
 
     seed_state_batches(&mut state, &plan);
     persist_state_both_locations(&state_path, &secondary_state_path, &state)?;

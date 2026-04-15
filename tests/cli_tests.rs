@@ -322,3 +322,40 @@ fn invalid_copy_strategy_is_rejected() {
 
     assert!(result.is_err());
 }
+
+#[test]
+fn allow_unsafe_filesystems_flag_is_parsed_for_transfer_commands() {
+    let default_parse = parse_cli_from([
+        "caravan",
+        "migrate",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+    ])
+    .expect("migrate parse should pass");
+
+    let enabled_parse = parse_cli_from([
+        "caravan",
+        "migrate",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--allow-unsafe-filesystems",
+    ])
+    .expect("migrate parse with allow-unsafe-filesystems should pass");
+
+    match default_parse {
+        Config::Migrate(cfg) => assert!(!cfg.allow_unsafe_filesystems),
+        _ => panic!("expected migrate config"),
+    }
+    match enabled_parse {
+        Config::Migrate(cfg) => assert!(cfg.allow_unsafe_filesystems),
+        _ => panic!("expected migrate config"),
+    }
+}

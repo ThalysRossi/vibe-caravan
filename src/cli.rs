@@ -45,6 +45,8 @@ pub struct TransferArgs {
     pub skip_conflicts: bool,
     #[arg(long, default_value_t = false)]
     pub recover_failed: bool,
+    #[arg(long, default_value_t = false)]
+    pub allow_unsafe_filesystems: bool,
     #[arg(long, value_enum, default_value_t = CopyStrategyArg::Auto)]
     pub copy_strategy: CopyStrategyArg,
     #[arg(long)]

@@ -570,6 +570,7 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
         log_level: "error".to_string(),
         skip_conflicts: false,
         recover_failed: false,
+        allow_unsafe_filesystems: false,
         copy_strategy: CopyStrategy::Auto,
         copy_buffer_size: TransferConfig::default_copy_buffer_size(),
         buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),

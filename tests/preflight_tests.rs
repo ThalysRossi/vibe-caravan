@@ -6,8 +6,8 @@ use caravan::models::file_entry::FileEntry;
 use caravan::plan::PlanningSnapshot;
 use caravan::preflight::{
     analyze_migrate_preflight_with_probe, analyze_staging_preflight_with_probe,
-    analyze_transfer_preflight_with_probes, DestinationFlags, DestinationProbe,
-    DestinationSpaceSnapshot, FilesystemTypeProbe, PreflightWarningCode,
+    analyze_transfer_preflight_with_probes, enforce_transfer_preflight_policy, DestinationFlags,
+    DestinationProbe, DestinationSpaceSnapshot, FilesystemTypeProbe, PreflightWarningCode,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -91,6 +91,7 @@ fn staging_config(dest: &str) -> TransferConfig {
         log_level: "info".to_string(),
         skip_conflicts: false,
         recover_failed: false,
+        allow_unsafe_filesystems: false,
         copy_strategy: CopyStrategy::Auto,
         copy_buffer_size: TransferConfig::default_copy_buffer_size(),
         buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
@@ -110,6 +111,7 @@ fn migrate_config(source: &str, dest: &str) -> TransferConfig {
         log_level: "info".to_string(),
         skip_conflicts: false,
         recover_failed: false,
+        allow_unsafe_filesystems: false,
         copy_strategy: CopyStrategy::Auto,
         copy_buffer_size: TransferConfig::default_copy_buffer_size(),
         buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
@@ -307,6 +309,7 @@ fn transfer_preflight_includes_migrate_filesystem_warnings() {
         log_level: "info".to_string(),
         skip_conflicts: false,
         recover_failed: false,
+        allow_unsafe_filesystems: false,
         copy_strategy: CopyStrategy::Auto,
         copy_buffer_size: TransferConfig::default_copy_buffer_size(),
         buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
@@ -343,4 +346,64 @@ fn transfer_preflight_includes_migrate_filesystem_warnings() {
         .warnings
         .iter()
         .any(|warning| warning.code == PreflightWarningCode::DestinationFilesystemNotBtrfs));
+}
+
+#[test]
+fn migrate_preflight_policy_blocks_unsafe_filesystem_topology_by_default() {
+    let config = migrate_config("/src", "/dest");
+    let snapshot = snapshot_with_files(vec![file("file.txt", 10)]);
+    let destination_probe = StubProbe {
+        flags: DestinationFlags {
+            is_compressed: false,
+            is_reparse_point: false,
+        },
+        space: None,
+    };
+    let filesystem_probe = StubFilesystemProbe {
+        source_fs: Some("ext4".to_string()),
+        dest_fs: Some("xfs".to_string()),
+    };
+
+    let report = analyze_transfer_preflight_with_probes(
+        &config,
+        &snapshot,
+        &destination_probe,
+        &filesystem_probe,
+    )
+    .expect("combined preflight should succeed");
+
+    let err = enforce_transfer_preflight_policy(&config, &report)
+        .expect_err("migrate should fail-closed for unsafe filesystems");
+    let message = err.to_string();
+    assert!(message.contains("source_filesystem_not_ntfs_like"));
+    assert!(message.contains("destination_filesystem_not_btrfs"));
+}
+
+#[test]
+fn migrate_preflight_policy_can_be_overridden_explicitly() {
+    let mut config = migrate_config("/src", "/dest");
+    config.allow_unsafe_filesystems = true;
+    let snapshot = snapshot_with_files(vec![file("file.txt", 10)]);
+    let destination_probe = StubProbe {
+        flags: DestinationFlags {
+            is_compressed: false,
+            is_reparse_point: false,
+        },
+        space: None,
+    };
+    let filesystem_probe = StubFilesystemProbe {
+        source_fs: Some("ext4".to_string()),
+        dest_fs: Some("xfs".to_string()),
+    };
+
+    let report = analyze_transfer_preflight_with_probes(
+        &config,
+        &snapshot,
+        &destination_probe,
+        &filesystem_probe,
+    )
+    .expect("combined preflight should succeed");
+
+    enforce_transfer_preflight_policy(&config, &report)
+        .expect("override flag should bypass fail-closed policy");
 }
