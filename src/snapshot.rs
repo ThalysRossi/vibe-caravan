@@ -121,6 +121,15 @@ pub fn validate_snapshot_configuration(
     let Some(snapshot_root) = snapshot_root else {
         return Ok(());
     };
+    let snapshot_check_path = canonical_path(snapshot_root)?;
+    let destination_check_path = canonical_path_for_maybe_missing(destination_root)?;
+    if path_within_or_equal(&snapshot_check_path, &destination_check_path) {
+        return Err(CaravanError::InvalidArguments(format!(
+            "snapshot destination must not be inside migration destination: snapshot='{}', destination='{}'",
+            snapshot_root.display(),
+            destination_root.display()
+        )));
+    }
 
     let snapshot_meta = std::fs::metadata(snapshot_root).map_err(|err| {
         CaravanError::InvalidArguments(format!(
@@ -300,4 +309,39 @@ fn resolve_existing_path(path: &Path) -> Result<PathBuf, CaravanError> {
         "path '{}' and its parents do not exist",
         path.display()
     )))
+}
+
+fn path_within_or_equal(candidate: &Path, ancestor: &Path) -> bool {
+    candidate == ancestor || candidate.starts_with(ancestor)
+}
+
+fn canonical_path(path: &Path) -> Result<PathBuf, CaravanError> {
+    std::fs::canonicalize(path).map_err(|err| {
+        CaravanError::InvalidArguments(format!(
+            "path '{}' is not accessible: {}",
+            path.display(),
+            err
+        ))
+    })
+}
+
+fn canonical_path_for_maybe_missing(path: &Path) -> Result<PathBuf, CaravanError> {
+    if path.exists() {
+        return canonical_path(path);
+    }
+
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|err| {
+                CaravanError::InvalidArguments(format!(
+                    "failed to read current directory while resolving '{}': {}",
+                    path.display(),
+                    err
+                ))
+            })?
+            .join(path)
+    };
+    Ok(absolute)
 }

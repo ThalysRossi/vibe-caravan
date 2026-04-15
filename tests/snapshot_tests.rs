@@ -433,3 +433,41 @@ fn validate_snapshot_configuration_rejects_non_directory_snapshot_root() {
         .to_string()
         .contains("snapshot destination must be an existing directory"));
 }
+
+#[test]
+fn validate_snapshot_configuration_rejects_snapshot_root_inside_destination() {
+    let temp = TempDir::new().expect("temp directory should be created");
+    let destination_root = temp.path().join("dest");
+    let nested_snapshot_root = destination_root.join("snapshots");
+    std::fs::create_dir_all(&nested_snapshot_root).expect("nested snapshot root should be created");
+
+    let err = validate_snapshot_configuration(
+        Mode::Migrate,
+        Some(1),
+        &destination_root,
+        Some(&nested_snapshot_root),
+    )
+    .expect_err("snapshot root inside destination should fail");
+
+    assert!(err
+        .to_string()
+        .contains("snapshot destination must not be inside migration destination"));
+}
+
+#[test]
+fn validate_snapshot_configuration_allows_snapshot_root_with_parent_segments_outside_destination() {
+    let temp = TempDir::new().expect("temp directory should be created");
+    let destination_root = temp.path().join("dest");
+    let snapshot_root = temp.path().join("snapshots");
+    std::fs::create_dir_all(&destination_root).expect("destination root should be created");
+    std::fs::create_dir_all(&snapshot_root).expect("snapshot root should be created");
+
+    let snapshot_with_parent_segments = destination_root.join("../snapshots");
+    validate_snapshot_configuration(
+        Mode::Migrate,
+        Some(1),
+        &destination_root,
+        Some(&snapshot_with_parent_segments),
+    )
+    .expect("normalized snapshot root outside destination should be accepted");
+}

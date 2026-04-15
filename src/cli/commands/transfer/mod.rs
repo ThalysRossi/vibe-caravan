@@ -10,7 +10,7 @@ use crate::{migration_registry, plan, preflight, snapshot, transfer};
 use super::shared::{
     ensure_no_operator_review_blocks_with_policy, persist_state_both_locations,
     print_migration_complete, print_plan_summary, print_preflight_warnings,
-    print_state_save_locations, OperatorReviewPolicy,
+    print_state_save_locations, print_status_snapshot_policy, OperatorReviewPolicy,
 };
 
 mod batch_handlers;
@@ -52,6 +52,7 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     )?;
 
     print_state_save_locations(&state_path, &secondary_state_path);
+    print_status_snapshot_policy(config.snapshot_every, config.snapshot_dir.as_deref());
 
     let plan_opts = PlanOptions {
         batch_size_bytes: config.batch_size_bytes,

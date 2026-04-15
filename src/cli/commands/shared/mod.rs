@@ -24,7 +24,7 @@ pub(super) use output::{
     print_resuming_transfer, print_skip_already_completed, print_skip_copy_already_completed,
     print_skip_verification_already_completed, print_skip_verification_requires_operator_review,
     print_state_save_locations, print_status_batch, print_status_header,
-    print_status_journal_entry, print_status_journal_header, print_verification_passed,
-    print_verify_batch_banner,
+    print_status_journal_entry, print_status_journal_header, print_status_snapshot_policy,
+    print_verification_passed, print_verify_batch_banner,
 };
 pub(super) use persistence::persist_state_both_locations;

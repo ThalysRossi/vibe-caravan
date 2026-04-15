@@ -19,6 +19,8 @@ fn status_command_output_includes_expected_sections() {
         deleted: false,
     });
     state.last_successful_snapshot_name = Some("snap-123".to_string());
+    state.snapshot_every = Some(2);
+    state.snapshot_dir = Some("/dst/snapshots".to_string());
     state.journal.push(JournalEntry {
         event: "copy_completed".to_string(),
         batch_id: "batch-000001".to_string(),
@@ -46,6 +48,8 @@ fn status_command_output_includes_expected_sections() {
     assert!(stdout.contains("Source: /src"));
     assert!(stdout.contains("Destination: /dst"));
     assert!(stdout.contains("Batches: 1"));
+    assert!(stdout.contains("Snapshot cadence: every 2 deleted batch(es)"));
+    assert!(stdout.contains("Snapshot directory: /dst/snapshots"));
     assert!(stdout
         .contains("batch-000001 - Planned (verified: false, approved: false, deleted: false)"));
     assert!(stdout.contains("Last snapshot: snap-123"));
@@ -86,6 +90,7 @@ fn transfer_interactive_output_includes_deletion_and_completion_banners() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
 
+    assert!(stdout.contains("Snapshot cadence: disabled"));
     assert!(stdout.contains("=== All 1 batches have been verified successfully ==="));
     assert!(stdout.contains("=== Deleting source files for 1 batch(es) ==="));
     assert!(stdout.contains("=== Migration complete! 1 batches processed, 1 total completed ==="));
@@ -132,6 +137,7 @@ fn resume_output_includes_header_and_completion_banner_for_approved_state() {
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     assert!(stdout.contains("=== Resuming from saved state ==="));
+    assert!(stdout.contains("Snapshot cadence: disabled"));
     assert!(stdout.contains("Completed batches: 0 / 1"));
     assert!(stdout.contains("=== Deleting source files for 1 batch(es) ==="));
     assert!(stdout.contains("✅ Resume complete! 1 batches processed, 1 total completed"));

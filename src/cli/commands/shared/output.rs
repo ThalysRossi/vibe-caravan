@@ -147,6 +147,20 @@ pub(crate) fn print_status_header(mode: &str, source: &str, destination: &str, b
     println!("Batches: {}", batch_count);
 }
 
+pub(crate) fn print_status_snapshot_policy(
+    snapshot_every: Option<u32>,
+    snapshot_dir: Option<&Path>,
+) {
+    match snapshot_every {
+        Some(cadence) => println!("Snapshot cadence: every {} deleted batch(es)", cadence),
+        None => println!("Snapshot cadence: disabled"),
+    }
+
+    if let Some(snapshot_dir) = snapshot_dir {
+        println!("Snapshot directory: {}", snapshot_dir.display());
+    }
+}
+
 pub(crate) fn print_status_batch(batch: &BatchState) {
     println!(
         "  {} - {:?} (verified: {}, approved: {}, deleted: {})",

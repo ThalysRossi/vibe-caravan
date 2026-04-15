@@ -5,7 +5,7 @@ use crate::state_store;
 
 use super::shared::{
     print_last_snapshot, print_status_batch, print_status_header, print_status_journal_entry,
-    print_status_journal_header,
+    print_status_journal_header, print_status_snapshot_policy,
 };
 
 pub(super) fn execute_status(state_path: &Path) -> Result<(), CaravanError> {
@@ -16,6 +16,10 @@ pub(super) fn execute_status(state_path: &Path) -> Result<(), CaravanError> {
         &state.source,
         &state.destination,
         state.batches.len(),
+    );
+    print_status_snapshot_policy(
+        state.snapshot_every,
+        state.snapshot_dir.as_deref().map(Path::new),
     );
 
     for batch in &state.batches {

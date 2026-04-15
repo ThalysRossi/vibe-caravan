@@ -9,7 +9,7 @@ use super::shared::{
     approve_and_delete_verified_batches, ensure_no_operator_review_blocks,
     ensure_no_operator_review_blocks_with_policy, print_resume_complete,
     print_resume_completed_batches, print_resume_state_details, print_resume_state_header,
-    print_resuming_transfer, OperatorReviewPolicy,
+    print_resuming_transfer, print_status_snapshot_policy, OperatorReviewPolicy,
 };
 
 mod batch_flow;
@@ -77,6 +77,7 @@ pub(super) fn execute_resume(
     print_resume_completed_batches(completed_count, state.batches.len());
 
     let config = transfer_config_from_state(&state, recover_failed)?;
+    print_status_snapshot_policy(config.snapshot_every, config.snapshot_dir.as_deref());
     if inspect_failed {
         inspect_failed_batches(&state, &config)?;
         return Ok(());
