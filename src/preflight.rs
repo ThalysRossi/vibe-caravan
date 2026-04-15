@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::capacity::{SpaceProbe, SystemSpaceProbe};
 use crate::config::{Mode, TransferConfig};
 use crate::error::CaravanError;
 use crate::plan::PlanningSnapshot;
@@ -11,8 +12,22 @@ pub struct DestinationFlags {
     pub is_reparse_point: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DestinationSpaceSnapshot {
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+    pub volume_free_bytes: u64,
+}
+
 pub trait DestinationProbe {
     fn destination_flags(&self, destination: &Path) -> Result<DestinationFlags, CaravanError>;
+
+    fn destination_space(
+        &self,
+        _destination: &Path,
+    ) -> Result<Option<DestinationSpaceSnapshot>, CaravanError> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -21,6 +36,19 @@ pub struct SystemDestinationProbe;
 impl DestinationProbe for SystemDestinationProbe {
     fn destination_flags(&self, destination: &Path) -> Result<DestinationFlags, CaravanError> {
         query_destination_flags(destination)
+    }
+
+    fn destination_space(
+        &self,
+        destination: &Path,
+    ) -> Result<Option<DestinationSpaceSnapshot>, CaravanError> {
+        let probe = SystemSpaceProbe;
+        let space = probe.probe(destination)?;
+        Ok(Some(DestinationSpaceSnapshot {
+            total_bytes: space.total_bytes,
+            available_bytes: space.available_bytes,
+            volume_free_bytes: space.volume_free_bytes,
+        }))
     }
 }
 
@@ -67,6 +95,7 @@ pub enum PreflightWarningCode {
     DestinationReparsePoint,
     PathLengthPressure,
     CaseCollisionRisk,
+    SpaceAccountingDivergence,
 }
 
 impl PreflightWarningCode {
@@ -76,6 +105,7 @@ impl PreflightWarningCode {
             PreflightWarningCode::DestinationReparsePoint => "destination_reparse_point",
             PreflightWarningCode::PathLengthPressure => "path_length_pressure",
             PreflightWarningCode::CaseCollisionRisk => "case_collision_risk",
+            PreflightWarningCode::SpaceAccountingDivergence => "space_accounting_divergence",
         }
     }
 }
@@ -100,6 +130,25 @@ fn destination_looks_windows_style(path: &Path) -> bool {
 
 fn destination_uses_extended_windows_prefix(path: &Path) -> bool {
     path.to_string_lossy().starts_with("\\\\?\\")
+}
+
+fn suspicious_space_divergence(space: DestinationSpaceSnapshot) -> bool {
+    if space.volume_free_bytes <= space.available_bytes {
+        return false;
+    }
+
+    let delta = space.volume_free_bytes - space.available_bytes;
+    let delta_threshold = 8 * 1024 * 1024 * 1024; // 8 GiB
+    let ratio_threshold_numerator = 4u64; // available < 80% of volume free
+    let ratio_threshold_denominator = 5u64;
+
+    delta >= delta_threshold
+        && (space
+            .available_bytes
+            .saturating_mul(ratio_threshold_denominator)
+            < space
+                .volume_free_bytes
+                .saturating_mul(ratio_threshold_numerator))
 }
 
 pub fn analyze_staging_preflight(
@@ -143,6 +192,27 @@ pub fn analyze_staging_preflight_with_probe(
                 config.dest.display()
             ),
         });
+    }
+
+    let windows_destination = cfg!(windows) || destination_looks_windows_style(&config.dest);
+    if windows_destination {
+        if let Some(space) = probe.destination_space(&config.dest)? {
+            if suspicious_space_divergence(space) {
+                let delta = space
+                    .volume_free_bytes
+                    .saturating_sub(space.available_bytes);
+                warnings.push(PreflightWarning {
+                    code: PreflightWarningCode::SpaceAccountingDivergence,
+                    message: format!(
+                        "destination '{}' reports divergent free-space metrics: available_to_caller={} bytes, volume_free={} bytes, delta={} bytes; caravan capacity checks use available_to_caller",
+                        config.dest.display(),
+                        space.available_bytes,
+                        space.volume_free_bytes,
+                        delta
+                    ),
+                });
+            }
+        }
     }
 
     let mut case_key_to_original: HashMap<String, String> = HashMap::new();

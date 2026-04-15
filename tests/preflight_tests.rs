@@ -5,12 +5,14 @@ use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::plan::PlanningSnapshot;
 use caravan::preflight::{
-    analyze_staging_preflight_with_probe, DestinationFlags, DestinationProbe, PreflightWarningCode,
+    analyze_staging_preflight_with_probe, DestinationFlags, DestinationProbe,
+    DestinationSpaceSnapshot, PreflightWarningCode,
 };
 
 #[derive(Debug, Clone, Copy)]
 struct StubProbe {
     flags: DestinationFlags,
+    space: Option<DestinationSpaceSnapshot>,
 }
 
 impl DestinationProbe for StubProbe {
@@ -19,6 +21,13 @@ impl DestinationProbe for StubProbe {
         _destination: &std::path::Path,
     ) -> Result<DestinationFlags, caravan::error::CaravanError> {
         Ok(self.flags)
+    }
+
+    fn destination_space(
+        &self,
+        _destination: &std::path::Path,
+    ) -> Result<Option<DestinationSpaceSnapshot>, caravan::error::CaravanError> {
+        Ok(self.space)
     }
 }
 
@@ -72,6 +81,7 @@ fn warns_when_destination_has_compression_or_reparse_flags() {
             is_compressed: true,
             is_reparse_point: true,
         },
+        space: None,
     };
 
     let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
@@ -99,6 +109,7 @@ fn warns_when_case_collisions_exist_in_planned_paths() {
             is_compressed: false,
             is_reparse_point: false,
         },
+        space: None,
     };
 
     let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
@@ -120,6 +131,7 @@ fn warns_when_estimated_destination_path_length_is_near_windows_limit() {
             is_compressed: false,
             is_reparse_point: false,
         },
+        space: None,
     };
 
     let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
@@ -129,4 +141,54 @@ fn warns_when_estimated_destination_path_length_is_near_windows_limit() {
         .warnings
         .iter()
         .any(|w| w.code == PreflightWarningCode::PathLengthPressure));
+}
+
+#[test]
+fn warns_when_available_and_volume_free_space_diverge_on_windows_destination() {
+    let config = staging_config("D:\\Media");
+    let snapshot = snapshot_with_files(vec![file("movie.mkv", 1)]);
+    let probe = StubProbe {
+        flags: DestinationFlags {
+            is_compressed: false,
+            is_reparse_point: false,
+        },
+        space: Some(DestinationSpaceSnapshot {
+            total_bytes: 1_000 * 1024 * 1024 * 1024,
+            available_bytes: 16 * 1024 * 1024 * 1024,
+            volume_free_bytes: 315 * 1024 * 1024 * 1024,
+        }),
+    };
+
+    let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
+        .expect("preflight should succeed");
+
+    assert!(report
+        .warnings
+        .iter()
+        .any(|w| w.code == PreflightWarningCode::SpaceAccountingDivergence));
+}
+
+#[test]
+fn does_not_warn_when_available_and_volume_free_are_close() {
+    let config = staging_config("D:\\Media");
+    let snapshot = snapshot_with_files(vec![file("movie.mkv", 1)]);
+    let probe = StubProbe {
+        flags: DestinationFlags {
+            is_compressed: false,
+            is_reparse_point: false,
+        },
+        space: Some(DestinationSpaceSnapshot {
+            total_bytes: 1_000 * 1024 * 1024 * 1024,
+            available_bytes: 300 * 1024 * 1024 * 1024,
+            volume_free_bytes: 315 * 1024 * 1024 * 1024,
+        }),
+    };
+
+    let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
+        .expect("preflight should succeed");
+
+    assert!(report
+        .warnings
+        .iter()
+        .all(|w| w.code != PreflightWarningCode::SpaceAccountingDivergence));
 }

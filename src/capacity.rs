@@ -14,8 +14,10 @@ pub enum CapacityDecision {
 pub struct CapacityReport {
     pub total_capacity_bytes: u64,
     pub available_free_bytes: u64,
+    pub volume_free_bytes: u64,
     pub planned_batch_bytes: u64,
     pub reserve_margin_bytes: u64,
+    pub probe_backend: &'static str,
     pub decision: CapacityDecision,
     pub reason: Option<String>,
 }
@@ -24,6 +26,7 @@ pub struct CapacityReport {
 pub struct SpaceInfo {
     pub total_bytes: u64,
     pub available_bytes: u64,
+    pub volume_free_bytes: u64,
 }
 
 pub trait SpaceProbe {
@@ -32,6 +35,12 @@ pub trait SpaceProbe {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemSpaceProbe;
+
+#[cfg(windows)]
+const SYSTEM_SPACE_PROBE_BACKEND: &str = "win32_getdiskfreespaceexw";
+#[cfg(not(windows))]
+const SYSTEM_SPACE_PROBE_BACKEND: &str = "fs2";
+const CUSTOM_SPACE_PROBE_BACKEND: &str = "custom_probe";
 
 #[cfg(windows)]
 fn query_space_info(destination: &Path) -> Result<SpaceInfo, CaravanError> {
@@ -68,6 +77,7 @@ fn query_space_info(destination: &Path) -> Result<SpaceInfo, CaravanError> {
     Ok(SpaceInfo {
         total_bytes: total_number_of_bytes,
         available_bytes: free_bytes_available,
+        volume_free_bytes: total_number_of_free_bytes,
     })
 }
 
@@ -92,10 +102,15 @@ fn query_space_info(destination: &Path) -> Result<SpaceInfo, CaravanError> {
             destination.display()
         ))
     })?;
+    let volume_free_bytes = match fs2::free_space(destination) {
+        Ok(bytes) => bytes,
+        Err(_) => available_bytes,
+    };
 
     Ok(SpaceInfo {
         total_bytes,
         available_bytes,
+        volume_free_bytes,
     })
 }
 
@@ -156,11 +171,12 @@ pub fn check_capacity(
     reserve_margin_bytes: u64,
 ) -> Result<CapacityReport, CaravanError> {
     let probe = SystemSpaceProbe;
-    check_capacity_with_probe(
+    check_capacity_with_probe_and_backend(
         destination,
         planned_batch_bytes,
         reserve_margin_bytes,
         &probe,
+        SYSTEM_SPACE_PROBE_BACKEND,
     )
 }
 
@@ -169,6 +185,22 @@ pub fn check_capacity_with_probe(
     planned_batch_bytes: u64,
     reserve_margin_bytes: u64,
     probe: &dyn SpaceProbe,
+) -> Result<CapacityReport, CaravanError> {
+    check_capacity_with_probe_and_backend(
+        destination,
+        planned_batch_bytes,
+        reserve_margin_bytes,
+        probe,
+        CUSTOM_SPACE_PROBE_BACKEND,
+    )
+}
+
+fn check_capacity_with_probe_and_backend(
+    destination: &Path,
+    planned_batch_bytes: u64,
+    reserve_margin_bytes: u64,
+    probe: &dyn SpaceProbe,
+    probe_backend: &'static str,
 ) -> Result<CapacityReport, CaravanError> {
     if planned_batch_bytes == 0 {
         return Err(CaravanError::InvalidArguments(
@@ -199,8 +231,10 @@ pub fn check_capacity_with_probe(
     Ok(CapacityReport {
         total_capacity_bytes: space.total_bytes,
         available_free_bytes: space.available_bytes,
+        volume_free_bytes: space.volume_free_bytes,
         planned_batch_bytes,
         reserve_margin_bytes,
+        probe_backend,
         decision,
         reason,
     })
@@ -235,22 +269,49 @@ fn destination_volume_root(destination: &Path) -> String {
 }
 
 pub fn format_capacity_decision_trace(destination: &Path, report: &CapacityReport) -> String {
+    let destination_resolved = match fs::canonicalize(destination) {
+        Ok(path) => path.display().to_string(),
+        Err(_) => destination.display().to_string(),
+    };
     let required_raw_bytes = report
         .planned_batch_bytes
         .saturating_add(report.reserve_margin_bytes);
+    let available_minus_reserve_raw_bytes = report
+        .available_free_bytes
+        .saturating_sub(report.reserve_margin_bytes);
+    let headroom_raw_bytes = report.available_free_bytes as i128 - required_raw_bytes as i128;
+    let decision_rule = "available_raw_bytes > required_raw_bytes";
     let decision = match report.decision {
         CapacityDecision::Proceed => "proceed",
         CapacityDecision::Abort => "abort",
     };
+    let decision_reason = match report.decision {
+        CapacityDecision::Proceed => format!(
+            "available_raw_bytes({}) > required_raw_bytes({})",
+            report.available_free_bytes, required_raw_bytes
+        ),
+        CapacityDecision::Abort => format!(
+            "available_raw_bytes({}) <= required_raw_bytes({})",
+            report.available_free_bytes, required_raw_bytes
+        ),
+    };
 
     format!(
-        "destination={} volume_root={} available_raw_bytes={} required_raw_bytes={} planned_raw_bytes={} reserve_raw_bytes={} decision={}",
+        "destination={} destination_resolved={} volume_root={} probe_backend={} total_capacity_raw_bytes={} available_raw_bytes={} volume_free_raw_bytes={} available_minus_reserve_raw_bytes={} required_raw_bytes={} planned_raw_bytes={} reserve_raw_bytes={} headroom_raw_bytes={} decision_rule={} decision_reason=\"{}\" decision={}",
         destination.display(),
+        destination_resolved,
         destination_volume_root(destination),
+        report.probe_backend,
+        report.total_capacity_bytes,
         report.available_free_bytes,
+        report.volume_free_bytes,
+        available_minus_reserve_raw_bytes,
         required_raw_bytes,
         report.planned_batch_bytes,
         report.reserve_margin_bytes,
+        headroom_raw_bytes,
+        decision_rule,
+        decision_reason,
         decision
     )
 }

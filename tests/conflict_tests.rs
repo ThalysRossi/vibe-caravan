@@ -41,6 +41,7 @@ fn test_empty_destination_no_conflicts() {
     assert_eq!(report.total_conflicts, 0);
     assert!(report.existing_files.is_empty());
     assert!(report.size_mismatches.is_empty());
+    assert_eq!(report.scanned_parent_directories, 2);
 }
 
 #[test]
@@ -139,5 +140,74 @@ fn test_destination_not_accessible_continues() {
     let report = detect_batch_conflicts(&batch, dest.path()).expect("should succeed");
 
     assert!(!report.has_conflicts);
+    assert_eq!(report.total_conflicts, 0);
+}
+
+#[test]
+fn test_scans_each_parent_directory_once_for_multiple_files() {
+    let batch = Batch {
+        id: "scan-parent-once".to_string(),
+        files: vec![
+            FileEntry {
+                relative_path: PathBuf::from("dir/a.txt"),
+                size_bytes: 3,
+                modified_time: Some(SystemTime::now()),
+            },
+            FileEntry {
+                relative_path: PathBuf::from("dir/b.txt"),
+                size_bytes: 3,
+                modified_time: Some(SystemTime::now()),
+            },
+            FileEntry {
+                relative_path: PathBuf::from("root.txt"),
+                size_bytes: 4,
+                modified_time: Some(SystemTime::now()),
+            },
+        ],
+        total_bytes: 10,
+        file_count: 3,
+    };
+    let dest = TempDir::new().expect("temp dir");
+    fs::create_dir_all(dest.path().join("dir")).expect("create dir");
+    fs::write(dest.path().join("dir/a.txt"), b"aaa").expect("write file");
+    fs::write(dest.path().join("root.txt"), b"xxxx").expect("write file");
+
+    let report = detect_batch_conflicts(&batch, dest.path()).expect("should succeed");
+
+    // Parent directories should be scanned once each: destination root + destination/dir.
+    assert_eq!(report.scanned_parent_directories, 2);
+    assert_eq!(report.total_conflicts, 2);
+}
+
+#[test]
+fn test_missing_parent_directory_is_scanned_once_even_with_many_files() {
+    let batch = Batch {
+        id: "missing-parent-once".to_string(),
+        files: vec![
+            FileEntry {
+                relative_path: PathBuf::from("missing/a.txt"),
+                size_bytes: 1,
+                modified_time: Some(SystemTime::now()),
+            },
+            FileEntry {
+                relative_path: PathBuf::from("missing/b.txt"),
+                size_bytes: 1,
+                modified_time: Some(SystemTime::now()),
+            },
+            FileEntry {
+                relative_path: PathBuf::from("missing/c.txt"),
+                size_bytes: 1,
+                modified_time: Some(SystemTime::now()),
+            },
+        ],
+        total_bytes: 3,
+        file_count: 3,
+    };
+    let dest = TempDir::new().expect("temp dir");
+
+    let report = detect_batch_conflicts(&batch, dest.path()).expect("should succeed");
+
+    // `missing/` should only be probed once, not once per file.
+    assert_eq!(report.scanned_parent_directories, 1);
     assert_eq!(report.total_conflicts, 0);
 }

@@ -183,6 +183,79 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 14 (2026-04-15)
+- Continued staging-flow performance work on conflict detection:
+  - Refactored `detect_batch_conflicts` in `src/conflict.rs` to group planned files by destination parent directory.
+  - Added parent-directory index probing (`read_dir` once per unique parent) instead of per-file existence probes.
+  - Preserved existing conflict semantics:
+    - existing destination paths are still flagged as conflicts
+    - regular file size mismatches are still reported
+    - symlink/special-file size checks remain skipped
+  - Added `ConflictReport.scanned_parent_directories` for diagnostics and to validate fast-path behavior.
+- Added coverage in `tests/conflict_tests.rs`:
+  - parent directories scanned once for multiple files under same directory
+  - missing parent directory probed once even with many planned files
+  - updated baseline expectation for empty-destination scan count
+- Validation after this phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
+## Continuation Update 15 (2026-04-15)
+- Continued Windows staging diagnostics hardening for capacity preflight/tracing:
+  - Extended `SpaceInfo` in `src/capacity.rs` to retain both:
+    - `available_bytes` (bytes available to caller)
+    - `volume_free_bytes` (total free bytes on volume)
+  - On Windows (`GetDiskFreeSpaceExW`), now records all three raw values into capacity reporting:
+    - total bytes
+    - caller-available bytes
+    - volume-free bytes
+  - On non-Windows (`fs2`), now records `free_space` (fallback to `available_space` on error).
+  - Extended `CapacityReport` with:
+    - `volume_free_bytes`
+    - `probe_backend`
+  - Added richer decision tracing in `format_capacity_decision_trace(...)`:
+    - `destination_resolved`
+    - `probe_backend`
+    - `total_capacity_raw_bytes`
+    - `available_raw_bytes`
+    - `volume_free_raw_bytes`
+    - `available_minus_reserve_raw_bytes`
+    - `required_raw_bytes`
+    - `planned_raw_bytes`
+    - `reserve_raw_bytes`
+    - `headroom_raw_bytes`
+    - explicit `decision_rule` and `decision_reason`
+  - Kept existing trace keys to avoid breaking downstream log parsing.
+- Added/updated tests in `tests/capacity_tests.rs`:
+  - New assertion coverage for probe + decision-breakdown trace fields.
+  - Updated test probe fixture to provide `volume_free_bytes`.
+- Validation after this phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
+## Continuation Update 16 (2026-04-15)
+- Continued staging preflight hardening with Windows-specific free-space divergence warnings:
+  - Extended preflight destination probing in `src/preflight.rs`:
+    - added `DestinationSpaceSnapshot`
+    - extended `DestinationProbe` with `destination_space(...)` (default `None`)
+    - implemented `SystemDestinationProbe::destination_space(...)` using capacity `SystemSpaceProbe`
+  - Added warning classification:
+    - `PreflightWarningCode::SpaceAccountingDivergence`
+  - Added Windows-targeted divergence heuristic for warnings when:
+    - `volume_free_bytes > available_bytes`
+    - absolute delta is large (>= 8 GiB)
+    - available-to-caller is significantly below volume-free
+  - Warning message now includes raw values (`available_to_caller`, `volume_free`, `delta`) and clarifies that caravan capacity checks use caller-available bytes.
+- Added integration tests in `tests/preflight_tests.rs`:
+  - warns for strong Windows-style divergence (`D:\...` with large delta)
+  - does not warn when values are close
+- Validation after this phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`

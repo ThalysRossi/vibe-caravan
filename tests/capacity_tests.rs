@@ -17,6 +17,7 @@ impl SpaceProbe for StubProbe {
         Ok(SpaceInfo {
             total_bytes: self.total,
             available_bytes: self.available,
+            volume_free_bytes: self.available,
         })
     }
 }
@@ -164,4 +165,23 @@ fn capacity_trace_includes_destination_volume_and_raw_bytes() {
     assert!(trace.contains("planned_raw_bytes=2000"));
     assert!(trace.contains("reserve_raw_bytes=500"));
     assert!(trace.contains("decision=proceed"));
+}
+
+#[test]
+fn capacity_trace_includes_probe_and_decision_breakdown() {
+    let probe = StubProbe {
+        total: 8_000,
+        available: 1_000,
+    };
+
+    let report = check_capacity_with_probe(Path::new("/fake/destination"), 1_000, 1, &probe)
+        .expect("capacity check should succeed");
+    let trace = format_capacity_decision_trace(Path::new("/fake/destination"), &report);
+
+    assert!(trace.contains("probe_backend="));
+    assert!(trace.contains("destination_resolved="));
+    assert!(trace.contains("available_minus_reserve_raw_bytes="));
+    assert!(trace.contains("headroom_raw_bytes="));
+    assert!(trace.contains("decision_rule="));
+    assert!(trace.contains("decision_reason="));
 }
