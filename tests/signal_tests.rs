@@ -1,5 +1,5 @@
 use caravan::error::CaravanError;
-use caravan::signal::{ShutdownFlag, check_shutdown};
+use caravan::signal::{check_shutdown, ShutdownFlag};
 use std::thread;
 
 // Test 1: Shutdown flag starts as false
@@ -44,11 +44,11 @@ fn graceful_shutdown_error_variant_exists() {
 fn shutdown_flag_thread_safe() {
     let flag = ShutdownFlag::new();
     let flag_clone = flag.clone();
-    
+
     let handle = thread::spawn(move || {
         flag_clone.request_shutdown();
     });
-    
+
     handle.join().unwrap();
     assert!(flag.is_shutdown_requested());
 }
@@ -65,7 +65,7 @@ fn check_shutdown_returns_ok_when_no_shutdown() {
 fn check_shutdown_returns_error_when_shutdown_requested() {
     let flag = ShutdownFlag::new();
     flag.request_shutdown();
-    
+
     let result = check_shutdown(&flag);
     match result {
         Err(CaravanError::GracefulShutdown) => {
@@ -87,16 +87,16 @@ fn shutdown_flag_implements_default() {
 fn shutdown_flag_clone_creates_independent_flag() {
     let flag1 = ShutdownFlag::new();
     let flag2 = flag1.clone();
-    
+
     // Initially both false
     assert!(!flag1.is_shutdown_requested());
     assert!(!flag2.is_shutdown_requested());
-    
+
     // Setting one doesn't affect the other (they share Arc)
     flag1.request_shutdown();
     assert!(flag1.is_shutdown_requested());
     assert!(flag2.is_shutdown_requested()); // Actually they share state!
-    
+
     // Reset one resets both
     flag2.reset();
     assert!(!flag1.is_shutdown_requested());

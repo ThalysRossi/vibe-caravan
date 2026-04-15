@@ -1,12 +1,12 @@
 use std::fs;
 use std::io::Write;
 
-use tempfile::TempDir;
 use caravan::config::VerificationMode;
 use caravan::models::verification::VerificationStatus;
 use caravan::plan::{build_plan, PlanOptions};
 use caravan::transfer::{transfer_batch, LocalFsCopyBackend};
-use caravan::verify::{verify_batch, digest_file};
+use caravan::verify::{digest_file, verify_batch};
+use tempfile::TempDir;
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
     let path = root.join(rel);
@@ -32,9 +32,10 @@ fn copied_file_contents_match_source() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
-    let report =
-        verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+        .expect("copy should succeed");
+    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
+        .expect("verify should succeed");
 
     assert_eq!(report.status, VerificationStatus::Pass);
 }
@@ -55,8 +56,8 @@ fn missing_files_fail_verification() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    let report =
-        verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
+        .expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.missing_files.len(), 1);
 }
@@ -76,12 +77,13 @@ fn size_mismatch_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+        .expect("copy should succeed");
 
     create_file(dst.path(), "bin/data.bin", b"abc");
 
-    let report =
-        verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
+        .expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.mismatched_files.len(), 1);
 }
@@ -101,12 +103,13 @@ fn digest_mismatch_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+        .expect("copy should succeed");
 
     create_file(dst.path(), "docs/report.txt", b"same-size-datA");
 
-    let report =
-        verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
+        .expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.mismatched_files.len(), 1);
 }
@@ -126,12 +129,13 @@ fn unreadable_file_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+        .expect("copy should succeed");
 
     fs::remove_file(src.path().join("x/file.txt")).expect("source file removal should succeed");
 
-    let report =
-        verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
+        .expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.unreadable_files.len(), 1);
 }
@@ -151,10 +155,11 @@ fn verification_report_serializes_to_json() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new()).expect("copy should succeed");
+    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+        .expect("copy should succeed");
 
-    let report =
-        verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest).expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
+        .expect("verify should succeed");
     let json = serde_json::to_string(&report).expect("report should serialize");
     assert!(json.contains("\"status\":\"Pass\""));
 }
@@ -163,58 +168,68 @@ fn verification_report_serializes_to_json() {
 fn streaming_hash_produces_same_result_as_full_read() {
     let tmp = TempDir::new().expect("temp dir");
     let path = tmp.path().join("test.bin");
-    
+
     // Create test file with content larger than 1MB buffer
     // This test would cause stack overflow on Windows with stack-allocated buffer
     // due to Windows' default 1MB thread stack size. Heap allocation prevents this.
     let mut file = fs::File::create(&path).expect("create file");
     let block = b"test_pattern_1234567890";
-    for _ in 0..150000 { // ~3.45MB file
+    for _ in 0..150000 {
+        // ~3.45MB file
         file.write_all(block).expect("write block");
     }
     drop(file);
-    
+
     // Get hash from streaming implementation
     let streaming = digest_file(&path).expect("streaming hash should succeed");
-    
+
     // Verify against blake3 direct hash of full file
     let full = fs::read(&path).expect("read full file");
     let expected = blake3::hash(&full);
-    
-    assert_eq!(streaming, *expected.as_bytes(), "Streaming hash must match full file hash");
+
+    assert_eq!(
+        streaming,
+        *expected.as_bytes(),
+        "Streaming hash must match full file hash"
+    );
 }
 
 #[test]
 fn very_large_file_hash_without_stack_overflow() {
     let tmp = TempDir::new().expect("temp dir");
     let path = tmp.path().join("very_large.bin");
-    
+
     // Create a 10MB file to stress test the heap-allocated buffer
     // This would definitely cause stack overflow on Windows with stack allocation
     let mut file = fs::File::create(&path).expect("create file");
     let block = vec![0x42u8; 1024 * 1024]; // 1MB block
-    for _ in 0..10 { // 10MB total
+    for _ in 0..10 {
+        // 10MB total
         file.write_all(&block).expect("write block");
     }
     drop(file);
-    
+
     let hash = digest_file(&path).expect("very large file hash should succeed");
     let full = fs::read(&path).expect("read full file");
     let expected = blake3::hash(&full);
-    
-    assert_eq!(hash, *expected.as_bytes(), "Very large file hash must match");
+
+    assert_eq!(
+        hash,
+        *expected.as_bytes(),
+        "Very large file hash must match"
+    );
 }
 
 #[test]
 fn empty_file_streaming_hash() {
     let tmp = TempDir::new().expect("temp dir");
     let path = tmp.path().join("empty.bin");
-    
+
     fs::File::create(&path).expect("create empty file");
-    
+
     let hash = digest_file(&path).expect("empty file hash should succeed");
     let expected = blake3::hash(&[]);
-    
+
     assert_eq!(hash, *expected.as_bytes());
 }
 
@@ -222,12 +237,12 @@ fn empty_file_streaming_hash() {
 fn single_byte_file_streaming_hash() {
     let tmp = TempDir::new().expect("temp dir");
     let path = tmp.path().join("single.bin");
-    
+
     fs::write(&path, b"X").expect("write single byte");
-    
+
     let hash = digest_file(&path).expect("single byte hash should succeed");
     let expected = blake3::hash(b"X");
-    
+
     assert_eq!(hash, *expected.as_bytes());
 }
 
@@ -235,12 +250,12 @@ fn single_byte_file_streaming_hash() {
 fn exact_buffer_size_file_hash() {
     let tmp = TempDir::new().expect("temp dir");
     let path = tmp.path().join("exact.bin");
-    
+
     let data = vec![0xAA; 1024 * 1024]; // Exactly 1MB buffer size
     fs::write(&path, &data).expect("write exact buffer size");
-    
+
     let hash = digest_file(&path).expect("exact size hash should succeed");
     let expected = blake3::hash(&data);
-    
+
     assert_eq!(hash, *expected.as_bytes());
 }

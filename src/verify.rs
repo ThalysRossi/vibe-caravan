@@ -24,7 +24,13 @@ pub fn verify_batch(
     destination_root: &Path,
     mode: VerificationMode,
 ) -> Result<VerificationReport, CaravanError> {
-    verify_batch_with_progress(batch, source_root, destination_root, mode, &mut crate::progress::NoopProgress)
+    verify_batch_with_progress(
+        batch,
+        source_root,
+        destination_root,
+        mode,
+        &mut crate::progress::NoopProgress,
+    )
 }
 
 pub fn verify_batch_with_progress(
@@ -40,7 +46,7 @@ pub fn verify_batch_with_progress(
     let mut bytes_compared = 0_u64;
 
     progress.start(batch.files.len(), "Verifying");
-    
+
     for (index, entry) in batch.files.iter().enumerate() {
         let source_path = source_root.join(&entry.relative_path);
         let destination_path = destination_root.join(&entry.relative_path);
@@ -96,7 +102,7 @@ pub fn verify_batch_with_progress(
                 mismatched_files.push(rel);
             }
         }
-        
+
         progress.advance(index + 1, Some(&entry.relative_path.to_string_lossy()));
     }
 
@@ -108,11 +114,12 @@ pub fn verify_batch_with_progress(
         DigestModeUsed::Blake3
     };
 
-    let status = if missing_files.is_empty() && mismatched_files.is_empty() && unreadable_files.is_empty() {
-        VerificationStatus::Pass
-    } else {
-        VerificationStatus::Fail
-    };
+    let status =
+        if missing_files.is_empty() && mismatched_files.is_empty() && unreadable_files.is_empty() {
+            VerificationStatus::Pass
+        } else {
+            VerificationStatus::Fail
+        };
 
     let recommended_action = if status == VerificationStatus::Pass {
         "Verification passed; approval gate required before deletion.".to_string()
@@ -134,21 +141,22 @@ pub fn verify_batch_with_progress(
 
 pub fn digest_file(path: &Path) -> Result<[u8; 32], CaravanError> {
     use std::io::Read;
-    
+
     let mut file = fs::File::open(path)
         .map_err(|err| CaravanError::Io(format!("failed to open {}: {}", path.display(), err)))?;
-    
+
     let mut hasher = blake3::Hasher::new();
     let mut buffer = vec![0u8; 1024 * 1024]; // 1MB streaming buffer on heap
 
     loop {
-        let bytes_read = file.read(&mut buffer)
-            .map_err(|err| CaravanError::Io(format!("failed to read {}: {}", path.display(), err)))?;
-        
+        let bytes_read = file.read(&mut buffer).map_err(|err| {
+            CaravanError::Io(format!("failed to read {}: {}", path.display(), err))
+        })?;
+
         if bytes_read == 0 {
             break;
         }
-        
+
         hasher.update(&buffer[..bytes_read]);
     }
 

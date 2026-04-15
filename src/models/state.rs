@@ -82,7 +82,11 @@ impl MigrationState {
     }
 
     pub fn upsert_batch(&mut self, batch: BatchState) {
-        if let Some(existing) = self.batches.iter_mut().find(|b| b.batch_id == batch.batch_id) {
+        if let Some(existing) = self
+            .batches
+            .iter_mut()
+            .find(|b| b.batch_id == batch.batch_id)
+        {
             *existing = batch;
         } else {
             self.batches.push(batch);
@@ -96,7 +100,7 @@ impl MigrationState {
     pub fn batch_mut(&mut self, batch_id: &str) -> Option<&mut BatchState> {
         self.batches.iter_mut().find(|b| b.batch_id == batch_id)
     }
- 
+
     pub fn batches_needing_approval(&self) -> Vec<String> {
         self.batches
             .iter()
@@ -117,10 +121,10 @@ impl MigrationState {
         self.batches
             .iter()
             .filter(|b| {
-                b.phase == BatchPhase::VerifyCompleted &&
-                b.verification_passed &&
-                !b.approved_for_delete &&
-                !b.deleted
+                b.phase == BatchPhase::VerifyCompleted
+                    && b.verification_passed
+                    && !b.approved_for_delete
+                    && !b.deleted
             })
             .map(|b| b.batch_id.clone())
             .collect()

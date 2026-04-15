@@ -1,11 +1,11 @@
-use std::time::Duration;
-use tempfile::tempdir;
-use caravan::progress::{ProgressReporter, NoopProgress, TerminalProgress};
-use caravan::transfer::{transfer_batch_with_progress, LocalFsCopyBackend};
-use caravan::verify::verify_batch_with_progress;
 use caravan::config::VerificationMode;
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
+use caravan::progress::{NoopProgress, ProgressReporter, TerminalProgress};
+use caravan::transfer::{transfer_batch_with_progress, LocalFsCopyBackend};
+use caravan::verify::verify_batch_with_progress;
+use std::time::Duration;
+use tempfile::tempdir;
 
 #[derive(Debug, Default)]
 struct MockProgress {
@@ -36,7 +36,7 @@ fn noop_progress_implements_all_methods() {
     progress.start(100, "test");
     progress.advance(50, None);
     progress.finish();
-    
+
     // No panics, that's the test
 }
 
@@ -44,11 +44,11 @@ fn noop_progress_implements_all_methods() {
 fn terminal_progress_lifecycle_completes() {
     let mut progress = TerminalProgress::new();
     progress.start(5, "test operation");
-    
+
     for i in 1..=5 {
         progress.advance(i, None);
     }
-    
+
     progress.finish();
 }
 
@@ -84,16 +84,16 @@ fn duration_formatting_works() {
 #[test]
 fn mock_progress_receives_all_events() {
     let mut mock = MockProgress::default();
-    
+
     mock.start(3, "test");
     assert!(mock.start_called);
     assert_eq!(mock.total_items, 3);
-    
+
     mock.advance(1, None);
     mock.advance(2, None);
     mock.advance(3, None);
     assert_eq!(mock.advance_called, vec![1, 2, 3]);
-    
+
     mock.finish();
     assert!(mock.finish_called);
 }
@@ -102,30 +102,42 @@ fn mock_progress_receives_all_events() {
 fn transfer_batch_calls_progress_correctly() {
     let src = tempdir().unwrap();
     let dst = tempdir().unwrap();
-    
+
     // Create test files
     for i in 0..3 {
         std::fs::write(src.path().join(format!("file{}.txt", i)), b"test content").unwrap();
     }
-    
+
     let files = vec![
-        FileEntry { relative_path: "file0.txt".into(), size_bytes: 12, modified_time: None },
-        FileEntry { relative_path: "file1.txt".into(), size_bytes: 12, modified_time: None },
-        FileEntry { relative_path: "file2.txt".into(), size_bytes: 12, modified_time: None },
+        FileEntry {
+            relative_path: "file0.txt".into(),
+            size_bytes: 12,
+            modified_time: None,
+        },
+        FileEntry {
+            relative_path: "file1.txt".into(),
+            size_bytes: 12,
+            modified_time: None,
+        },
+        FileEntry {
+            relative_path: "file2.txt".into(),
+            size_bytes: 12,
+            modified_time: None,
+        },
     ];
-    
+
     let batch = Batch {
         id: "test-batch".to_string(),
         files,
         total_bytes: 36,
         file_count: 3,
     };
-    
+
     let mut mock = MockProgress::default();
     let backend = LocalFsCopyBackend::new();
-    
+
     transfer_batch_with_progress(&batch, src.path(), dst.path(), &backend, &mut mock).unwrap();
-    
+
     assert!(mock.start_called);
     assert_eq!(mock.total_items, 3);
     assert_eq!(mock.advance_called, vec![1, 2, 3]);
@@ -136,34 +148,54 @@ fn transfer_batch_calls_progress_correctly() {
 fn verify_batch_calls_progress_correctly() {
     let src = tempdir().unwrap();
     let dst = tempdir().unwrap();
-    
+
     // Create matching files in both locations
     for i in 0..3 {
         let content = b"test content";
         std::fs::write(src.path().join(format!("file{}.txt", i)), content).unwrap();
         std::fs::write(dst.path().join(format!("file{}.txt", i)), content).unwrap();
     }
-    
+
     let files = vec![
-        FileEntry { relative_path: "file0.txt".into(), size_bytes: 12, modified_time: None },
-        FileEntry { relative_path: "file1.txt".into(), size_bytes: 12, modified_time: None },
-        FileEntry { relative_path: "file2.txt".into(), size_bytes: 12, modified_time: None },
+        FileEntry {
+            relative_path: "file0.txt".into(),
+            size_bytes: 12,
+            modified_time: None,
+        },
+        FileEntry {
+            relative_path: "file1.txt".into(),
+            size_bytes: 12,
+            modified_time: None,
+        },
+        FileEntry {
+            relative_path: "file2.txt".into(),
+            size_bytes: 12,
+            modified_time: None,
+        },
     ];
-    
+
     let batch = Batch {
         id: "test-batch".to_string(),
         files,
         total_bytes: 36,
         file_count: 3,
     };
-    
+
     let mut mock = MockProgress::default();
-    
+
     let report = verify_batch_with_progress(
-        &batch, src.path(), dst.path(), VerificationMode::Digest, &mut mock
-    ).unwrap();
-    
-    assert_eq!(report.status, caravan::models::verification::VerificationStatus::Pass);
+        &batch,
+        src.path(),
+        dst.path(),
+        VerificationMode::Digest,
+        &mut mock,
+    )
+    .unwrap();
+
+    assert_eq!(
+        report.status,
+        caravan::models::verification::VerificationStatus::Pass
+    );
     assert!(mock.start_called);
     assert_eq!(mock.total_items, 3);
     assert_eq!(mock.advance_called, vec![1, 2, 3]);

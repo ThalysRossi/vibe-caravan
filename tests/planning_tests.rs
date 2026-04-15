@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-use tempfile::TempDir;
-use caravan::plan::{build_plan, plan_batches, PlanOptions, load_batch_definition};
+use caravan::plan::{build_plan, load_batch_definition, plan_batches, PlanOptions};
 use caravan::scan::scan_source;
+use tempfile::TempDir;
 
 fn create_file(root: &Path, rel: &str, size: usize) {
     let path = root.join(rel);
@@ -182,5 +182,8 @@ fn load_batch_definition_uses_original_max_files_for_deterministic_batches() {
 
     assert_eq!(batch.id, "batch-000002");
     assert_eq!(batch.file_count, 1);
-    assert_eq!(batch.files[0].relative_path, std::path::PathBuf::from("c.txt"));
+    assert_eq!(
+        batch.files[0].relative_path,
+        std::path::PathBuf::from("c.txt")
+    );
 }

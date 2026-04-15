@@ -1,9 +1,9 @@
 use std::fs;
 
-use tempfile::TempDir;
 use caravan::cleanup::{cleanup_batch, cleanup_batch_with_remover, FileRemover};
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::plan::{build_plan, PlanOptions};
+use tempfile::TempDir;
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
     let path = root.join(rel);
@@ -100,13 +100,14 @@ fn cleanup_deletes_files_and_journals_result() {
         deleted: false,
     });
 
-    cleanup_batch(&batch, src.path(), &mut state, "test-context")
-        .expect("cleanup should succeed");
+    cleanup_batch(&batch, src.path(), &mut state, "test-context").expect("cleanup should succeed");
 
     assert!(!src.path().join("x/a.txt").exists());
     assert!(!src.path().join("x/b.txt").exists());
 
-    let updated = state.batch(&batch.id).expect("updated batch state should exist");
+    let updated = state
+        .batch(&batch.id)
+        .expect("updated batch state should exist");
     assert!(updated.deleted);
     assert_eq!(updated.phase, BatchPhase::DeleteCompleted);
     assert_eq!(state.journal.len(), 2);
@@ -210,7 +211,9 @@ fn cleanup_failure_marks_batch_failed_and_journals_failure() {
         "second file should remain after failure"
     );
 
-    let updated = state.batch(&batch.id).expect("updated batch state should exist");
+    let updated = state
+        .batch(&batch.id)
+        .expect("updated batch state should exist");
     assert!(!updated.deleted);
     assert_eq!(updated.phase, BatchPhase::Failed);
     assert_eq!(state.journal.len(), 2);

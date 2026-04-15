@@ -58,7 +58,10 @@ impl Default for ConflictReport {
 /// # Errors
 /// Returns `CaravanError::Io` if destination path cannot be accessed (permissions, etc.).
 /// However, missing destination directory is not an error - treated as no conflicts.
-pub fn detect_batch_conflicts(batch: &Batch, dest_root: &Path) -> Result<ConflictReport, CaravanError> {
+pub fn detect_batch_conflicts(
+    batch: &Batch,
+    dest_root: &Path,
+) -> Result<ConflictReport, CaravanError> {
     let mut report = ConflictReport::new();
 
     // If destination root doesn't exist, no conflicts possible
@@ -78,11 +81,11 @@ pub fn detect_batch_conflicts(batch: &Batch, dest_root: &Path) -> Result<Conflic
 
                 // Check if it's a regular file and compare sizes
                 let file_type = dest_metadata.file_type();
-                
+
                 // Only compare sizes for regular files (not symlinks, directories, etc.)
                 if file_type.is_file() && !file_type.is_symlink() {
                     let dest_size = dest_metadata.len();
-                    
+
                     // If sizes differ, record the mismatch
                     if dest_size != file_entry.size_bytes {
                         report.add_size_mismatch(dest_path, file_entry.size_bytes, dest_size);

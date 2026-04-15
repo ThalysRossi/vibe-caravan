@@ -1,7 +1,7 @@
-use tempfile::TempDir;
 use caravan::config::VerificationMode;
 use caravan::models::state::{BatchPhase, BatchState, JournalEntry, MigrationState};
 use caravan::state_store::{load_state, persist_state};
+use tempfile::TempDir;
 
 #[test]
 fn migration_state_new_sets_expected_defaults() {
@@ -110,10 +110,10 @@ fn load_state_errors_for_missing_file() {
 fn persist_state_creates_parent_directories() {
     let tmp = TempDir::new().expect("temp dir");
     let state_path = tmp.path().join("deep").join("dir").join("state.json");
-    
+
     let state = MigrationState::new("staging", "/source", "/dest");
     persist_state(&state_path, &state).expect("state should persist");
-    
+
     assert!(state_path.exists(), "state file should exist");
     let loaded = load_state(&state_path).expect("should load state");
     assert_eq!(loaded, state);
@@ -137,9 +137,13 @@ fn persist_state_replaces_file_atomically_for_existing_readers() {
     new_state.batch_size_bytes = 2048;
     persist_state(&state_path, &new_state).expect("persist replacement state");
 
-    open_reader.seek(SeekFrom::Start(0)).expect("rewind old reader");
+    open_reader
+        .seek(SeekFrom::Start(0))
+        .expect("rewind old reader");
     let mut old_view = String::new();
-    open_reader.read_to_string(&mut old_view).expect("read old fd");
+    open_reader
+        .read_to_string(&mut old_view)
+        .expect("read old fd");
 
     let latest_view = std::fs::read_to_string(&state_path).expect("read new path");
 

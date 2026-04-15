@@ -116,7 +116,7 @@ fn capacity_failures_include_a_clear_abort_reason() {
     assert_eq!(report.available_free_bytes, 2_000);
     assert_eq!(report.planned_batch_bytes, 2_000);
     assert_eq!(report.reserve_margin_bytes, 0);
-    
+
     // 2. Verify the formatted error message contains the correct values
     let reason = report.reason.expect("abort should include reason");
     assert!(reason.contains("insufficient destination space"));
@@ -135,7 +135,7 @@ fn missing_directory_error_is_clear() {
 
     let err = check_capacity_with_probe(Path::new("/nonexistent/dir"), 1_000, 0, &probe)
         .expect_err("should fail with missing directory error");
-    
+
     let err_str = err.to_string();
     // Should mention directory doesn't exist, not capacity
     assert!(err_str.contains("failed to read destination total capacity"));

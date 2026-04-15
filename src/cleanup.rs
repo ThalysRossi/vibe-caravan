@@ -25,13 +25,7 @@ pub fn cleanup_batch(
     state: &mut MigrationState,
     execution_context: &str,
 ) -> Result<(), CaravanError> {
-    cleanup_batch_with_remover(
-        batch,
-        source_root,
-        state,
-        execution_context,
-        &FsFileRemover,
-    )
+    cleanup_batch_with_remover(batch, source_root, state, execution_context, &FsFileRemover)
 }
 
 pub fn cleanup_batch_with_remover(

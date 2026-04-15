@@ -25,7 +25,7 @@ impl BufferPool {
     /// Returns a buffer from the pool if available, otherwise allocates a new one.
     fn get_buffer(&self, min_size: usize) -> Vec<u8> {
         let mut buffers = self.lock_buffers();
-        
+
         // Try to find a buffer with sufficient capacity
         if let Some(index) = buffers.iter().position(|buf| buf.capacity() >= min_size) {
             let mut buffer = buffers.remove(index);
@@ -42,7 +42,7 @@ impl BufferPool {
     /// The pool keeps at most 4 buffers to avoid excessive memory usage.
     fn return_buffer(&self, buffer: Vec<u8>) {
         let mut buffers = self.lock_buffers();
-        
+
         // Keep at most 4 buffers in the pool (optimized for Ryzen 5 5600X + 16GB RAM)
         if buffers.len() < 4 {
             buffers.push(buffer);
@@ -109,10 +109,9 @@ impl BufferedFileCopier {
     pub fn new(buffer_size: usize) -> Self {
         Self { buffer_size }
     }
-    
+
     /// Default buffer size (16 MiB) - optimized for HDD performance
     pub const DEFAULT_BUFFER_SIZE: usize = 16 * 1024 * 1024;
-    
 }
 
 impl Default for BufferedFileCopier {
@@ -124,27 +123,27 @@ impl Default for BufferedFileCopier {
 impl FileCopier for BufferedFileCopier {
     fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
         use std::io::{Read, Write};
-        
+
         let mut source_file = std::fs::File::open(source)?;
         let mut dest_file = std::fs::File::create(destination)?;
-        
+
         // Get buffer from pool instead of allocating new one
         let mut buffer = BUFFER_POOL.with(|pool| pool.get_buffer(self.buffer_size));
         let mut total_copied = 0u64;
-        
+
         loop {
             let bytes_read = source_file.read(&mut buffer)?;
             if bytes_read == 0 {
                 break; // EOF
             }
-            
+
             dest_file.write_all(&buffer[..bytes_read])?;
             total_copied += bytes_read as u64;
         }
-        
+
         // Return buffer to pool for reuse
         BUFFER_POOL.with(|pool| pool.return_buffer(buffer));
-        
+
         Ok(total_copied)
     }
 }
@@ -162,9 +161,12 @@ pub struct HybridFileCopier {
 impl HybridFileCopier {
     /// Creates a new hybrid file copier with the specified buffer size and threshold.
     pub fn new(buffer_size: usize, threshold: u64) -> Self {
-        Self { buffer_size, threshold }
+        Self {
+            buffer_size,
+            threshold,
+        }
     }
-    
+
     /// Creates a new hybrid file copier with default values.
     /// - Buffer size: 16 MiB (16 * 1024 * 1024) - optimized for HDD performance
     /// - Threshold: 8 MiB (8 * 1024 * 1024) - files smaller use OS copy
@@ -174,12 +176,12 @@ impl HybridFileCopier {
             8 * 1024 * 1024, // 8 MiB
         )
     }
-    
+
     /// Get the buffer size in bytes
     pub fn buffer_size(&self) -> usize {
         self.buffer_size
     }
-    
+
     /// Get the threshold in bytes
     pub fn threshold(&self) -> u64 {
         self.threshold
@@ -197,7 +199,7 @@ impl FileCopier for HybridFileCopier {
         // Get file size to decide which copier to use
         let metadata = std::fs::metadata(source)?;
         let file_size = metadata.len();
-        
+
         if file_size < self.threshold {
             OsFileCopier.copy_file(source, destination)
         } else {
@@ -214,7 +216,7 @@ pub trait CopyBackend {
         source_root: &Path,
         destination_root: &Path,
     ) -> Result<(), CaravanError>;
-    
+
     fn copy_batch_with_progress(
         &self,
         batch: &Batch,
@@ -234,7 +236,7 @@ impl LocalFsCopyBackend {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Creates a new LocalFsCopyBackend with custom buffer size and threshold.
     pub fn with_config(buffer_size: usize, threshold: u64) -> Self {
         Self {
@@ -250,9 +252,14 @@ impl CopyBackend for LocalFsCopyBackend {
         source_root: &Path,
         destination_root: &Path,
     ) -> Result<(), CaravanError> {
-        self.copy_batch_with_progress(batch, source_root, destination_root, &mut crate::progress::NoopProgress)
+        self.copy_batch_with_progress(
+            batch,
+            source_root,
+            destination_root,
+            &mut crate::progress::NoopProgress,
+        )
     }
-    
+
     fn copy_batch_with_progress(
         &self,
         batch: &Batch,
@@ -277,7 +284,13 @@ pub fn transfer_batch(
     destination_root: &Path,
     backend: &dyn CopyBackend,
 ) -> Result<(), CaravanError> {
-    transfer_batch_with_progress(batch, source_root, destination_root, backend, &mut crate::progress::NoopProgress)
+    transfer_batch_with_progress(
+        batch,
+        source_root,
+        destination_root,
+        backend,
+        &mut crate::progress::NoopProgress,
+    )
 }
 
 pub fn transfer_batch_with_progress(

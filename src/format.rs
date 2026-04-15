@@ -17,7 +17,7 @@
 /// ```
 pub fn format_bytes(bytes: u64) -> String {
     let unit = ByteUnit::for_bytes(bytes);
-    
+
     match unit {
         ByteUnit::Bytes => {
             // Special handling for singular "byte" vs plural "bytes"
@@ -56,7 +56,7 @@ impl ByteUnit {
             _ => unreachable!(), // min(4) ensures we never exceed 4
         }
     }
-    
+
     /// Get the divisor for converting bytes to this unit
     fn divisor(&self) -> f64 {
         match self {
@@ -67,7 +67,7 @@ impl ByteUnit {
             ByteUnit::TiB => 1024.0 * 1024.0 * 1024.0 * 1024.0,
         }
     }
-    
+
     /// Get the display suffix for this unit
     fn suffix(&self) -> &'static str {
         match self {

@@ -23,26 +23,29 @@ pub fn detect_state_file(source: &Path, dest: &Path) -> Option<PathBuf> {
     if source_state.exists() {
         return Some(source_state);
     }
-    
+
     let dest_state = dest.join(".caravan/state.json");
     if dest_state.exists() {
         return Some(dest_state);
     }
-    
+
     let current_state = PathBuf::from(".caravan/state.json");
     if current_state.exists() {
         return Some(current_state);
     }
-    
+
     None
 }
-pub fn check_state_file_compatibility(state_path: &Path, cli_batch_size: u64) -> Result<MigrationState, CaravanError> {
+pub fn check_state_file_compatibility(
+    state_path: &Path,
+    cli_batch_size: u64,
+) -> Result<MigrationState, CaravanError> {
     let state = load_state(state_path)?;
-    
+
     if state.batch_size_bytes == 0 {
         return Ok(state);
     }
-    
+
     if state.batch_size_bytes == cli_batch_size {
         Ok(state)
     } else {
@@ -69,9 +72,7 @@ pub fn parse_batch_size_input(input: &str) -> Result<u64, CaravanError> {
         ));
     }
 
-    let split_idx = raw
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(raw.len());
+    let split_idx = raw.find(|c: char| !c.is_ascii_digit()).unwrap_or(raw.len());
     let (number, unit_raw) = raw.split_at(split_idx);
     if number.is_empty() {
         return Err(CaravanError::InvalidArguments(
@@ -79,11 +80,9 @@ pub fn parse_batch_size_input(input: &str) -> Result<u64, CaravanError> {
         ));
     }
 
-    let base = number
-        .parse::<u64>()
-        .map_err(|_| CaravanError::InvalidArguments(
-            "batch-size numeric part is invalid".to_string(),
-        ))?;
+    let base = number.parse::<u64>().map_err(|_| {
+        CaravanError::InvalidArguments("batch-size numeric part is invalid".to_string())
+    })?;
     let unit = unit_raw.trim().to_ascii_lowercase();
 
     let multiplier = match unit.as_str() {
@@ -100,15 +99,17 @@ pub fn parse_batch_size_input(input: &str) -> Result<u64, CaravanError> {
     };
 
     base.checked_mul(multiplier)
-        .ok_or_else(|| CaravanError::InvalidArguments(
-            "batch-size is too large".to_string(),
-        ))
+        .ok_or_else(|| CaravanError::InvalidArguments("batch-size is too large".to_string()))
 }
 
 pub trait ExtendedPromptBackend: crate::prompt::PromptBackend {
-    fn ask_batch_size_mismatch(&self, state_size: u64, cli_size: u64) -> Result<BatchSizeMismatchChoice, CaravanError> 
+    fn ask_batch_size_mismatch(
+        &self,
+        state_size: u64,
+        cli_size: u64,
+    ) -> Result<BatchSizeMismatchChoice, CaravanError>
     where
-        Self: Sized
+        Self: Sized,
     {
         handle_batch_size_mismatch(self, state_size, cli_size)
     }

@@ -53,10 +53,9 @@ fn skip_conflicts_marks_batch_failed_instead_of_copy_completed() {
     );
 
     let state_path = first_state_file_in(&source_dir.join(".caravan"));
-    let state_json: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(&state_path).expect("read state"),
-    )
-    .expect("parse state");
+    let state_json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&state_path).expect("read state"))
+            .expect("parse state");
 
     assert_eq!(
         state_json["batches"][0]["phase"],

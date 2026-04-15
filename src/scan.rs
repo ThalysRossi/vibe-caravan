@@ -38,8 +38,8 @@ fn visit_dir(
     children.sort();
 
     for child in children {
-        let metadata = fs::symlink_metadata(&child)
-            .map_err(map_io("failed to read source file metadata"))?;
+        let metadata =
+            fs::symlink_metadata(&child).map_err(map_io("failed to read source file metadata"))?;
         if metadata.is_dir() {
             // Skip .caravan directories at any depth
             if let Some(file_name) = child.file_name() {
@@ -55,9 +55,7 @@ fn visit_dir(
         }
 
         let relative_path = child.strip_prefix(source_root).map_err(|_| {
-            CaravanError::InvalidArguments(
-                "failed to derive relative path during scan".to_string(),
-            )
+            CaravanError::InvalidArguments("failed to derive relative path during scan".to_string())
         })?;
         output.push(FileEntry {
             relative_path: relative_path.to_path_buf(),

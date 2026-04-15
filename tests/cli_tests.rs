@@ -156,9 +156,8 @@ fn parsed_configuration_is_typed_and_deterministic() {
 
 #[test]
 fn resume_command_parses_default_state_path() {
-    let result = parse_cli_from(["caravan", "resume"])
-        .expect("resume command should parse");
-    
+    let result = parse_cli_from(["caravan", "resume"]).expect("resume command should parse");
+
     match result {
         Config::Resume { state, .. } => {
             assert_eq!(state.to_string_lossy(), ".caravan/state.json");
@@ -169,14 +168,9 @@ fn resume_command_parses_default_state_path() {
 
 #[test]
 fn resume_command_accepts_custom_state_path() {
-    let result = parse_cli_from([
-        "caravan",
-        "resume",
-        "--state",
-        "/tmp/custom-state.json"
-    ])
-    .expect("resume with custom state path should parse");
-    
+    let result = parse_cli_from(["caravan", "resume", "--state", "/tmp/custom-state.json"])
+        .expect("resume with custom state path should parse");
+
     match result {
         Config::Resume { state, .. } => {
             assert_eq!(state.to_string_lossy(), "/tmp/custom-state.json");
@@ -187,18 +181,49 @@ fn resume_command_accepts_custom_state_path() {
 
 #[test]
 fn resume_config_includes_correct_log_level() {
-    let result = parse_cli_from([
-        "caravan",
-        "--log-level",
-        "trace",
-        "resume"
-    ])
-    .expect("resume with log level should parse");
-    
+    let result = parse_cli_from(["caravan", "--log-level", "trace", "resume"])
+        .expect("resume with log level should parse");
+
     match result {
         Config::Resume { log_level, .. } => {
             assert_eq!(log_level, "trace");
         }
         _ => panic!("expected resume config"),
     }
+}
+
+#[test]
+fn zero_copy_buffer_size_is_rejected() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--copy-buffer-size",
+        "0",
+    ]);
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn zero_buffered_copy_threshold_is_rejected() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--buffered-copy-threshold",
+        "0",
+    ]);
+
+    assert!(result.is_err());
 }

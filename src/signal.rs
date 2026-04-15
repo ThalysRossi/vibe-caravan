@@ -62,7 +62,7 @@ impl Default for ShutdownFlag {
 /// Returns `CaravanError::Io` if signal handler installation fails.
 pub fn install_signal_handlers(shutdown_flag: &ShutdownFlag) -> Result<(), CaravanError> {
     let flag_clone = Arc::clone(shutdown_flag.inner());
-    
+
     ctrlc::set_handler(move || {
         flag_clone.store(true, Ordering::SeqCst);
         eprintln!("\nShutdown requested. Finishing current operation...");

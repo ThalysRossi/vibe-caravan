@@ -15,8 +15,9 @@ pub fn persist_state(path: &Path, state: &MigrationState) -> Result<(), CaravanE
         })?;
     }
 
-    let payload = serde_json::to_string_pretty(state)
-        .map_err(|err| CaravanError::InvalidArguments(format!("failed to serialize state: {err}")))?;
+    let payload = serde_json::to_string_pretty(state).map_err(|err| {
+        CaravanError::InvalidArguments(format!("failed to serialize state: {err}"))
+    })?;
 
     let file_name = path.file_name().ok_or_else(|| {
         CaravanError::InvalidArguments(format!(
@@ -66,7 +67,10 @@ pub fn persist_state(path: &Path, state: &MigrationState) -> Result<(), CaravanE
 
 pub fn load_state(path: &Path) -> Result<MigrationState, CaravanError> {
     let payload = fs::read_to_string(path).map_err(|err| {
-        CaravanError::InvalidArguments(format!("failed to read state file {}: {err}", path.display()))
+        CaravanError::InvalidArguments(format!(
+            "failed to read state file {}: {err}",
+            path.display()
+        ))
     })?;
     serde_json::from_str::<MigrationState>(&payload).map_err(|err| {
         CaravanError::InvalidArguments(format!(

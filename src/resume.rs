@@ -120,7 +120,9 @@ pub enum ResumeStepPlan {
     /// Delete finished; caller should run snapshot cadence logic if configured.
     PostDeleteSnapshot,
     BatchFullyCompleted,
-    ConflictOperatorReview { reason: String },
+    ConflictOperatorReview {
+        reason: String,
+    },
     BlockedFailedVerification,
 }
 

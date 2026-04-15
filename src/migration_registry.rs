@@ -92,11 +92,19 @@ impl MigrationRegistry {
         self.migrations.iter_mut().find(|m| m.id == id)
     }
 
-    pub fn find_by_source_dest(&self, source: &str, dest: &str, mode: &str) -> Option<&MigrationEntry> {
-        self.migrations
-            .iter()
-            .find(|m| m.source == source && m.destination == dest && m.mode == mode 
-                && m.status != MigrationStatus::Completed && m.status != MigrationStatus::Failed)
+    pub fn find_by_source_dest(
+        &self,
+        source: &str,
+        dest: &str,
+        mode: &str,
+    ) -> Option<&MigrationEntry> {
+        self.migrations.iter().find(|m| {
+            m.source == source
+                && m.destination == dest
+                && m.mode == mode
+                && m.status != MigrationStatus::Completed
+                && m.status != MigrationStatus::Failed
+        })
     }
 
     pub fn find_first_incomplete(&self) -> Option<&MigrationEntry> {
@@ -164,12 +172,12 @@ impl Default for MigrationRegistry {
 pub fn generate_state_filename(source: &str, dest: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     dest.hash(&mut hasher);
     let hash = hasher.finish();
-    
+
     // Use first 8 hex digits for brevity
     format!("migration_{:08x}.json", hash & 0xFFFFFFFF)
 }
@@ -187,17 +195,14 @@ pub fn state_dir_in_source(source: &Path) -> PathBuf {
 /// Get the full state file path in source directory
 pub fn state_file_in_source(source: &Path, dest: &Path) -> PathBuf {
     let state_dir = state_dir_in_source(source);
-    let filename = generate_state_filename(
-        &source.to_string_lossy(),
-        &dest.to_string_lossy(),
-    );
+    let filename = generate_state_filename(&source.to_string_lossy(), &dest.to_string_lossy());
     state_dir.join(filename)
 }
 
 /// Check if we can write to the source directory for state files
 pub fn check_source_writable(source: &Path) -> Result<(), CaravanError> {
     let state_dir = state_dir_in_source(source);
-    
+
     // Try to create the directory if it doesn't exist
     if !state_dir.exists() {
         fs::create_dir_all(&state_dir).map_err(|err| {
@@ -207,7 +212,7 @@ pub fn check_source_writable(source: &Path) -> Result<(), CaravanError> {
             ))
         })?;
     }
-    
+
     // Try to write a test file
     let test_file = state_dir.join(".write_test");
     fs::write(&test_file, "test").map_err(|err| {
@@ -216,9 +221,9 @@ pub fn check_source_writable(source: &Path) -> Result<(), CaravanError> {
             source.display()
         ))
     })?;
-    
+
     // Clean up test file
     let _ = fs::remove_file(&test_file);
-    
+
     Ok(())
 }

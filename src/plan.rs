@@ -18,7 +18,10 @@ pub struct PlanningSnapshot {
     pub batches: Vec<Batch>,
 }
 
-pub fn build_plan(source_root: &Path, options: &PlanOptions) -> Result<PlanningSnapshot, CaravanError> {
+pub fn build_plan(
+    source_root: &Path,
+    options: &PlanOptions,
+) -> Result<PlanningSnapshot, CaravanError> {
     if options.batch_size_bytes == 0 {
         return Err(CaravanError::InvalidArguments(
             "batch-size must be greater than zero".to_string(),
@@ -41,7 +44,10 @@ pub fn build_plan(source_root: &Path, options: &PlanOptions) -> Result<PlanningS
     })
 }
 
-pub fn plan_batches(entries: Vec<FileEntry>, options: &PlanOptions) -> Result<Vec<Batch>, CaravanError> {
+pub fn plan_batches(
+    entries: Vec<FileEntry>,
+    options: &PlanOptions,
+) -> Result<Vec<Batch>, CaravanError> {
     if options.batch_size_bytes == 0 {
         return Err(CaravanError::InvalidArguments(
             "batch-size must be greater than zero".to_string(),
@@ -70,7 +76,11 @@ pub fn plan_batches(entries: Vec<FileEntry>, options: &PlanOptions) -> Result<Ve
     for entry in sorted {
         if entry.size_bytes > options.batch_size_bytes {
             if !current_files.is_empty() {
-                batches.push(make_batch(batches.len() + 1, std::mem::take(&mut current_files), current_bytes));
+                batches.push(make_batch(
+                    batches.len() + 1,
+                    std::mem::take(&mut current_files),
+                    current_bytes,
+                ));
                 current_bytes = 0;
             }
             let single_size = entry.size_bytes;
@@ -78,10 +88,15 @@ pub fn plan_batches(entries: Vec<FileEntry>, options: &PlanOptions) -> Result<Ve
             continue;
         }
 
-        let exceeds_size = current_bytes.saturating_add(entry.size_bytes) > options.batch_size_bytes;
+        let exceeds_size =
+            current_bytes.saturating_add(entry.size_bytes) > options.batch_size_bytes;
         let exceeds_files = current_files.len() >= max_files;
         if !current_files.is_empty() && (exceeds_size || exceeds_files) {
-            batches.push(make_batch(batches.len() + 1, std::mem::take(&mut current_files), current_bytes));
+            batches.push(make_batch(
+                batches.len() + 1,
+                std::mem::take(&mut current_files),
+                current_bytes,
+            ));
             current_bytes = 0;
         }
 
@@ -97,7 +112,7 @@ pub fn plan_batches(entries: Vec<FileEntry>, options: &PlanOptions) -> Result<Ve
 }
 
 /// Load an individual batch definition from disk for resume
-/// 
+///
 /// When resuming we avoid rebuilding the whole plan which would generate different batch IDs,
 /// instead we scan the source again and find the exact batch matching the ID we need.
 pub fn load_batch_definition(
@@ -109,18 +124,24 @@ pub fn load_batch_definition(
     // We scan source and rebuild batches to find the one with matching ID
     // This works because batch IDs are deterministic and reproducible
     let entries = scan_source(source_root)?;
-    
+
     // ✅ Use the EXACT original batch size that was used when planning!
     let opts = PlanOptions {
         batch_size_bytes,
         max_files: max_files.map(|value| value as usize),
     };
-    
+
     let batches = plan_batches(entries, &opts)?;
-    
-    batches.into_iter()
+
+    batches
+        .into_iter()
         .find(|b| b.id == batch_id)
-        .ok_or_else(|| CaravanError::InvalidArguments(format!("Could not locate batch {} in source directory", batch_id)))
+        .ok_or_else(|| {
+            CaravanError::InvalidArguments(format!(
+                "Could not locate batch {} in source directory",
+                batch_id
+            ))
+        })
 }
 
 fn make_batch(index: usize, files: Vec<FileEntry>, total_bytes: u64) -> Batch {

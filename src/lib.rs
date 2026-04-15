@@ -7,9 +7,10 @@ pub mod detection;
 pub mod error;
 pub mod format;
 pub mod logging;
+pub mod migration_registry;
 pub mod plan;
-pub mod prompt;
 pub mod progress;
+pub mod prompt;
 pub mod resume;
 pub mod scan;
 pub mod signal;
@@ -17,6 +18,5 @@ pub mod snapshot;
 pub mod state_store;
 pub mod transfer;
 pub mod verify;
-pub mod migration_registry;
 
 pub mod models;

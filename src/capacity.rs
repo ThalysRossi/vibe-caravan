@@ -40,7 +40,7 @@ impl SpaceProbe for SystemSpaceProbe {
             if dest.exists() {
                 return Ok(());
             }
-            
+
             // Check if parent exists
             let parent = dest.parent();
             match parent {
@@ -76,10 +76,10 @@ impl SpaceProbe for SystemSpaceProbe {
                 }
             }
         }
-        
+
         // Ensure destination exists before checking capacity
         ensure_destination_exists(destination)?;
-        
+
         let total_bytes = fs2::total_space(destination).map_err(|err| {
             // Improve error message for missing directory vs capacity issues
             if err.kind() == std::io::ErrorKind::NotFound {
