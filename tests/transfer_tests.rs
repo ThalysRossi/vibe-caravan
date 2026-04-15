@@ -358,6 +358,33 @@ impl FileCopier for FailingSecondCopy {
     }
 }
 
+#[derive(Debug, Default)]
+struct HintTrackingCopier {
+    hints: Mutex<Vec<Option<u64>>>,
+}
+
+impl HintTrackingCopier {
+    fn observed_hints(&self) -> Vec<Option<u64>> {
+        self.hints.lock().expect("read hints").clone()
+    }
+}
+
+impl FileCopier for HintTrackingCopier {
+    fn copy_file(&self, source: &Path, destination: &Path) -> io::Result<u64> {
+        fs::copy(source, destination)
+    }
+
+    fn copy_file_with_size_hint(
+        &self,
+        source: &Path,
+        destination: &Path,
+        size_hint: Option<u64>,
+    ) -> io::Result<u64> {
+        self.hints.lock().expect("record hint").push(size_hint);
+        fs::copy(source, destination)
+    }
+}
+
 #[test]
 fn copy_batch_with_components_surfaces_file_copier_failures() {
     let src = TempDir::new().expect("source temp dir");
@@ -432,4 +459,40 @@ fn copy_batch_with_components_surfaces_directory_creator_failures() {
 
     assert!(err.to_string().contains("nested/file.txt"));
     assert!(!dst.path().join("nested/file.txt").exists());
+}
+
+#[test]
+fn copy_batch_with_components_passes_planned_size_hints_to_copier() {
+    let src = TempDir::new().expect("source temp dir");
+    let dst = TempDir::new().expect("destination temp dir");
+    create_file(src.path(), "a.bin", &[1u8; 3]);
+    create_file(src.path(), "nested/b.bin", &[2u8; 5]);
+
+    let plan = build_plan(
+        src.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+    let batch = &plan.batches[0];
+
+    let copier = HintTrackingCopier::default();
+    let creator = TrackingDirectoryCreator::default();
+    let mut progress = NoopProgress;
+
+    copy_batch_with_components(
+        batch,
+        src.path(),
+        dst.path(),
+        &copier,
+        &creator,
+        &mut progress,
+    )
+    .expect("copy should succeed");
+
+    let hints = copier.observed_hints();
+    let expected: Vec<Option<u64>> = batch.files.iter().map(|f| Some(f.size_bytes)).collect();
+    assert_eq!(hints, expected);
 }

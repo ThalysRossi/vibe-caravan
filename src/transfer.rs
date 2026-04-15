@@ -107,6 +107,17 @@ pub trait FileCopier {
     /// Copy a single file from source to destination.
     /// Returns the number of bytes copied on success.
     fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64>;
+
+    /// Copy a single file with an optional caller-provided size hint in bytes.
+    /// Default implementation falls back to `copy_file`.
+    fn copy_file_with_size_hint(
+        &self,
+        source: &Path,
+        destination: &Path,
+        _size_hint: Option<u64>,
+    ) -> std::io::Result<u64> {
+        self.copy_file(source, destination)
+    }
 }
 
 /// Simple file copier that uses the operating system's copy functionality.
@@ -274,10 +285,20 @@ impl Default for HybridFileCopier {
 
 impl FileCopier for HybridFileCopier {
     fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
-        // Get file size to decide which copier to use
-        let metadata = std::fs::metadata(source)?;
-        let file_size = metadata.len();
+        self.copy_file_with_size_hint(source, destination, None)
+    }
 
+    fn copy_file_with_size_hint(
+        &self,
+        source: &Path,
+        destination: &Path,
+        size_hint: Option<u64>,
+    ) -> std::io::Result<u64> {
+        // Prefer caller-provided planned size to avoid extra metadata syscalls.
+        let file_size = match size_hint {
+            Some(size) => size,
+            None => std::fs::metadata(source)?.len(),
+        };
         if file_size < self.threshold {
             OsFileCopier.copy_file(source, destination)
         } else {
@@ -415,6 +436,21 @@ impl FileCopier for LocalFileCopier {
     fn copy_file(&self, source: &Path, destination: &Path) -> io::Result<u64> {
         self.copy_file_inner(source, destination)
     }
+
+    fn copy_file_with_size_hint(
+        &self,
+        source: &Path,
+        destination: &Path,
+        size_hint: Option<u64>,
+    ) -> io::Result<u64> {
+        match self {
+            LocalFileCopier::Hybrid(copier) => {
+                copier.copy_file_with_size_hint(source, destination, size_hint)
+            }
+            LocalFileCopier::NativePreferred(copier) => copier.copy_file(source, destination),
+            LocalFileCopier::Buffered(copier) => copier.copy_file(source, destination),
+        }
+    }
 }
 
 pub fn transfer_batch(
@@ -472,7 +508,7 @@ pub fn copy_batch_with_components(
         }
 
         file_copier
-            .copy_file(&source_path, &destination_path)
+            .copy_file_with_size_hint(&source_path, &destination_path, Some(file.size_bytes))
             .map_err(|err| {
                 CaravanError::InvalidArguments(format!(
                     "failed to copy {} to {}: {err}",

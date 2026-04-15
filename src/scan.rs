@@ -4,7 +4,58 @@ use std::path::{Path, PathBuf};
 use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
 
+#[cfg(windows)]
+#[derive(Debug)]
+struct WinFindHandle(windows_sys::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl WinFindHandle {
+    fn try_new(raw: windows_sys::Win32::Foundation::HANDLE) -> Option<Self> {
+        if raw == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+            None
+        } else {
+            Some(Self(raw))
+        }
+    }
+
+    fn as_raw(&self) -> windows_sys::Win32::Foundation::HANDLE {
+        self.0
+    }
+}
+
+#[cfg(windows)]
+impl Drop for WinFindHandle {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` originates from a successful `FindFirstFileExW` call and this
+        // guard enforces a single `FindClose` on scope exit.
+        unsafe {
+            let _ = windows_sys::Win32::Foundation::FindClose(self.0);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanBackend {
+    StdFs,
+    Win32FindFirstEx,
+}
+
+pub const fn active_scan_backend() -> ScanBackend {
+    if cfg!(windows) {
+        ScanBackend::Win32FindFirstEx
+    } else {
+        ScanBackend::StdFs
+    }
+}
+
 pub fn scan_source(source_root: &Path) -> Result<Vec<FileEntry>, CaravanError> {
+    scan_source_with_backend(source_root, active_scan_backend())
+}
+
+pub fn scan_source_with_backend(
+    source_root: &Path,
+    backend: ScanBackend,
+) -> Result<Vec<FileEntry>, CaravanError> {
     if !source_root.exists() {
         return Err(CaravanError::InvalidArguments(format!(
             "source path does not exist: {}",
@@ -19,13 +70,16 @@ pub fn scan_source(source_root: &Path) -> Result<Vec<FileEntry>, CaravanError> {
     }
 
     let mut entries = Vec::new();
-    visit_dir(source_root, source_root, &mut entries)?;
+    match backend {
+        ScanBackend::StdFs => visit_dir_std(source_root, source_root, &mut entries)?,
+        ScanBackend::Win32FindFirstEx => visit_dir_win32(source_root, source_root, &mut entries)?,
+    }
 
     entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     Ok(entries)
 }
 
-fn visit_dir(
+fn visit_dir_std(
     source_root: &Path,
     current_dir: &Path,
     output: &mut Vec<FileEntry>,
@@ -47,7 +101,7 @@ fn visit_dir(
                     continue;
                 }
             }
-            visit_dir(source_root, &child, output)?;
+            visit_dir_std(source_root, &child, output)?;
             continue;
         }
         if !metadata.is_file() {
@@ -69,4 +123,117 @@ fn visit_dir(
 
 fn map_io(context: &'static str) -> impl Fn(std::io::Error) -> CaravanError {
     move |err| CaravanError::InvalidArguments(format!("{context}: {err}"))
+}
+
+#[cfg(windows)]
+fn visit_dir_win32(
+    source_root: &Path,
+    current_dir: &Path,
+    output: &mut Vec<FileEntry>,
+) -> Result<(), CaravanError> {
+    use std::ffi::OsString;
+    use std::mem;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::ptr;
+
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NO_MORE_FILES};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
+        FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
+    };
+
+    fn wide_to_os_string(wide: &[u16]) -> OsString {
+        let len = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
+        OsString::from_wide(&wide[..len])
+    }
+
+    let search_pattern = current_dir.join("*");
+    let search_wide: Vec<u16> = search_pattern
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // SAFETY: zero initialization matches Win32 expectations for output structs.
+    let mut find_data: WIN32_FIND_DATAW = unsafe { mem::zeroed() };
+    // SAFETY: pointers passed are valid for the duration of the call, and `find_data`
+    // points to writable memory for the API to populate.
+    let find_handle_raw = unsafe {
+        FindFirstFileExW(
+            search_wide.as_ptr(),
+            FindExInfoBasic,
+            &mut find_data as *mut _ as *mut _,
+            FindExSearchNameMatch,
+            ptr::null_mut(),
+            FIND_FIRST_EX_LARGE_FETCH,
+        )
+    };
+
+    let Some(find_handle) = WinFindHandle::try_new(find_handle_raw) else {
+        return Err(map_io("failed to enumerate source directory entries")(
+            std::io::Error::last_os_error(),
+        ));
+    };
+
+    let mut children: Vec<PathBuf> = Vec::new();
+    loop {
+        let name = wide_to_os_string(&find_data.cFileName);
+        let name_lossy = name.to_string_lossy();
+        if name_lossy != "." && name_lossy != ".." {
+            children.push(current_dir.join(&name));
+        }
+
+        // SAFETY: `find_handle` is a valid search handle and `find_data` is writable.
+        let has_next = unsafe { FindNextFileW(find_handle.as_raw(), &mut find_data) };
+        if has_next == 0 {
+            let error_code = unsafe { GetLastError() };
+            if error_code == ERROR_NO_MORE_FILES {
+                break;
+            }
+
+            return Err(map_io("failed to enumerate source directory entries")(
+                std::io::Error::from_raw_os_error(error_code as i32),
+            ));
+        }
+    }
+
+    children.sort();
+
+    for child in children {
+        let metadata =
+            fs::symlink_metadata(&child).map_err(map_io("failed to read source file metadata"))?;
+        if metadata.is_dir() {
+            if let Some(file_name) = child.file_name() {
+                if file_name == ".caravan" {
+                    continue;
+                }
+            }
+            visit_dir_win32(source_root, &child, output)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            continue;
+        }
+
+        let relative_path = child.strip_prefix(source_root).map_err(|_| {
+            CaravanError::InvalidArguments("failed to derive relative path during scan".to_string())
+        })?;
+        output.push(FileEntry {
+            relative_path: relative_path.to_path_buf(),
+            size_bytes: metadata.len(),
+            modified_time: metadata.modified().ok(),
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn visit_dir_win32(
+    source_root: &Path,
+    current_dir: &Path,
+    output: &mut Vec<FileEntry>,
+) -> Result<(), CaravanError> {
+    // Non-Windows fallback for tests and cross-platform behavior.
+    visit_dir_std(source_root, current_dir, output)
 }

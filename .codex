@@ -147,6 +147,25 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 12 (2026-04-15)
+- Continued staging-flow robustness/performance work with Windows-focused primitives and copy-path optimizations:
+  - Added scan backend abstraction in `src/scan.rs`:
+    - `ScanBackend` enum (`StdFs`, `Win32FindFirstEx`)
+    - `active_scan_backend()` platform selection
+    - `scan_source_with_backend(...)` explicit backend entrypoint
+  - Kept deterministic scan ordering and `.caravan` exclusion guarantees.
+  - Added Windows scanner path using `FindFirstFileExW` + `FIND_FIRST_EX_LARGE_FETCH`.
+  - Added scan backend tests in `tests/scan_tests.rs` for platform-aware backend selection and deterministic ordering.
+- Continued copy-path performance tuning:
+  - Extended `FileCopier` with `copy_file_with_size_hint(...)`.
+  - Updated `copy_batch_with_components(...)` to pass planned file sizes as hints.
+  - Updated `HybridFileCopier` to use the hint and avoid extra `metadata()` syscall when size is already known from planning.
+  - Added regression test in `tests/transfer_tests.rs` to assert per-file planned size hints are passed to the copier.
+- Validation after this phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`

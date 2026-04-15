@@ -1,4 +1,4 @@
-use caravan::scan::scan_source;
+use caravan::scan::{active_scan_backend, scan_source, scan_source_with_backend, ScanBackend};
 use std::fs;
 use tempfile::TempDir;
 
@@ -115,4 +115,44 @@ fn scan_includes_other_hidden_directories() {
     assert!(scanned_paths.contains(&".git/config".to_string()));
     assert!(scanned_paths.contains(&".hidden".to_string()));
     assert!(scanned_paths.contains(&"visible.txt".to_string()));
+}
+
+#[test]
+fn active_scan_backend_is_platform_aware() {
+    #[cfg(windows)]
+    assert_eq!(active_scan_backend(), ScanBackend::Win32FindFirstEx);
+
+    #[cfg(not(windows))]
+    assert_eq!(active_scan_backend(), ScanBackend::StdFs);
+}
+
+#[test]
+fn std_backend_scan_is_deterministic_and_sorted() {
+    let tmp = TempDir::new().expect("temp dir");
+
+    // Create files in intentionally scrambled order
+    fs::create_dir_all(tmp.path().join("x")).expect("create x");
+    fs::create_dir_all(tmp.path().join("a")).expect("create a");
+    fs::write(tmp.path().join("x/z.txt"), "z").expect("write x/z");
+    fs::write(tmp.path().join("a/b.txt"), "b").expect("write a/b");
+    fs::write(tmp.path().join("a/a.txt"), "a").expect("write a/a");
+    fs::write(tmp.path().join("x/a.txt"), "xa").expect("write x/a");
+
+    let first = scan_source_with_backend(tmp.path(), ScanBackend::StdFs).expect("scan 1");
+    let second = scan_source_with_backend(tmp.path(), ScanBackend::StdFs).expect("scan 2");
+
+    let first_paths: Vec<String> = first
+        .iter()
+        .map(|e| e.relative_path.to_string_lossy().to_string())
+        .collect();
+    let second_paths: Vec<String> = second
+        .iter()
+        .map(|e| e.relative_path.to_string_lossy().to_string())
+        .collect();
+
+    assert_eq!(first_paths, second_paths);
+    assert_eq!(
+        first_paths,
+        vec!["a/a.txt", "a/b.txt", "x/a.txt", "x/z.txt"]
+    );
 }
