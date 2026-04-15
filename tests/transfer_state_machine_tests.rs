@@ -112,6 +112,60 @@ fn existing_corrupted_state_is_not_replaced_by_new_state() {
     assert_eq!(final_contents, "{ not valid json");
 }
 
+#[test]
+fn transfer_rerun_aborts_when_state_contains_failed_batch() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "content").expect("write source");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.batches.push(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::Failed,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+    persist_state(&state_path, &state).expect("persist state");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("utf8 source"),
+            "--dest",
+            dest_dir.to_str().expect("utf8 dest"),
+            "--batch-size",
+            "1MiB",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
+
+    assert!(
+        !output.status.success(),
+        "transfer rerun should fail closed for failed batches"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("one or more batches require operator review before continuing"),
+        "stderr should indicate operator-review gate: {stderr}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn approved_for_delete_batches_are_not_recopied_on_transfer_rerun() {
@@ -176,6 +230,76 @@ fn approved_for_delete_batches_are_not_recopied_on_transfer_rerun() {
     assert!(
         output.status.success(),
         "approved-for-delete batches should skip copy and continue deletion"
+    );
+    assert!(
+        !source_dir.join("file1.txt").exists(),
+        "source file should be deleted for approved-for-delete batches"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn approved_for_delete_batches_are_not_reverified_on_transfer_rerun() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "content").expect("write source");
+    fs::write(dest_dir.join("file1.txt"), "content").expect("write destination");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.batches.push(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::ApprovedForDelete,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: false,
+    });
+
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+    persist_state(&state_path, &state).expect("persist state");
+
+    // If rerun tries to verify this approved batch again, opening source will fail.
+    fs::set_permissions(
+        source_dir.join("file1.txt"),
+        fs::Permissions::from_mode(0o000),
+    )
+    .expect("set source unreadable");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("utf8 source"),
+            "--dest",
+            dest_dir.to_str().expect("utf8 dest"),
+            "--batch-size",
+            "1MiB",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
+
+    // Restore permissions if file still exists (in case command failed before delete).
+    if source_dir.join("file1.txt").exists() {
+        fs::set_permissions(
+            source_dir.join("file1.txt"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .expect("restore source permissions");
+    }
+
+    assert!(
+        output.status.success(),
+        "approved-for-delete batches should skip verify and continue deletion"
     );
     assert!(
         !source_dir.join("file1.txt").exists(),
