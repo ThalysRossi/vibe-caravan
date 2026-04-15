@@ -66,10 +66,7 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     seed_state_batches(&mut state, &plan);
     persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
 
-    let copy_backend = transfer::LocalFsCopyBackend::with_config(
-        config.copy_buffer_size,
-        config.buffered_copy_threshold,
-    );
+    let copy_backend = transfer::LocalFsCopyBackend::with_transfer_config(&config);
     warn_copy_backend_config(&config);
 
     let mut processed_batches = 0_u32;

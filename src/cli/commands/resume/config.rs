@@ -29,6 +29,7 @@ pub(super) fn transfer_config_from_state(
         log_level: "info".to_string(),
         skip_conflicts: false,
         recover_failed,
+        copy_strategy: state.copy_strategy,
         copy_buffer_size: state.copy_buffer_size,
         buffered_copy_threshold: state.buffered_copy_threshold,
     })

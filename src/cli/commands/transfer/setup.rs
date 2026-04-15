@@ -60,6 +60,7 @@ pub(super) fn apply_transfer_config(state: &mut MigrationState, config: &Transfe
     state.max_files = config.max_files;
     state.snapshot_every = config.snapshot_every;
     state.verification_mode = config.verification.clone();
+    state.copy_strategy = config.copy_strategy;
     state.copy_buffer_size = config.copy_buffer_size;
     state.buffered_copy_threshold = config.buffered_copy_threshold;
 }
@@ -102,8 +103,14 @@ pub(super) fn warn_copy_backend_config(config: &TransferConfig) {
         eprintln!("  Consider using --buffered-copy-threshold 8MiB for better HDD performance.");
     }
 
+    if !cfg!(windows) && config.copy_strategy == crate::config::CopyStrategy::Native {
+        eprintln!(
+            "[WARNING] Native copy strategy was requested on a non-Windows platform; caravan will fall back to hybrid copy."
+        );
+    }
+
     eprintln!(
-        "[DEBUG] Using copy buffer size: {:.2} MiB, buffered copy threshold: {:.2} MiB",
-        buffer_size_mb, threshold_mb
+        "[DEBUG] Using copy strategy: {:?}, copy buffer size: {:.2} MiB, buffered copy threshold: {:.2} MiB",
+        config.copy_strategy, buffer_size_mb, threshold_mb
     );
 }

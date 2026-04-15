@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::config::{Config, TransferConfig, VerificationMode};
+use crate::config::{Config, CopyStrategy, TransferConfig, VerificationMode};
 use crate::error::CaravanError;
 
 mod args;
@@ -45,6 +45,8 @@ pub struct TransferArgs {
     pub skip_conflicts: bool,
     #[arg(long, default_value_t = false)]
     pub recover_failed: bool,
+    #[arg(long, value_enum, default_value_t = CopyStrategyArg::Auto)]
+    pub copy_strategy: CopyStrategyArg,
     #[arg(long)]
     pub copy_buffer_size: Option<String>,
     #[arg(long)]
@@ -82,12 +84,29 @@ pub enum VerificationArg {
     Strict,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum CopyStrategyArg {
+    Auto,
+    Native,
+    Buffered,
+}
+
 impl From<VerificationArg> for VerificationMode {
     fn from(value: VerificationArg) -> Self {
         match value {
             VerificationArg::Structural => VerificationMode::Structural,
             VerificationArg::Digest => VerificationMode::Digest,
             VerificationArg::Strict => VerificationMode::Strict,
+        }
+    }
+}
+
+impl From<CopyStrategyArg> for CopyStrategy {
+    fn from(value: CopyStrategyArg) -> Self {
+        match value {
+            CopyStrategyArg::Auto => CopyStrategy::Auto,
+            CopyStrategyArg::Native => CopyStrategy::Native,
+            CopyStrategyArg::Buffered => CopyStrategy::Buffered,
         }
     }
 }

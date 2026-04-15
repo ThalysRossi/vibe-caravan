@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use caravan::cli::execute_transfer;
-use caravan::config::{Mode, TransferConfig, VerificationMode};
+use caravan::config::{CopyStrategy, Mode, TransferConfig, VerificationMode};
 use caravan::error::CaravanError;
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
@@ -570,6 +570,7 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
         log_level: "error".to_string(),
         skip_conflicts: false,
         recover_failed: false,
+        copy_strategy: CopyStrategy::Auto,
         copy_buffer_size: TransferConfig::default_copy_buffer_size(),
         buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
     };

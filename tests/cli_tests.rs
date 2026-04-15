@@ -1,5 +1,5 @@
 use caravan::cli::parse_cli_from;
-use caravan::config::{Config, VerificationMode};
+use caravan::config::{Config, CopyStrategy, VerificationMode};
 
 #[test]
 fn missing_required_arguments_are_rejected() {
@@ -281,4 +281,44 @@ fn resume_inspect_failed_flag_defaults_to_false_and_can_be_enabled() {
         Config::Resume { inspect_failed, .. } => assert!(inspect_failed),
         _ => panic!("expected resume config"),
     }
+}
+
+#[test]
+fn copy_strategy_is_parsed_for_transfer_commands() {
+    let parsed = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--copy-strategy",
+        "native",
+    ])
+    .expect("staging parse should accept copy-strategy");
+
+    match parsed {
+        Config::Staging(cfg) => assert_eq!(cfg.copy_strategy, CopyStrategy::Native),
+        _ => panic!("expected staging config"),
+    }
+}
+
+#[test]
+fn invalid_copy_strategy_is_rejected() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--copy-strategy",
+        "invalid-strategy",
+    ]);
+
+    assert!(result.is_err());
 }

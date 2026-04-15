@@ -15,6 +15,14 @@ pub enum VerificationMode {
     Strict,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CopyStrategy {
+    #[default]
+    Auto,
+    Native,
+    Buffered,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransferConfig {
     pub mode: Mode,
@@ -29,6 +37,8 @@ pub struct TransferConfig {
     pub skip_conflicts: bool,
     #[serde(default)]
     pub recover_failed: bool,
+    #[serde(default)]
+    pub copy_strategy: CopyStrategy,
 
     /// Buffer size for file copying (in bytes).
     /// Default: 8 MiB (8 * 1024 * 1024)

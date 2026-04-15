@@ -1,7 +1,9 @@
 use std::collections::HashSet;
+use std::io;
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
+use crate::config::{CopyStrategy, Mode, TransferConfig};
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::progress::ProgressReporter;
@@ -63,6 +65,27 @@ thread_local! {
     static BUFFER_POOL: BufferPool = BufferPool::new();
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedCopyStrategy {
+    Hybrid,
+    NativePreferred,
+    Buffered,
+}
+
+pub fn resolve_copy_strategy(strategy: CopyStrategy, mode: &Mode) -> ResolvedCopyStrategy {
+    match strategy {
+        CopyStrategy::Buffered => ResolvedCopyStrategy::Buffered,
+        CopyStrategy::Native => ResolvedCopyStrategy::NativePreferred,
+        CopyStrategy::Auto => {
+            if cfg!(windows) && matches!(mode, Mode::Staging) {
+                ResolvedCopyStrategy::NativePreferred
+            } else {
+                ResolvedCopyStrategy::Hybrid
+            }
+        }
+    }
+}
+
 /// Trait for directory creation abstraction, primarily for testing.
 pub trait DirectoryCreator {
     /// Creates a directory and all of its parent directories if they are missing.
@@ -93,6 +116,61 @@ pub struct OsFileCopier;
 impl FileCopier for OsFileCopier {
     fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
         std::fs::copy(source, destination)
+    }
+}
+
+#[cfg(windows)]
+fn system_native_copy_file(source: &Path, destination: &Path) -> io::Result<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::CopyFileW;
+
+    let source_wide: Vec<u16> = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let destination_wide: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let copied = unsafe { CopyFileW(source_wide.as_ptr(), destination_wide.as_ptr(), 0) };
+    if copied == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    std::fs::metadata(destination).map(|meta| meta.len())
+}
+
+#[cfg(not(windows))]
+fn system_native_copy_file(_source: &Path, _destination: &Path) -> io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "native copy strategy is unavailable on this platform",
+    ))
+}
+
+/// Native-first copier: tries OS-native copy API and falls back to hybrid copy on failure.
+#[derive(Debug, Clone)]
+pub struct NativePreferredFileCopier {
+    fallback: HybridFileCopier,
+}
+
+impl NativePreferredFileCopier {
+    pub fn new(buffer_size: usize, threshold: u64) -> Self {
+        Self {
+            fallback: HybridFileCopier::new(buffer_size, threshold),
+        }
+    }
+}
+
+impl FileCopier for NativePreferredFileCopier {
+    fn copy_file(&self, source: &Path, destination: &Path) -> io::Result<u64> {
+        match system_native_copy_file(source, destination) {
+            Ok(bytes) => Ok(bytes),
+            Err(_) => self.fallback.copy_file(source, destination),
+        }
     }
 }
 
@@ -226,21 +304,76 @@ pub trait CopyBackend {
     ) -> Result<(), CaravanError>;
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
+enum LocalFileCopier {
+    Hybrid(HybridFileCopier),
+    NativePreferred(NativePreferredFileCopier),
+    Buffered(BufferedFileCopier),
+}
+
+#[derive(Debug, Clone)]
 pub struct LocalFsCopyBackend {
-    file_copier: HybridFileCopier,
+    file_copier: LocalFileCopier,
 }
 
 impl LocalFsCopyBackend {
     /// Creates a new LocalFsCopyBackend with default file copier settings.
     pub fn new() -> Self {
-        Self::default()
+        Self::with_config(
+            BufferedFileCopier::DEFAULT_BUFFER_SIZE,
+            HybridFileCopier::with_defaults().threshold(),
+        )
     }
 
     /// Creates a new LocalFsCopyBackend with custom buffer size and threshold.
     pub fn with_config(buffer_size: usize, threshold: u64) -> Self {
         Self {
-            file_copier: HybridFileCopier::new(buffer_size, threshold),
+            file_copier: LocalFileCopier::Hybrid(HybridFileCopier::new(buffer_size, threshold)),
+        }
+    }
+
+    pub fn with_strategy(
+        buffer_size: usize,
+        threshold: u64,
+        strategy: CopyStrategy,
+        mode: &Mode,
+    ) -> Self {
+        let file_copier = match resolve_copy_strategy(strategy, mode) {
+            ResolvedCopyStrategy::Hybrid => {
+                LocalFileCopier::Hybrid(HybridFileCopier::new(buffer_size, threshold))
+            }
+            ResolvedCopyStrategy::NativePreferred => LocalFileCopier::NativePreferred(
+                NativePreferredFileCopier::new(buffer_size, threshold),
+            ),
+            ResolvedCopyStrategy::Buffered => {
+                LocalFileCopier::Buffered(BufferedFileCopier::new(buffer_size))
+            }
+        };
+        Self { file_copier }
+    }
+
+    pub fn with_transfer_config(config: &TransferConfig) -> Self {
+        Self::with_strategy(
+            config.copy_buffer_size,
+            config.buffered_copy_threshold,
+            config.copy_strategy,
+            &config.mode,
+        )
+    }
+}
+
+impl Default for LocalFsCopyBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LocalFileCopier {
+    fn copy_file_inner(&self, source: &Path, destination: &Path) -> io::Result<u64> {
+        match self {
+            LocalFileCopier::Hybrid(copier) => copier.copy_file(source, destination),
+            LocalFileCopier::NativePreferred(copier) => copier.copy_file(source, destination),
+            LocalFileCopier::Buffered(copier) => copier.copy_file(source, destination),
         }
     }
 }
@@ -275,6 +408,12 @@ impl CopyBackend for LocalFsCopyBackend {
             &FsDirectoryCreator,
             progress,
         )
+    }
+}
+
+impl FileCopier for LocalFileCopier {
+    fn copy_file(&self, source: &Path, destination: &Path) -> io::Result<u64> {
+        self.copy_file_inner(source, destination)
     }
 }
 

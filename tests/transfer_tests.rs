@@ -3,11 +3,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use caravan::config::{CopyStrategy, Mode};
 use caravan::plan::{build_plan, PlanOptions};
 use caravan::progress::NoopProgress;
 use caravan::transfer::{
-    copy_batch_with_components, transfer_batch, CopyBackend, DirectoryCreator, FileCopier,
-    LocalFsCopyBackend,
+    copy_batch_with_components, resolve_copy_strategy, transfer_batch, CopyBackend,
+    DirectoryCreator, FileCopier, LocalFsCopyBackend, ResolvedCopyStrategy,
 };
 use tempfile::TempDir;
 
@@ -97,6 +98,61 @@ fn transfer_batch_returns_error_when_source_file_is_missing() {
     let err = transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect_err("copy should fail for missing source");
     assert!(err.to_string().contains("failed to copy"));
+}
+
+#[test]
+fn copy_strategy_resolution_is_mode_aware() {
+    assert_eq!(
+        resolve_copy_strategy(CopyStrategy::Buffered, &Mode::Staging),
+        ResolvedCopyStrategy::Buffered
+    );
+    assert_eq!(
+        resolve_copy_strategy(CopyStrategy::Native, &Mode::Migrate),
+        ResolvedCopyStrategy::NativePreferred
+    );
+    assert_eq!(
+        resolve_copy_strategy(CopyStrategy::Auto, &Mode::Migrate),
+        ResolvedCopyStrategy::Hybrid
+    );
+
+    #[cfg(windows)]
+    assert_eq!(
+        resolve_copy_strategy(CopyStrategy::Auto, &Mode::Staging),
+        ResolvedCopyStrategy::NativePreferred
+    );
+
+    #[cfg(not(windows))]
+    assert_eq!(
+        resolve_copy_strategy(CopyStrategy::Auto, &Mode::Staging),
+        ResolvedCopyStrategy::Hybrid
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn native_strategy_falls_back_when_native_copy_is_unavailable() {
+    let src = TempDir::new().expect("source temp dir");
+    let dst = TempDir::new().expect("destination temp dir");
+    create_file(src.path(), "media/clip.bin", b"123456");
+
+    let plan = build_plan(
+        src.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+    let batch = &plan.batches[0];
+
+    let backend =
+        LocalFsCopyBackend::with_strategy(1024 * 1024, 1024, CopyStrategy::Native, &Mode::Staging);
+    transfer_batch(batch, src.path(), dst.path(), &backend).expect("copy should succeed");
+
+    assert_eq!(
+        fs::read(dst.path().join("media/clip.bin")).expect("copied file should exist"),
+        b"123456"
+    );
 }
 
 #[test]

@@ -93,10 +93,7 @@ pub(super) fn execute_resume(
 
     print_resuming_transfer();
 
-    let copy_backend = transfer::LocalFsCopyBackend::with_config(
-        config.copy_buffer_size,
-        config.buffered_copy_threshold,
-    );
+    let copy_backend = transfer::LocalFsCopyBackend::with_transfer_config(&config);
 
     run_resume_batches(
         &mut state,
