@@ -56,6 +56,31 @@
   - `cargo test -q`: pass
   - `cargo clippy --all-targets --all-features -- -D warnings`: pass
 
+## Continuation Update 5 (2026-04-15)
+- Added focused unit coverage for shared batch operation helpers in:
+  - `src/cli/commands/shared/batch_ops.rs`
+- New tests cover:
+  - copy state transitions (`CopyStarted` -> `CopyCompleted`)
+  - verification flag reset behavior for transfer-style copy flow
+  - verification flag preservation behavior for resume-style copy flow
+  - missing batch-state error path for copy helper
+  - successful verify path (`VerifyCompleted` + `verification_passed = true`)
+  - failed verify path (`VerifyCompleted` + `verification_passed = false` + error)
+- Validation after helper test phase:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
+## Continuation Update 6 (2026-04-15)
+- Adjusted test placement policy compliance:
+  - Removed helper tests from `src/cli/commands/shared/batch_ops.rs`.
+  - Added equivalent coverage under `tests/shared_batch_ops_tests.rs`.
+- Kept coverage scope unchanged (copy/verify state transitions and error paths).
+- Validation after test relocation:
+  - `cargo fmt --all`: pass
+  - `cargo test -q`: pass
+  - `cargo clippy --all-targets --all-features -- -D warnings`: pass
+
 ## Repository Snapshot
 - Branch: `main`
 - HEAD: `f26bf8b`
