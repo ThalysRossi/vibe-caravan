@@ -1,104 +1,22 @@
+use std::fs;
+
+use assert_cmd::Command;
 use caravan::models::state::{BatchPhase, BatchState, MigrationPhase, MigrationState};
 use caravan::state_store::{load_state, persist_state};
-use std::fs;
 use tempfile::TempDir;
 
-/// Test that re-running a transfer with partial copy completion skips already copied batches
-/// This simulates the user's scenario: stop after batch-000003, then run the same command again
 #[test]
-fn transfer_rerun_skips_already_copied_batches() {
+fn resume_command_skips_copy_for_copy_completed_batch_and_completes() {
     let tmp = TempDir::new().expect("temp dir");
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
     fs::create_dir_all(&dest_dir).expect("create dest");
 
-    // Create test files
-    for i in 1..=6 {
-        fs::write(
-            source_dir.join(format!("file{}.txt", i)),
-            format!("content {}", i),
-        )
-        .expect("create file");
-    }
+    fs::write(source_dir.join("test.txt"), "test").expect("write source file");
+    fs::write(dest_dir.join("test.txt"), "test").expect("write destination file");
 
-    // Create state with 3 batches already CopyCompleted (simulating partial migration)
-    let mut state = MigrationState::new(
-        "staging",
-        &source_dir.to_string_lossy(),
-        &dest_dir.to_string_lossy(),
-    );
-    state.batch_size_bytes = 1024; // 1KB batch size to force multiple batches
-    state.migration_phase = MigrationPhase::Copying;
-
-    // Create 6 batches total, first 3 CopyCompleted
-    for i in 1..=6 {
-        let phase = if i <= 3 {
-            BatchPhase::CopyCompleted
-        } else {
-            BatchPhase::Planned
-        };
-
-        state.batches.push(BatchState {
-            batch_id: format!("batch-{:06}", i),
-            phase,
-            verification_passed: false,
-            approved_for_delete: false,
-            deleted: false,
-        });
-    }
-
-    // Save state to source/.caravan (where caravan expects it)
-    let state_dir = source_dir.join(".caravan");
-    fs::create_dir_all(&state_dir).expect("create .caravan");
-    let state_path = state_dir.join("state.json");
-    persist_state(&state_path, &state).expect("persist state");
-
-    // Also need to create batch definition files for the planner to load
-    // This is a simplified test - in reality we'd need proper batch files
-    // For this test, we'll just verify the state loading logic
-
-    // Load the state to verify it was saved correctly
-    let loaded_state = load_state(&state_path).expect("load state");
-
-    // Verify state
-    assert_eq!(loaded_state.batches.len(), 6);
-    for (i, batch) in loaded_state.batches.iter().enumerate() {
-        let expected_phase = if i < 3 {
-            BatchPhase::CopyCompleted
-        } else {
-            BatchPhase::Planned
-        };
-        assert_eq!(
-            batch.phase, expected_phase,
-            "Batch {} phase incorrect",
-            batch.batch_id
-        );
-        assert!(
-            !batch.verification_passed,
-            "Batch {} verification_passed should be false",
-            batch.batch_id
-        );
-    }
-
-    // Note: Actually running execute_transfer would require proper batch definitions
-    // This test demonstrates that the state is saved/loaded correctly
-    // The actual resume behavior would be tested in execute_resume
-}
-
-/// Test the resume command specifically
-#[test]
-fn resume_command_skips_already_copied_batches() {
-    let tmp = TempDir::new().expect("temp dir");
-    let source_dir = tmp.path().join("source");
-    let dest_dir = tmp.path().join("dest");
-    fs::create_dir_all(&source_dir).expect("create source");
-    fs::create_dir_all(&dest_dir).expect("create dest");
-
-    // Create minimal test file structure
-    fs::write(source_dir.join("test.txt"), "test").expect("create test file");
-
-    // Create state with one batch already CopyCompleted
+    let state_path = tmp.path().join("resume-state.json");
     let mut state = MigrationState::new(
         "staging",
         &source_dir.to_string_lossy(),
@@ -106,51 +24,99 @@ fn resume_command_skips_already_copied_batches() {
     );
     state.batch_size_bytes = 1024;
     state.migration_phase = MigrationPhase::Copying;
-
-    state.batches.push(BatchState {
+    state.upsert_batch(BatchState {
         batch_id: "batch-000001".to_string(),
         phase: BatchPhase::CopyCompleted,
         verification_passed: false,
         approved_for_delete: false,
         deleted: false,
     });
-
-    // Save state
-    let state_dir = source_dir.join(".caravan");
-    fs::create_dir_all(&state_dir).expect("create .caravan");
-    let state_path = state_dir.join("state.json");
     persist_state(&state_path, &state).expect("persist state");
 
-    // Test the resume logic by checking plan_resume_step
-    use caravan::models::batch::Batch;
-    use caravan::resume::{plan_resume_step, ReconciliationResult};
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
 
-    let recon = ReconciliationResult {
-        all_destination_files_ready: true,
-        missing_in_destination: vec![],
-        size_mismatches: vec![],
-    };
+    assert!(
+        output.status.success(),
+        "resume should complete when destination is ready and interactive deletion is enabled"
+    );
 
-    let dummy_batch = Batch {
-        id: "batch-000001".to_string(),
-        files: vec![],
-        total_bytes: 0,
-        file_count: 0,
-    };
+    let state_after = load_state(&state_path).expect("load state after resume");
+    let batch = state_after
+        .batch("batch-000001")
+        .expect("batch should remain present");
+    assert_eq!(batch.phase, BatchPhase::VerifyCompleted);
+    assert!(batch.verification_passed);
+    assert!(!batch.approved_for_delete);
+    assert!(!batch.deleted);
+    assert!(source_dir.join("test.txt").exists());
+}
 
-    let batch_state = state.batch("batch-000001").unwrap();
-    let step = plan_resume_step(batch_state, &recon, &dummy_batch);
+#[test]
+fn resume_command_blocks_copy_completed_batch_when_destination_is_missing() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
 
-    // Should plan verification, not copying
-    match step {
-        caravan::resume::ResumeStepPlan::VerifyBatch => {
-            // Correct!
-        }
-        other => {
-            panic!(
-                "Resume should plan VerifyBatch for CopyCompleted batch, not {:?}",
-                other
-            );
-        }
-    }
+    fs::write(source_dir.join("test.txt"), "test").expect("write source file");
+
+    let state_path = tmp.path().join("resume-state.json");
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024;
+    state.migration_phase = MigrationPhase::Copying;
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::CopyCompleted,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+    persist_state(&state_path, &state).expect("persist state");
+
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
+
+    assert!(
+        !output.status.success(),
+        "resume should fail closed when CopyCompleted state diverges from destination"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("state says copy completed but destination is incomplete"),
+        "operator-review reason should include destination diff, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("test.txt"),
+        "operator-review reason should include the missing file path, got: {stderr}"
+    );
+
+    let state_after = load_state(&state_path).expect("load state after failed resume");
+    let batch = state_after
+        .batch("batch-000001")
+        .expect("batch should remain present");
+    assert_eq!(batch.phase, BatchPhase::CopyCompleted);
+    assert!(!batch.verification_passed);
+    assert!(!dest_dir.join("test.txt").exists());
 }

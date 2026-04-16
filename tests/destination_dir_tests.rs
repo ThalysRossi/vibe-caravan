@@ -31,6 +31,10 @@ fn destination_directory_created_when_top_level_missing() {
         .current_dir(tmp.path())
         .output()
         .expect("Failed to execute caravan");
+    assert!(
+        _output.status.success(),
+        "interactive run without stdin should complete with deletion denied"
+    );
 
     // The command should at least try to run (will fail in interactive mode without stdin)
     // But dest directory should have been created
@@ -77,9 +81,8 @@ fn destination_subdirectory_fails_when_parent_missing() {
     // Should fail with error about missing parent directory
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !stderr.contains("failed to read destination total capacity")
-            || stderr.contains("does not exist and cannot be created"),
-        "Should fail with clear error about missing parent directory, got: {}",
+        stderr.contains("cannot be created because parent directory"),
+        "Should fail with clear parent-directory error, got: {}",
         stderr
     );
 
@@ -129,9 +132,8 @@ fn capacity_error_message_improved_for_missing_directory() {
     let err = report.unwrap_err();
     let err_str = err.to_string();
     assert!(
-        err_str.contains("does not exist and cannot be created")
-            || err_str.contains("parent directory"),
-        "Error should mention parent directory issue, got: {}",
+        err_str.contains("cannot be created because parent directory"),
+        "Error should mention missing parent directory explicitly, got: {}",
         err_str
     );
 }

@@ -1,66 +1,66 @@
+use std::fs;
+
+use assert_cmd::Command;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::state_store::persist_state;
 use tempfile::TempDir;
 
-/// Test that resume handles missing batch in state gracefully (not panicking)
+/// Resume should return a typed error when a persisted batch ID cannot be reconstructed.
 #[test]
 fn resume_handles_missing_batch_gracefully() {
-    let tmp = TempDir::new().unwrap();
-    let state_path = tmp.path().join("state.json");
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "content").expect("create source file");
 
-    // Create a state with a batch that will be "missing" during resume
-    let mut state = MigrationState::new("staging", "/source", "/dest");
+    let state_path = tmp.path().join("resume-state.json");
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
     state.batch_size_bytes = 1024;
-
-    // Add a batch to state
     state.upsert_batch(BatchState {
-        batch_id: "batch-000001".to_string(),
+        batch_id: "batch-000999".to_string(),
         phase: BatchPhase::Planned,
         verification_passed: false,
         approved_for_delete: false,
         deleted: false,
     });
+    persist_state(&state_path, &state).expect("persist state");
 
-    // Add another batch
-    state.upsert_batch(BatchState {
-        batch_id: "batch-000002".to_string(),
-        phase: BatchPhase::Planned,
-        verification_passed: false,
-        approved_for_delete: false,
-        deleted: false,
-    });
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
 
-    // Persist state
-    persist_state(&state_path, &state).unwrap();
-
-    // Now simulate a scenario where batch disappears from state
-    // This could happen if state file is corrupted or manually edited
-    // We'll load state, remove a batch, and save back
-    let mut corrupted_state = state.clone();
-    corrupted_state
-        .batches
-        .retain(|b| b.batch_id != "batch-000002");
-    persist_state(&state_path, &corrupted_state).unwrap();
-
-    // Now try to resume - this should NOT panic but return an error
-    // Note: We can't directly test execute_resume because it's not public
-    // But we can test the logic that would cause the panic
-
-    // The actual test is that the code should handle missing batch gracefully
-    // We'll verify by checking that .expect() is not used in production code
-    // This is more of a code review test than runtime test
+    assert!(
+        !output.status.success(),
+        "resume should fail cleanly when batch id cannot be loaded"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Could not locate batch batch-000999 in source directory"),
+        "expected explicit missing-batch error, got: {stderr}"
+    );
 }
 
-/// Test that batch lookup returns Option rather than panicking
+/// Test that batch lookup returns Option rather than panicking.
 #[test]
 fn batch_lookup_returns_option() {
     let state = MigrationState::new("staging", "/source", "/dest");
 
-    // batch method should return Option
     let result = state.batch("non-existent-batch");
     assert!(result.is_none());
 
-    // batch_mut should also return Option
     let mut state_mut = MigrationState::new("staging", "/source", "/dest");
     let result_mut = state_mut.batch_mut("non-existent-batch");
     assert!(result_mut.is_none());

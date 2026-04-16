@@ -150,6 +150,20 @@ fn resume_does_not_recopy_copy_started_batch_when_destination_is_complete() {
     fs::set_permissions(dest_dir.join("file1.txt"), file_perm).expect("set file readonly");
     let dir_perm = fs::Permissions::from_mode(0o555);
     fs::set_permissions(&dest_dir, dir_perm).expect("set dir readonly");
+    if fs::write(dest_dir.join("permission-probe.tmp"), "x").is_ok() {
+        let _ = fs::remove_file(dest_dir.join("permission-probe.tmp"));
+        fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o755))
+            .expect("restore dir permissions");
+        fs::set_permissions(
+            dest_dir.join("file1.txt"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .expect("restore file permissions");
+        eprintln!(
+            "skipping permission-dependent assertion: destination remains writable in this environment"
+        );
+        return;
+    }
 
     let binary_path = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(&binary_path)

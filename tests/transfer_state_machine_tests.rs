@@ -334,6 +334,20 @@ fn approved_for_delete_batches_are_not_recopied_on_transfer_rerun() {
     )
     .expect("set file readonly");
     fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o555)).expect("set dir readonly");
+    if fs::write(dest_dir.join("permission-probe.tmp"), "x").is_ok() {
+        let _ = fs::remove_file(dest_dir.join("permission-probe.tmp"));
+        fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o755))
+            .expect("restore dir permissions");
+        fs::set_permissions(
+            dest_dir.join("file1.txt"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .expect("restore file permissions");
+        eprintln!(
+            "skipping permission-dependent assertion: destination remains writable in this environment"
+        );
+        return;
+    }
 
     let binary_path = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(&binary_path)
@@ -404,6 +418,17 @@ fn approved_for_delete_batches_are_not_reverified_on_transfer_rerun() {
         fs::Permissions::from_mode(0o000),
     )
     .expect("set source unreadable");
+    if fs::read_to_string(source_dir.join("file1.txt")).is_ok() {
+        fs::set_permissions(
+            source_dir.join("file1.txt"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .expect("restore source permissions");
+        eprintln!(
+            "skipping permission-dependent assertion: source remains readable in this environment"
+        );
+        return;
+    }
 
     let binary_path = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(&binary_path)

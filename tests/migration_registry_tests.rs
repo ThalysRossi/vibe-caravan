@@ -207,13 +207,19 @@ fn check_source_writable_succeeds_for_writable_dir() {
 
 #[test]
 fn check_source_writable_fails_for_unwritable_dir() {
-    // Create a directory and remove write permissions (if possible)
-    // This test might be platform-specific; we'll skip it for now
-    // and just test that the function exists and returns Result
     let tmp = TempDir::new().expect("temp dir");
-    let source = tmp.path();
+    let source_file = tmp.path().join("source-is-a-file");
+    std::fs::write(&source_file, "not a directory").expect("create source file");
 
-    // This should succeed because temp dir is writable
-    let result = check_source_writable(source);
-    assert!(result.is_ok());
+    let result = check_source_writable(&source_file);
+    assert!(
+        result.is_err(),
+        "non-directory source path should fail writability checks"
+    );
+    let err = result.expect_err("expected writability failure");
+    assert!(
+        err.to_string()
+            .contains("cannot write state to source directory"),
+        "error should explain source state path is not writable: {err}"
+    );
 }

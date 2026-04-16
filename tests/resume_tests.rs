@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::Path;
 
-use caravan::cli::execute_transfer;
-use caravan::config::{CopyStrategy, Mode, TransferConfig, VerificationMode};
+use assert_cmd::Command;
 use caravan::error::CaravanError;
+use caravan::migration_registry;
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
@@ -546,67 +546,55 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
 
-    std::fs::create_dir_all(&source_dir).unwrap();
-    std::fs::create_dir_all(&dest_dir).unwrap();
+    std::fs::create_dir_all(&source_dir).expect("create source");
+    std::fs::create_dir_all(&dest_dir).expect("create destination");
 
-    // Create 3 test files that will be split into 3 batches
+    // Create 3 files and force 3 batches via --max-files=1.
     for i in 0..3 {
         std::fs::write(
             source_dir.join(format!("file{}.txt", i)),
             format!("content {}", i),
         )
-        .unwrap();
+        .expect("write source file");
     }
 
-    let config = TransferConfig {
-        mode: Mode::Staging,
-        source: source_dir.clone(),
-        dest: dest_dir.clone(),
-        batch_size_bytes: 10, // Small enough to force 3 separate batches
-        max_files: None,
-        snapshot_every: None,
-        snapshot_dir: None,
-        interactive: false,
-        verification: VerificationMode::Structural,
-        log_level: "error".to_string(),
-        skip_conflicts: false,
-        recover_failed: false,
-        allow_unsafe_filesystems: false,
-        copy_strategy: CopyStrategy::Auto,
-        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
-        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
-    };
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("source path utf8"),
+            "--dest",
+            dest_dir.to_str().expect("dest path utf8"),
+            "--batch-size",
+            "1MiB",
+            "--max-files",
+            "1",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
 
-    // Run execute_transfer
-    let _ = execute_transfer(config);
+    assert!(
+        !output.status.success(),
+        "non-interactive run should fail closed at delete approval gate"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("destructive operations are blocked"),
+        "expected delete-approval gate failure, got: {stderr}"
+    );
 
-    // State should exist with ALL batches
-    let state_path = Path::new(".caravan/state.json");
-    assert!(state_path.exists(), "State file should exist");
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+    assert!(state_path.exists(), "state file should exist in source .caravan");
 
-    let state = load_state(state_path).expect("Failed to load state");
-
-    // ✓ THE CRITICAL FIX: Verify we have ALL 3 batches in state, not just processed ones
+    let state = load_state(&state_path).expect("load persisted state");
     assert_eq!(
         state.batches.len(),
         3,
-        "State must contain ALL planned batches, not only processed ones"
+        "state must contain all planned batches, not only partially processed ones"
     );
-
-    // Count how many batches completed processing
-    let _completed_count = state
-        .batches
-        .iter()
-        .filter(|b| b.phase == BatchPhase::VerifyCompleted || b.deleted)
-        .count();
-
-    // Regardless of how many completed, ALL batches must be present in state
-    assert_eq!(
-        state.batches.len(),
-        3,
-        "Even if execution stops early, all batches are in state"
-    );
-
-    // Cleanup
-    let _ = std::fs::remove_dir_all(".caravan");
+    assert!(state.batches.iter().all(|batch| {
+        batch.phase == BatchPhase::VerifyCompleted && batch.verification_passed && !batch.deleted
+    }));
 }

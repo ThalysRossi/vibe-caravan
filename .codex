@@ -301,3 +301,48 @@
 
 ## Original Plan Verification
 - Latest completed phase matches original plan direction: decomposed oversized CLI orchestration and extracted config-building responsibilities while preserving behavior and passing full validation.
+
+## Continuation Update 17 (2026-04-15)
+- Implemented snapshot destination configurability hardening and operator visibility improvements:
+  - CLI/config guard: `--snapshot-dir` now requires `--snapshot-every`.
+    - `src/cli/config_builder.rs`
+    - `tests/cli_tests.rs`
+  - Added fail-fast snapshot configuration validation:
+    - rejects staging-mode snapshot settings
+    - rejects zero cadence
+    - requires snapshot dir to exist and be a directory
+    - on Linux, requires snapshot dir and destination to be on same filesystem
+    - rejects snapshot dir inside destination subtree
+    - resolves canonical paths so `..` segments are handled correctly
+    - `src/snapshot.rs`
+    - `tests/snapshot_tests.rs`
+  - Validation is executed both:
+    - early in transfer/resume startup
+    - again in snapshot processing (defense in depth)
+    - `src/cli/commands/transfer/mod.rs`
+    - `src/cli/commands/resume/mod.rs`
+    - `src/snapshot.rs`
+  - Snapshot policy is now visible to operators:
+    - `status` output shows cadence and snapshot directory
+    - transfer/resume startup output shows cadence and snapshot directory
+    - `src/cli/commands/shared/output.rs`
+    - `src/cli/commands/status.rs`
+    - `src/cli/commands/transfer/mod.rs`
+    - `src/cli/commands/resume/mod.rs`
+    - `src/cli/commands/shared/mod.rs`
+    - `tests/command_output_tests.rs`
+- Validation after these changes:
+  - `cargo fmt -- --check`: pass
+  - `cargo test --test command_output_tests`: pass
+  - `cargo test --test snapshot_tests`: pass
+  - `cargo test`: pass
+
+## Process Agreement Captured (Plan Discipline)
+- Conversation update to preserve for handoff:
+  - The assistant was asked whether it was creating new phases while implementing.
+  - User requested fixed-plan execution.
+  - Assistant confirmed the following rule:
+    - Do not deviate from the original plan during implementation unless a concrete blocker is encountered.
+    - If blockers/gaps are found, finish the original plan first, then list remaining gaps for decision on whether to continue the session.
+- This rule should be treated as active process guidance for subsequent continuation in this thread.
+Next session starts here:

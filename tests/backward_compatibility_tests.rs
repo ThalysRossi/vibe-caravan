@@ -178,18 +178,17 @@ fn resume_command_works_with_primary_state_file() {
             primary_state_dir.join(&state_filename).to_str().unwrap(),
         ])
         .current_dir(tmp.path())
-        .output();
+        .output()
+        .expect("Failed to execute caravan resume");
 
-    // Resume should at least start (though it will fail because there's no actual batch data)
-    // But it shouldn't crash with file not found
-    if let Ok(output) = output {
-        // Either it fails gracefully or runs
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !stderr.contains("No such file or directory")
-                || stderr.contains("failed to read state file"),
-            "Should not crash with file not found, got: {}",
-            stderr
-        );
-    }
+    assert!(
+        output.status.success(),
+        "resume should succeed for valid primary state path"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("No such file or directory"),
+        "resume should not fail with file-not-found for explicit primary state path: {}",
+        stderr
+    );
 }

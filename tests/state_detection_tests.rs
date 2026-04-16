@@ -153,9 +153,6 @@ fn prompt_user_when_batch_size_mismatch() {
 
 #[test]
 fn automatic_resume_detection_in_cli_parsing() {
-    // This test would require mocking the file system
-    // For now, we'll create a simple integration test
-    // Create a temporary directory with state file
     let tmp = TempDir::new().expect("temp dir");
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
@@ -175,7 +172,9 @@ fn automatic_resume_detection_in_cli_parsing() {
     state.batch_size_bytes = 1024;
 
     persist_state(&state_path, &state).expect("persist state");
-
-    // Note: This test is more complex and would require modifying parse_cli_from
-    // to accept a custom detection function. We'll test the components separately.
+    let detected = detect_state_file(&source_dir, &dest_dir).expect("state should be detected");
+    assert_eq!(
+        detected, state_path,
+        "automatic detection should prefer source/.caravan/state.json"
+    );
 }

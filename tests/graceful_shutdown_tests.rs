@@ -1,161 +1,175 @@
-//! Integration tests for graceful shutdown functionality.
-//!
-//! These tests verify that caravan can be gracefully stopped with Ctrl+C/SIGINT
-//! and resumed correctly.
+//! Integration tests for graceful shutdown behavior.
 
 use std::fs;
-use std::path::Path;
+#[cfg(unix)]
+use std::process::{Child, Stdio};
 use std::process::Command;
+#[cfg(unix)]
+use std::thread;
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use caravan::migration_registry;
+#[cfg(unix)]
+use caravan::models::state::{BatchPhase, MigrationState};
+#[cfg(unix)]
+use caravan::state_store::load_state;
 use tempfile::TempDir;
 
-/// Helper to create a test directory structure with some files
-fn create_test_files(root: &Path, file_count: usize, file_size: usize) {
-    fs::create_dir_all(root).unwrap();
+fn caravan_binary() -> std::path::PathBuf {
+    assert_cmd::cargo::cargo_bin("caravan")
+}
+
+fn create_test_files(root: &std::path::Path, file_count: usize, file_size: usize) {
+    fs::create_dir_all(root).expect("create root");
 
     for i in 0..file_count {
-        let file_path = root.join(format!("file_{}.txt", i));
+        let file_path = root.join(format!("file_{i}.bin"));
         let content = vec![b'X'; file_size];
-        fs::write(file_path, content).unwrap();
+        fs::write(file_path, content).expect("write test file");
     }
 }
 
-/// Build the caravan binary and return its path
-fn build_caravan_binary() -> std::path::PathBuf {
-    let status = Command::new("cargo")
-        .args(["build", "--release"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .status()
-        .expect("Failed to build caravan");
-
-    assert!(status.success(), "Failed to build caravan binary");
-
-    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("target/release/caravan");
-    path
+#[cfg(unix)]
+fn spawn_long_running_staging(
+    binary_path: &std::path::Path,
+    source_dir: &std::path::Path,
+    dest_dir: &std::path::Path,
+    cwd: &std::path::Path,
+) -> Child {
+    Command::new(binary_path)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("utf8 source"),
+            "--dest",
+            dest_dir.to_str().expect("utf8 dest"),
+            "--batch-size",
+            "16MiB",
+            "--max-files",
+            "1",
+            "--copy-strategy",
+            "buffered",
+            "--copy-buffer-size",
+            "4KiB",
+            "--buffered-copy-threshold",
+            "1B",
+        ])
+        .current_dir(cwd)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn caravan staging")
 }
 
-/// Test that caravan can be started and runs without errors
+#[cfg(unix)]
+fn wait_for_copy_activity(state_path: &std::path::Path) -> MigrationState {
+    let start = Instant::now();
+    let timeout = Duration::from_secs(15);
+
+    loop {
+        if state_path.exists() {
+            if let Ok(state) = load_state(state_path) {
+                let has_activity = state.batches.iter().any(|batch| {
+                    matches!(
+                        batch.phase,
+                        BatchPhase::CopyStarted
+                            | BatchPhase::CopyCompleted
+                            | BatchPhase::VerifyCompleted
+                            | BatchPhase::ApprovedForDelete
+                            | BatchPhase::DeleteCompleted
+                            | BatchPhase::SnapshotCompleted
+                    )
+                });
+                if has_activity {
+                    return state;
+                }
+            }
+        }
+
+        if start.elapsed() > timeout {
+            panic!(
+                "timed out waiting for copy activity in persisted state: {}",
+                state_path.display()
+            );
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(unix)]
+fn send_sigint(pid: u32) {
+    let status = Command::new("kill")
+        .args(["-INT", &pid.to_string()])
+        .status()
+        .expect("invoke kill -INT");
+    assert!(status.success(), "failed to deliver SIGINT to pid {pid}");
+}
+
+#[cfg(unix)]
+fn progressed_batches(state: &MigrationState) -> usize {
+    state
+        .batches
+        .iter()
+        .filter(|batch| batch.phase != BatchPhase::Planned)
+        .count()
+}
+
 #[test]
 fn caravan_starts_and_runs_basic_command() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("temp dir");
     let source_dir = temp_dir.path().join("source");
     let dest_dir = temp_dir.path().join("dest");
 
-    create_test_files(&source_dir, 3, 1024); // 3 small files
-                                             // Create destination directory for capacity check
-    fs::create_dir_all(&dest_dir).unwrap();
+    create_test_files(&source_dir, 3, 1024);
+    fs::create_dir_all(&dest_dir).expect("create destination");
 
-    let binary_path = build_caravan_binary();
+    let binary_path = caravan_binary();
 
     let output = Command::new(&binary_path)
         .args([
             "staging",
             "--source",
-            source_dir.to_str().unwrap(),
+            source_dir.to_str().expect("utf8 source"),
             "--dest",
-            dest_dir.to_str().unwrap(),
+            dest_dir.to_str().expect("utf8 dest"),
             "--batch-size",
             "1MiB",
         ])
         .current_dir(&temp_dir)
         .output()
-        .expect("Failed to execute caravan");
+        .expect("execute caravan");
 
-    // Command should exit with success or appropriate error (not crash)
-    assert!(output.status.code().is_some());
+    assert!(
+        !output.status.success(),
+        "non-interactive staging should fail closed at delete approval gate"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("destructive operations are blocked"),
+        "expected delete-approval gate failure, got: {stderr}"
+    );
 }
 
-/// Test that resume works after normal completion
-#[test]
-fn resume_works_after_normal_completion() {
-    let temp_dir = TempDir::new().unwrap();
-    let source_dir = temp_dir.path().join("source");
-    let dest_dir = temp_dir.path().join("dest");
-
-    create_test_files(&source_dir, 2, 1024);
-    // Create destination directory for capacity check
-    fs::create_dir_all(&dest_dir).unwrap();
-
-    let binary_path = build_caravan_binary();
-
-    // Run staging without --interactive - will fail at deletion approval
-    // but state should still be saved after copy/verification
-    let output1 = Command::new(&binary_path)
-        .args([
-            "staging",
-            "--source",
-            source_dir.to_str().unwrap(),
-            "--dest",
-            dest_dir.to_str().unwrap(),
-            "--batch-size",
-            "1MiB",
-        ])
-        .current_dir(&temp_dir)
-        .output()
-        .expect("Failed to execute caravan");
-
-    // In non-interactive mode, caravan should fail with error when deletion not approved
-    // This is expected behavior
-    if output1.status.success() {
-        eprintln!("Note: caravan staging succeeded (may have run with --interactive elsewhere)");
-    } else {
-        // Check that error is about destructive operations blocked
-        let stderr = String::from_utf8_lossy(&output1.stderr);
-        assert!(
-            stderr.contains("destructive operations are blocked"),
-            "Expected error about destructive operations blocked, got: {}",
-            stderr
-        );
-    }
-
-    // Run status to check state was saved - should work from same directory
-    let output2 = Command::new(&binary_path)
-        .args(["status"])
-        .current_dir(&temp_dir)
-        .output()
-        .expect("Failed to execute caravan status");
-
-    // Status should work
-    if !output2.status.success() {
-        eprintln!("Status command failed with status: {}", output2.status);
-        eprintln!(
-            "Status stderr: {}",
-            String::from_utf8_lossy(&output2.stderr)
-        );
-        eprintln!(
-            "Status stdout: {}",
-            String::from_utf8_lossy(&output2.stdout)
-        );
-    }
-    assert!(output2.status.success(), "caravan status command failed");
-    let stdout = String::from_utf8_lossy(&output2.stdout);
-    assert!(stdout.contains("Caravan Status"));
-    assert!(stdout.contains("Batches:"));
-}
-
-/// Test that state file is created during migration
 #[test]
 fn state_file_is_created_during_migration() {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("temp dir");
     let source_dir = temp_dir.path().join("source");
     let dest_dir = temp_dir.path().join("dest");
 
     create_test_files(&source_dir, 1, 1024);
-    // Create destination directory for capacity check
-    fs::create_dir_all(&dest_dir).unwrap();
+    fs::create_dir_all(&dest_dir).expect("create destination");
 
-    let binary_path = build_caravan_binary();
+    let binary_path = caravan_binary();
 
-    // Run with --max-files 0 to cause early exit (won't process files)
-    // This ensures we test state creation without completing migration
     let output = Command::new(&binary_path)
         .args([
             "staging",
             "--source",
-            source_dir.to_str().unwrap(),
+            source_dir.to_str().expect("utf8 source"),
             "--dest",
-            dest_dir.to_str().unwrap(),
+            dest_dir.to_str().expect("utf8 dest"),
             "--batch-size",
             "1MiB",
             "--max-files",
@@ -163,34 +177,99 @@ fn state_file_is_created_during_migration() {
         ])
         .current_dir(&temp_dir)
         .output()
-        .expect("Failed to execute caravan");
+        .expect("execute caravan");
 
-    // Should fail with validation error (max-files must be > 0)
-    assert!(!output.status.success());
+    assert!(!output.status.success(), "max-files=0 should be rejected");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("max-files must be greater than zero"));
 }
 
-/// Test that signal handler module compiles and can be tested
+#[cfg(unix)]
 #[test]
-fn signal_module_compilation_test() {
-    // This is a meta-test to ensure our signal module works
-    use caravan::signal::{check_shutdown, ShutdownFlag};
+fn staging_receives_sigint_and_exits_with_resume_checkpoint() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let source_dir = temp_dir.path().join("source");
+    let dest_dir = temp_dir.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create destination");
 
-    let flag = ShutdownFlag::new();
-    assert!(!flag.is_shutdown_requested());
+    // Large files + tiny buffered-copy size keeps copy phase active long enough for signal delivery.
+    create_test_files(&source_dir, 4, 16 * 1024 * 1024);
 
-    flag.request_shutdown();
-    assert!(flag.is_shutdown_requested());
+    let binary_path = caravan_binary();
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
 
-    let result = check_shutdown(&flag);
-    assert!(result.is_err());
-    match result {
-        Err(caravan::error::CaravanError::GracefulShutdown) => (),
-        _ => panic!("Expected GracefulShutdown error"),
-    }
+    let child = spawn_long_running_staging(&binary_path, &source_dir, &dest_dir, temp_dir.path());
 
-    flag.reset();
-    assert!(!flag.is_shutdown_requested());
-    assert!(check_shutdown(&flag).is_ok());
+    let _state_before_signal = wait_for_copy_activity(&state_path);
+    send_sigint(child.id());
+
+    let output = child.wait_with_output().expect("wait on staging child");
+    assert!(
+        !output.status.success(),
+        "process should exit non-zero after SIGINT-triggered graceful shutdown"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("graceful shutdown requested")
+            || stderr.contains("Shutdown requested. Finishing current operation"),
+        "expected graceful shutdown signal path in stderr, got: {stderr}"
+    );
+
+    let state_after = load_state(&state_path).expect("load state after SIGINT");
+    assert_eq!(
+        state_after.batches.len(),
+        4,
+        "checkpoint should keep all planned batches"
+    );
+    assert!(
+        progressed_batches(&state_after) >= 1,
+        "at least one batch should have persisted progress before shutdown"
+    );
+    assert!(
+        !state_after.batches.iter().all(|batch| batch.deleted),
+        "shutdown checkpoint should occur before full completion"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn resume_continues_after_sigint_checkpoint() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let source_dir = temp_dir.path().join("source");
+    let dest_dir = temp_dir.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create destination");
+    create_test_files(&source_dir, 4, 16 * 1024 * 1024);
+
+    let binary_path = caravan_binary();
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+
+    let child = spawn_long_running_staging(&binary_path, &source_dir, &dest_dir, temp_dir.path());
+    let _ = wait_for_copy_activity(&state_path);
+    send_sigint(child.id());
+    let _ = child.wait_with_output().expect("wait on interrupted staging");
+
+    let state_before_resume = load_state(&state_path).expect("load pre-resume state");
+    let progressed_before = progressed_batches(&state_before_resume);
+    assert!(
+        progressed_before < state_before_resume.batches.len(),
+        "interrupt happened too late to test resume progression"
+    );
+
+    let output = Command::new(&binary_path)
+        .args(["resume", "--state", state_path.to_str().expect("utf8 state")])
+        .current_dir(temp_dir.path())
+        .output()
+        .expect("execute resume");
+
+    assert!(output.status.success(), "resume should complete successfully");
+
+    let state_after_resume = load_state(&state_path).expect("load post-resume state");
+    let progressed_after = progressed_batches(&state_after_resume);
+    assert!(
+        progressed_after > progressed_before,
+        "resume should advance beyond interrupted checkpoint (before={progressed_before}, after={progressed_after})"
+    );
 }
