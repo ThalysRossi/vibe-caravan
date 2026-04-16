@@ -48,7 +48,7 @@ fn resume_handles_missing_batch_gracefully() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Could not locate batch batch-000999 in source directory"),
+        stderr.contains("missing immutable batch manifest for batch-000999"),
         "expected explicit missing-batch error, got: {stderr}"
     );
 }

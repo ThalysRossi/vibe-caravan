@@ -143,15 +143,14 @@ pub fn load_state_for_resume(path: &Path) -> Result<MigrationState, CaravanError
     }
 
     state_store::load_state(path).map_err(|err| {
-        let msg = err.to_string();
-        let class = if msg.contains("failed to read state file") {
-            FailureClass::IoError
-        } else {
-            FailureClass::StateCorrupted
+        let class = match &err {
+            CaravanError::StateRead { .. } => FailureClass::IoError,
+            CaravanError::StateParse { .. } => FailureClass::StateCorrupted,
+            _ => FailureClass::StateCorrupted,
         };
         CaravanError::Resume {
             class: class.as_str().to_string(),
-            detail: msg,
+            detail: err.to_string(),
         }
     })
 }

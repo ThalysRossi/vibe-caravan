@@ -10,7 +10,5 @@ pub(crate) fn persist_state_both_locations(
     secondary_path: &Path,
     state: &MigrationState,
 ) -> Result<(), CaravanError> {
-    state_store::persist_state(primary_path, state)?;
-    state_store::persist_state(secondary_path, state)?;
-    Ok(())
+    state_store::persist_state_with_compat_backup(primary_path, secondary_path, state)
 }

@@ -80,6 +80,10 @@ pub(super) fn planned_batch_state(batch_id: &str) -> BatchState {
 
 pub(super) fn seed_state_batches(state: &mut MigrationState, plan: &PlanningSnapshot) {
     for batch in &plan.batches {
+        if state.planned_batch(&batch.id).is_none() {
+            state.upsert_planned_batch(crate::models::state::PlannedBatch::from_batch(batch));
+        }
+
         if state.batch(&batch.id).is_none() {
             state.upsert_batch(planned_batch_state(&batch.id));
         }

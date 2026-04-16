@@ -5,6 +5,7 @@ use serde::Serialize;
 use crate::config::{OutputFormat, TransferConfig};
 use crate::error::CaravanError;
 use crate::models::state::{BatchPhase, MigrationState};
+use crate::plan::PlanOptions;
 use crate::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
 use crate::{plan, resume as resume_ops, snapshot, state_store, transfer};
 
@@ -49,12 +50,12 @@ fn build_failed_batch_inspection_report(
 
     let mut failed_batches = Vec::with_capacity(failed_batch_ids.len());
     for batch_id in failed_batch_ids {
-        let batch = plan::load_batch_definition(
-            &config.source,
-            &batch_id,
-            state.batch_size_bytes,
-            state.max_files,
-        )?;
+        let batch = state.materialize_planned_batch(&batch_id).ok_or_else(|| {
+            CaravanError::StateCorrupt(format!(
+                "missing immutable batch manifest for {}; cannot inspect failed batch safely",
+                batch_id
+            ))
+        })?;
         let recon = resume_ops::reconcile_batch_destination(&batch, &config.dest);
         failed_batches.push(FailedBatchInspection {
             batch_id,
@@ -68,6 +69,29 @@ fn build_failed_batch_inspection_report(
         failed_batch_count: failed_batches.len(),
         failed_batches,
     })
+}
+
+fn ensure_resume_manifest_is_consistent(
+    state: &mut MigrationState,
+    config: &TransferConfig,
+    state_path: &Path,
+) -> Result<(), CaravanError> {
+    let plan_opts = PlanOptions {
+        batch_size_bytes: state.batch_size_bytes,
+        max_files: state.max_files.map(|value| value as usize),
+    };
+    let snapshot = plan::build_plan(&config.source, &plan_opts)?;
+
+    if state.planned_batches.is_empty() {
+        eprintln!(
+            "[WARNING] State file has no immutable batch manifest; seeding from current source plan."
+        );
+        state.planned_batches = plan::planned_batches_from_snapshot(&snapshot);
+        state_store::persist_state(state_path, state)?;
+        return Ok(());
+    }
+
+    plan::ensure_manifest_matches_snapshot(&state.planned_batches, &snapshot)
 }
 
 fn print_failed_batch_inspection_human(report: &FailedBatchInspectionReport) {
@@ -115,6 +139,7 @@ pub(super) fn execute_resume(
 
     let mut state = resume_ops::resume_run(state_path)?;
     let config = transfer_config_from_state(&state, recover_failed)?;
+    ensure_resume_manifest_is_consistent(&mut state, &config, state_path)?;
 
     if inspect_failed {
         let report = build_failed_batch_inspection_report(&state, &config)?;

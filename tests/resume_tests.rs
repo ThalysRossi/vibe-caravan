@@ -363,6 +363,21 @@ fn resume_with_corrupted_state_fails_as_corrupted() {
 }
 
 #[test]
+fn resume_with_unreadable_state_path_is_classified_as_io_error() {
+    let tmp = TempDir::new().expect("tmp");
+    let path = tmp.path().join("state-dir");
+    fs::create_dir_all(&path).expect("create state directory path");
+
+    let err = load_state_for_resume(&path).expect_err("directory path should fail state read");
+    match err {
+        CaravanError::Resume { class, .. } => {
+            assert_eq!(class, FailureClass::IoError.as_str());
+        }
+        _ => panic!("expected io_error classification"),
+    }
+}
+
+#[test]
 fn resume_after_partial_batch_does_not_require_state_mutation_for_conflict() {
     let batch = sample_batch();
     let state = BatchState {

@@ -1,3 +1,4 @@
+pub mod atomic_write;
 pub mod capacity;
 pub mod cleanup;
 pub mod cli;

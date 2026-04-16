@@ -3,7 +3,6 @@ use std::path::Path;
 use crate::cleanup;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
-use crate::plan;
 use crate::prompt;
 use crate::signal::{check_shutdown, ShutdownFlag};
 
@@ -84,12 +83,12 @@ fn delete_batches_by_id(
                 continue;
             }
 
-            let batch = plan::load_batch_definition(
-                source_root,
-                batch_id,
-                state.batch_size_bytes,
-                state.max_files,
-            )?;
+            let batch = state.materialize_planned_batch(batch_id).ok_or_else(|| {
+                CaravanError::StateCorrupt(format!(
+                    "missing immutable batch manifest for {}; cannot continue destructive step",
+                    batch_id
+                ))
+            })?;
             cleanup::cleanup_batch(&batch, source_root, state, delete_context)?;
             persist_state(state)?;
         }

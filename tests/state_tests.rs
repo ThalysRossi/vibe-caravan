@@ -1,3 +1,4 @@
+use caravan::error::CaravanError;
 use caravan::models::state::{BatchPhase, BatchState, JournalEntry, MigrationState};
 use caravan::state_store::{load_state, persist_state};
 use tempfile::TempDir;
@@ -12,6 +13,7 @@ fn migration_state_new_sets_expected_defaults() {
     assert_eq!(state.snapshot_every, None);
     assert_eq!(state.copy_buffer_size, 16 * 1024 * 1024);
     assert_eq!(state.buffered_copy_threshold, 8 * 1024 * 1024);
+    assert!(state.planned_batches.is_empty());
     assert_eq!(state.last_successful_snapshot_name, None);
     assert!(state.batches.is_empty());
     assert!(state.journal.is_empty());
@@ -92,6 +94,7 @@ fn load_legacy_state_defaults_new_resume_fields() {
     assert_eq!(loaded.snapshot_every, None);
     assert_eq!(loaded.copy_buffer_size, 16 * 1024 * 1024);
     assert_eq!(loaded.buffered_copy_threshold, 8 * 1024 * 1024);
+    assert!(loaded.planned_batches.is_empty());
 }
 
 #[test]
@@ -99,7 +102,10 @@ fn load_state_errors_for_missing_file() {
     let tmp = TempDir::new().expect("temp dir");
     let missing = tmp.path().join("nope.json");
     let err = load_state(&missing).expect_err("load should fail");
-    assert!(err.to_string().contains("failed to read state file"));
+    match err {
+        CaravanError::StateRead { .. } => {}
+        _ => panic!("expected CaravanError::StateRead"),
+    }
 }
 
 #[test]

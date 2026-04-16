@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::atomic_write;
 use crate::error::CaravanError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,25 +64,11 @@ impl MigrationRegistry {
     }
 
     pub fn save(&self, registry_path: &Path) -> Result<(), CaravanError> {
-        if let Some(parent) = registry_path.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                CaravanError::InvalidArguments(format!(
-                    "failed to create registry directory {}: {err}",
-                    parent.display()
-                ))
-            })?;
-        }
-
         let content = serde_json::to_string_pretty(self).map_err(|err| {
             CaravanError::InvalidArguments(format!("failed to serialize migration registry: {err}"))
         })?;
 
-        fs::write(registry_path, content).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "failed to write migration registry {}: {err}",
-                registry_path.display()
-            ))
-        })
+        atomic_write::write_bytes(registry_path, content.as_bytes(), "migration registry")
     }
 
     pub fn find_by_id(&self, id: u64) -> Option<&MigrationEntry> {

@@ -27,6 +27,10 @@ use setup::{
 };
 use verify_phase::run_verify_phase;
 
+fn state_has_manifest(state: &MigrationState) -> bool {
+    !state.planned_batches.is_empty()
+}
+
 pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     let shutdown_flag = ShutdownFlag::new();
     install_signal_handlers(&shutdown_flag)?;
@@ -59,6 +63,15 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
         max_files: config.max_files.map(|v| v as usize),
     };
     let plan = plan::build_plan(&config.source, &plan_opts)?;
+
+    if state_has_manifest(&state) {
+        plan::ensure_manifest_matches_snapshot(&state.planned_batches, &plan)?;
+    } else {
+        eprintln!(
+            "[WARNING] State file has no immutable batch manifest; seeding from current source plan."
+        );
+        state.planned_batches = plan::planned_batches_from_snapshot(&plan);
+    }
 
     print_plan_summary(
         plan.batches.len(),
