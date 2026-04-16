@@ -1,6 +1,4 @@
 use std::fs;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 use assert_cmd::Command;
 use tempfile::TempDir;
@@ -298,7 +296,6 @@ fn transfer_rerun_from_copy_started_retries_copy_without_conflict_skip() {
     assert!(batch.verification_passed);
 }
 
-#[cfg(unix)]
 #[test]
 fn approved_for_delete_batches_are_not_recopied_on_transfer_rerun() {
     let tmp = TempDir::new().expect("temp dir");
@@ -327,28 +324,6 @@ fn approved_for_delete_batches_are_not_recopied_on_transfer_rerun() {
     let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
     persist_state(&state_path, &state).expect("persist state");
 
-    // If rerun tries to copy this approved batch, it will fail.
-    fs::set_permissions(
-        dest_dir.join("file1.txt"),
-        fs::Permissions::from_mode(0o444),
-    )
-    .expect("set file readonly");
-    fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o555)).expect("set dir readonly");
-    if fs::write(dest_dir.join("permission-probe.tmp"), "x").is_ok() {
-        let _ = fs::remove_file(dest_dir.join("permission-probe.tmp"));
-        fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o755))
-            .expect("restore dir permissions");
-        fs::set_permissions(
-            dest_dir.join("file1.txt"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .expect("restore file permissions");
-        eprintln!(
-            "skipping permission-dependent assertion: destination remains writable in this environment"
-        );
-        return;
-    }
-
     let binary_path = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(&binary_path)
         .args([
@@ -364,18 +339,18 @@ fn approved_for_delete_batches_are_not_recopied_on_transfer_rerun() {
         .output()
         .expect("execute caravan");
 
-    // Restore permissions so TempDir cleanup succeeds.
-    fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o755))
-        .expect("restore dir permissions");
-    fs::set_permissions(
-        dest_dir.join("file1.txt"),
-        fs::Permissions::from_mode(0o644),
-    )
-    .expect("restore file permissions");
-
     assert!(
         output.status.success(),
         "approved-for-delete batches should skip copy and continue deletion"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Skipping batch-000001: copy already completed (phase: ApprovedForDelete)"),
+        "rerun should explicitly skip copy for approved batch, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("=== Copying batch-000001"),
+        "rerun should not enter copy handler for approved batch, got: {stdout}"
     );
     assert!(
         !source_dir.join("file1.txt").exists(),
@@ -383,7 +358,6 @@ fn approved_for_delete_batches_are_not_recopied_on_transfer_rerun() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn approved_for_delete_batches_are_not_reverified_on_transfer_rerun() {
     let tmp = TempDir::new().expect("temp dir");
@@ -412,24 +386,6 @@ fn approved_for_delete_batches_are_not_reverified_on_transfer_rerun() {
     let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
     persist_state(&state_path, &state).expect("persist state");
 
-    // If rerun tries to verify this approved batch again, opening source will fail.
-    fs::set_permissions(
-        source_dir.join("file1.txt"),
-        fs::Permissions::from_mode(0o000),
-    )
-    .expect("set source unreadable");
-    if fs::read_to_string(source_dir.join("file1.txt")).is_ok() {
-        fs::set_permissions(
-            source_dir.join("file1.txt"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .expect("restore source permissions");
-        eprintln!(
-            "skipping permission-dependent assertion: source remains readable in this environment"
-        );
-        return;
-    }
-
     let binary_path = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(&binary_path)
         .args([
@@ -445,18 +401,20 @@ fn approved_for_delete_batches_are_not_reverified_on_transfer_rerun() {
         .output()
         .expect("execute caravan");
 
-    // Restore permissions if file still exists (in case command failed before delete).
-    if source_dir.join("file1.txt").exists() {
-        fs::set_permissions(
-            source_dir.join("file1.txt"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .expect("restore source permissions");
-    }
-
     assert!(
         output.status.success(),
         "approved-for-delete batches should skip verify and continue deletion"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(
+            "Skipping batch-000001: verification already completed (phase: ApprovedForDelete)"
+        ),
+        "rerun should explicitly skip verification for approved batch, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("=== Verifying batch-000001"),
+        "rerun should not enter verify handler for approved batch, got: {stdout}"
     );
     assert!(
         !source_dir.join("file1.txt").exists(),

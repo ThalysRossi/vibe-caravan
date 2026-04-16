@@ -279,63 +279,38 @@ fn files_at_root_level_need_no_directory_creation() {
 
 #[test]
 fn error_message_includes_file_path_when_directory_creation_fails() {
-    // Skip on Windows due to complex permission handling
-    #[cfg(windows)]
-    {
-        return;
-    }
+    let src = TempDir::new().expect("source temp dir");
+    let dst = TempDir::new().expect("destination temp dir");
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
+    create_file(src.path(), "subdir/file.txt", b"content");
 
-        let src = TempDir::new().expect("source temp dir");
-        let dst = TempDir::new().expect("destination temp dir");
+    let plan = build_plan(
+        src.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+    let batch = &plan.batches[0];
 
-        // Create a file that will require directory creation
-        create_file(src.path(), "subdir/file.txt", b"content");
+    let blocked_destination_root = dst.path().join("blocked-root");
+    fs::write(&blocked_destination_root, b"not a directory")
+        .expect("create file that blocks destination root");
 
-        let plan = build_plan(
-            src.path(),
-            &PlanOptions {
-                batch_size_bytes: 1024,
-                max_files: Some(10),
-            },
-        )
-        .expect("planning should succeed");
-        let batch = &plan.batches[0];
+    let err = transfer_batch(
+        batch,
+        src.path(),
+        &blocked_destination_root,
+        &LocalFsCopyBackend::new(),
+    )
+    .expect_err("copy should fail when destination root is not a directory");
 
-        // Make destination read-only to cause permission error
-        let mut perms = fs::metadata(dst.path()).unwrap().permissions();
-        perms.set_mode(0o555); // Read and execute only, no write
-        fs::set_permissions(dst.path(), perms).unwrap();
-        let permission_probe = dst.path().join("permission-probe.tmp");
-        if fs::write(&permission_probe, b"x").is_ok() {
-            let _ = fs::remove_file(&permission_probe);
-            let mut restore = fs::metadata(dst.path()).unwrap().permissions();
-            restore.set_mode(0o755);
-            fs::set_permissions(dst.path(), restore).unwrap();
-            eprintln!(
-                "skipping permission-dependent assertion: destination remains writable in this environment"
-            );
-            return;
-        }
-
-        let err = transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
-            .expect_err("copy should fail due to permission error");
-
-        // Error message should include the file path
-        let err_str = err.to_string();
-        assert!(
-            err_str.contains("subdir/file.txt"),
-            "error should include failing relative file path, got: {err_str}"
-        );
-
-        // Restore permissions for cleanup
-        let mut perms = fs::metadata(dst.path()).unwrap().permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(dst.path(), perms).unwrap();
-    }
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("subdir/file.txt"),
+        "error should include failing relative file path, got: {err_str}"
+    );
 }
 
 #[derive(Debug, Default)]

@@ -6,9 +6,6 @@ use tempfile::TempDir;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::state_store::{load_state, persist_state};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 #[test]
 fn resume_aborts_when_failed_batch_requires_operator_review() {
     let tmp = TempDir::new().expect("temp dir");
@@ -117,7 +114,6 @@ fn resume_aborts_when_state_contains_failed_verification_batch() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn resume_does_not_recopy_copy_started_batch_when_destination_is_complete() {
     let tmp = TempDir::new().expect("temp dir");
@@ -146,25 +142,6 @@ fn resume_does_not_recopy_copy_started_batch_when_destination_is_complete() {
     let state_path = tmp.path().join("resume-state.json");
     persist_state(&state_path, &state).expect("persist state");
 
-    let file_perm = fs::Permissions::from_mode(0o444);
-    fs::set_permissions(dest_dir.join("file1.txt"), file_perm).expect("set file readonly");
-    let dir_perm = fs::Permissions::from_mode(0o555);
-    fs::set_permissions(&dest_dir, dir_perm).expect("set dir readonly");
-    if fs::write(dest_dir.join("permission-probe.tmp"), "x").is_ok() {
-        let _ = fs::remove_file(dest_dir.join("permission-probe.tmp"));
-        fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o755))
-            .expect("restore dir permissions");
-        fs::set_permissions(
-            dest_dir.join("file1.txt"),
-            fs::Permissions::from_mode(0o644),
-        )
-        .expect("restore file permissions");
-        eprintln!(
-            "skipping permission-dependent assertion: destination remains writable in this environment"
-        );
-        return;
-    }
-
     let binary_path = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(&binary_path)
         .args([
@@ -176,25 +153,27 @@ fn resume_does_not_recopy_copy_started_batch_when_destination_is_complete() {
         .output()
         .expect("execute caravan");
 
-    // Restore permissions so TempDir cleanup succeeds.
-    fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o755))
-        .expect("restore dir permissions");
-    fs::set_permissions(
-        dest_dir.join("file1.txt"),
-        fs::Permissions::from_mode(0o644),
-    )
-    .expect("restore file permissions");
-
     assert!(
         output.status.success(),
         "resume should verify an already-complete CopyStarted batch without recopying"
     );
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !stderr.contains("failed to copy"),
-        "resume should not attempt a copy when destination reconciliation is complete: {stderr}"
+        stdout.contains("Verifying batch-000001"),
+        "resume should verify batch-000001, got: {stdout}"
     );
+    assert!(
+        !stdout.contains("=== Processing batch-000001"),
+        "resume should skip copy step when destination already matches, got: {stdout}"
+    );
+
+    let state_after = load_state(&state_path).expect("load state");
+    let batch = state_after
+        .batch("batch-000001")
+        .expect("batch should remain present");
+    assert_eq!(batch.phase, BatchPhase::VerifyCompleted);
+    assert!(batch.verification_passed);
 }
 
 #[test]

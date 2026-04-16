@@ -1,6 +1,8 @@
+use std::fs;
+
+use assert_cmd::Command;
 use caravan::models::state::{BatchPhase, BatchState, MigrationPhase, MigrationState};
 use caravan::state_store::{load_state, persist_state};
-use std::fs;
 use tempfile::TempDir;
 
 #[test]
@@ -11,34 +13,26 @@ fn resume_with_copy_completed_batches_should_verify_not_copy() {
     fs::create_dir_all(&source_dir).expect("create source");
     fs::create_dir_all(&dest_dir).expect("create dest");
 
-    // Create test files that will be in batches
-    fs::write(source_dir.join("file1.txt"), "identical content").expect("create file1");
-    fs::write(source_dir.join("file2.txt"), "identical content").expect("create file2");
+    fs::write(source_dir.join("file1.txt"), "aaaa").expect("create source file1");
+    fs::write(source_dir.join("file2.txt"), "bbbb").expect("create source file2");
+    fs::write(dest_dir.join("file1.txt"), "aaaa").expect("create dest file1");
+    fs::write(dest_dir.join("file2.txt"), "bbbb").expect("create dest file2");
 
-    // Copy files to destination (simulating already copied batches)
-    fs::write(dest_dir.join("file1.txt"), "identical content").expect("copy file1");
-    fs::write(dest_dir.join("file2.txt"), "identical content").expect("copy file2");
-
-    // Create state with 2 batches already CopyCompleted
     let mut state = MigrationState::new(
         "staging",
         &source_dir.to_string_lossy(),
         &dest_dir.to_string_lossy(),
     );
-    state.batch_size_bytes = 1024;
-    state.migration_phase = MigrationPhase::Copying; // Still in copying phase
-
-    // Batch 1: CopyCompleted, not verified
-    state.batches.push(BatchState {
+    state.batch_size_bytes = 4;
+    state.migration_phase = MigrationPhase::Copying;
+    state.upsert_batch(BatchState {
         batch_id: "batch-000001".to_string(),
         phase: BatchPhase::CopyCompleted,
         verification_passed: false,
         approved_for_delete: false,
         deleted: false,
     });
-
-    // Batch 2: CopyCompleted, not verified
-    state.batches.push(BatchState {
+    state.upsert_batch(BatchState {
         batch_id: "batch-000002".to_string(),
         phase: BatchPhase::CopyCompleted,
         verification_passed: false,
@@ -46,59 +40,56 @@ fn resume_with_copy_completed_batches_should_verify_not_copy() {
         deleted: false,
     });
 
-    // Save state
-    let state_dir = source_dir.join(".caravan");
-    fs::create_dir_all(&state_dir).expect("create .caravan");
-    let state_path = state_dir.join("state.json");
+    let state_path = tmp.path().join("resume-state.json");
     persist_state(&state_path, &state).expect("persist state");
 
-    // Load state to verify it was saved correctly
-    let loaded_state = load_state(&state_path).expect("load state");
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
 
-    // Verify state was saved correctly
-    assert_eq!(loaded_state.batches.len(), 2);
-    assert_eq!(loaded_state.batches[0].batch_id, "batch-000001");
-    assert_eq!(loaded_state.batches[0].phase, BatchPhase::CopyCompleted);
-    assert!(!loaded_state.batches[0].verification_passed);
-    assert_eq!(loaded_state.batches[1].batch_id, "batch-000002");
-    assert_eq!(loaded_state.batches[1].phase, BatchPhase::CopyCompleted);
-    assert!(!loaded_state.batches[1].verification_passed);
+    assert!(
+        output.status.success(),
+        "resume should verify CopyCompleted batches without recopying"
+    );
 
-    // Now test the resume planning logic
-    use caravan::models::batch::Batch;
-    use caravan::resume::{plan_resume_step, ReconciliationResult};
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Verifying batch-000001"),
+        "resume should verify batch-000001, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Verifying batch-000002"),
+        "resume should verify batch-000002, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("=== Processing batch-000001"),
+        "resume should skip copy step for batch-000001, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("=== Processing batch-000002"),
+        "resume should skip copy step for batch-000002, got: {stdout}"
+    );
 
-    let recon = ReconciliationResult {
-        all_destination_files_ready: true,
-        missing_in_destination: vec![],
-        size_mismatches: vec![],
-    };
-
-    let dummy_batch = Batch {
-        id: "batch-000001".to_string(),
-        files: vec![],
-        total_bytes: 0,
-        file_count: 0,
-    };
-
-    let batch1_state = loaded_state.batch("batch-000001").unwrap();
-    let step = plan_resume_step(batch1_state, &recon, &dummy_batch);
-
-    // Should plan verification, not copying
-    match step {
-        caravan::resume::ResumeStepPlan::VerifyBatch => {
-            // Correct!
-        }
-        caravan::resume::ResumeStepPlan::CopyBatch => {
-            panic!("CopyCompleted batch with ready files should plan VerifyBatch, not CopyBatch");
-        }
-        other => {
-            panic!(
-                "Unexpected resume step for CopyCompleted batch: {:?}",
-                other
-            );
-        }
-    }
+    let state_after = load_state(&state_path).expect("load state after resume");
+    let batch1 = state_after
+        .batch("batch-000001")
+        .expect("batch-000001 should exist");
+    let batch2 = state_after
+        .batch("batch-000002")
+        .expect("batch-000002 should exist");
+    assert_eq!(batch1.phase, BatchPhase::VerifyCompleted);
+    assert!(batch1.verification_passed);
+    assert_eq!(batch2.phase, BatchPhase::VerifyCompleted);
+    assert!(batch2.verification_passed);
+    assert!(source_dir.join("file1.txt").exists());
+    assert!(source_dir.join("file2.txt").exists());
 }
 
 #[test]
@@ -109,16 +100,16 @@ fn resume_with_copy_completed_but_missing_files_should_require_review() {
     fs::create_dir_all(&source_dir).expect("create source");
     fs::create_dir_all(&dest_dir).expect("create dest");
 
-    // Create state with CopyCompleted batch
+    fs::write(source_dir.join("file1.txt"), "aaaa").expect("create source file");
+
     let mut state = MigrationState::new(
         "staging",
         &source_dir.to_string_lossy(),
         &dest_dir.to_string_lossy(),
     );
-    state.batch_size_bytes = 1024;
+    state.batch_size_bytes = 4;
     state.migration_phase = MigrationPhase::Copying;
-
-    state.batches.push(BatchState {
+    state.upsert_batch(BatchState {
         batch_id: "batch-000001".to_string(),
         phase: BatchPhase::CopyCompleted,
         verification_passed: false,
@@ -126,36 +117,39 @@ fn resume_with_copy_completed_but_missing_files_should_require_review() {
         deleted: false,
     });
 
-    // Test resume planning with missing files
-    use caravan::models::batch::Batch;
-    use caravan::resume::{plan_resume_step, ReconciliationResult};
+    let state_path = tmp.path().join("resume-state.json");
+    persist_state(&state_path, &state).expect("persist state");
 
-    let recon = ReconciliationResult {
-        all_destination_files_ready: false,
-        missing_in_destination: vec!["file1.txt".to_string()],
-        size_mismatches: vec![],
-    };
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
 
-    let dummy_batch = Batch {
-        id: "batch-000001".to_string(),
-        files: vec![],
-        total_bytes: 0,
-        file_count: 0,
-    };
+    assert!(
+        !output.status.success(),
+        "resume should fail closed when CopyCompleted state diverges from destination"
+    );
 
-    let batch_state = state.batch("batch-000001").unwrap();
-    let step = plan_resume_step(batch_state, &recon, &dummy_batch);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("state says copy completed but destination is incomplete"),
+        "resume should include reconciliation reason, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("file1.txt"),
+        "resume should include missing relative file path, got: {stderr}"
+    );
 
-    // Should require operator review when state says copied but files are missing
-    match step {
-        caravan::resume::ResumeStepPlan::ConflictOperatorReview { reason: _ } => {
-            // Correct - inconsistency between state and filesystem
-        }
-        other => {
-            panic!(
-                "CopyCompleted batch with missing files should require operator review, not {:?}",
-                other
-            );
-        }
-    }
+    let state_after = load_state(&state_path).expect("load state after failed resume");
+    let batch = state_after
+        .batch("batch-000001")
+        .expect("batch-000001 should exist");
+    assert_eq!(batch.phase, BatchPhase::CopyCompleted);
+    assert!(!batch.verification_passed);
 }

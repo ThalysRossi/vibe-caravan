@@ -1,6 +1,8 @@
-use caravan::models::state::{BatchPhase, BatchState, MigrationPhase, MigrationState};
-use caravan::state_store::persist_state;
 use std::fs;
+
+use assert_cmd::Command;
+use caravan::models::state::{BatchPhase, BatchState, MigrationPhase, MigrationState};
+use caravan::state_store::{load_state, persist_state};
 use tempfile::TempDir;
 
 #[test]
@@ -11,40 +13,35 @@ fn resume_skips_already_copied_batches_and_verifies() {
     fs::create_dir_all(&source_dir).expect("create source");
     fs::create_dir_all(&dest_dir).expect("create dest");
 
-    // Create some test files
-    fs::write(source_dir.join("file1.txt"), "content1").expect("create file1");
-    fs::write(source_dir.join("file2.txt"), "content2").expect("create file2");
-    fs::write(source_dir.join("file3.txt"), "content3").expect("create file3");
+    fs::write(source_dir.join("file1.txt"), "aaaa").expect("create source file1");
+    fs::write(source_dir.join("file2.txt"), "bbbb").expect("create source file2");
+    fs::write(source_dir.join("file3.txt"), "cccc").expect("create source file3");
 
-    // Create state with partial copy completion
+    fs::write(dest_dir.join("file1.txt"), "aaaa").expect("create destination file1");
+    fs::write(dest_dir.join("file2.txt"), "bbbb").expect("create destination file2");
+
     let mut state = MigrationState::new(
         "staging",
         &source_dir.to_string_lossy(),
         &dest_dir.to_string_lossy(),
     );
-    state.batch_size_bytes = 1024;
+    state.batch_size_bytes = 4;
     state.migration_phase = MigrationPhase::Copying;
-
-    // Batch 1: CopyCompleted, not verified
-    state.batches.push(BatchState {
+    state.upsert_batch(BatchState {
         batch_id: "batch-000001".to_string(),
         phase: BatchPhase::CopyCompleted,
         verification_passed: false,
         approved_for_delete: false,
         deleted: false,
     });
-
-    // Batch 2: CopyCompleted, not verified
-    state.batches.push(BatchState {
+    state.upsert_batch(BatchState {
         batch_id: "batch-000002".to_string(),
         phase: BatchPhase::CopyCompleted,
         verification_passed: false,
         approved_for_delete: false,
         deleted: false,
     });
-
-    // Batch 3: Planned (not started)
-    state.batches.push(BatchState {
+    state.upsert_batch(BatchState {
         batch_id: "batch-000003".to_string(),
         phase: BatchPhase::Planned,
         verification_passed: false,
@@ -52,82 +49,62 @@ fn resume_skips_already_copied_batches_and_verifies() {
         deleted: false,
     });
 
-    // Create state directory and save state
-    let state_dir = tmp.path().join(".caravan");
-    fs::create_dir_all(&state_dir).expect("create .caravan");
-    let state_path = state_dir.join("state.json");
+    let state_path = tmp.path().join("resume-state.json");
     persist_state(&state_path, &state).expect("persist state");
 
-    // Note: This test would need to mock the actual copy/verify operations
-    // For now, we'll test the resume logic indirectly
-    // The key assertion: resume should NOT copy batch-000001 or batch-000002
-    // since they're already CopyCompleted
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
 
-    // Test the plan_resume_step logic directly
-    use caravan::models::batch::Batch;
-    use caravan::resume::{plan_resume_step, ReconciliationResult};
+    assert!(
+        output.status.success(),
+        "resume should complete when pre-copied batches are valid"
+    );
 
-    let recon = ReconciliationResult {
-        all_destination_files_ready: true,
-        missing_in_destination: vec![],
-        size_mismatches: vec![],
-    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Verifying batch-000001"),
+        "resume should verify batch-000001, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("Verifying batch-000002"),
+        "resume should verify batch-000002, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("=== Processing batch-000003"),
+        "resume should process copy for planned batch-000003, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("=== Processing batch-000001"),
+        "resume should not recopy batch-000001, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains("=== Processing batch-000002"),
+        "resume should not recopy batch-000002, got: {stdout}"
+    );
 
-    let dummy_batch = Batch {
-        id: "dummy".to_string(),
-        files: vec![],
-        total_bytes: 0,
-        file_count: 0,
-    };
-
-    // Test batch 1 (CopyCompleted) -> should plan VerifyBatch
-    let batch1_state = state.batch("batch-000001").unwrap();
-    let step1 = plan_resume_step(batch1_state, &recon, &dummy_batch);
-    match step1 {
-        caravan::resume::ResumeStepPlan::VerifyBatch => {
-            // Good, should verify not copy
-        }
-        caravan::resume::ResumeStepPlan::CopyBatch => {
-            panic!("Batch with CopyCompleted phase should plan VerifyBatch, not CopyBatch");
-        }
-        other => {
-            panic!("Unexpected resume step: {:?}", other);
-        }
+    let state_after = load_state(&state_path).expect("load state after resume");
+    for batch_id in ["batch-000001", "batch-000002", "batch-000003"] {
+        let batch = state_after.batch(batch_id).expect("batch should exist");
+        assert_eq!(batch.phase, BatchPhase::VerifyCompleted);
+        assert!(
+            batch.verification_passed,
+            "{batch_id} should be verified after resume"
+        );
     }
 
-    // Test batch 3 (Planned) -> should plan CopyBatch
-    let batch3_state = state.batch("batch-000003").unwrap();
-    let step3 = plan_resume_step(batch3_state, &recon, &dummy_batch);
-    match step3 {
-        caravan::resume::ResumeStepPlan::CopyBatch => {
-            // Good, should copy
-        }
-        other => {
-            panic!(
-                "Batch with Planned phase should plan CopyBatch, not {:?}",
-                other
-            );
-        }
-    }
-
-    // Also test that CopyStarted with ready files -> VerifyBatch
-    let copy_started_state = BatchState {
-        batch_id: "test".to_string(),
-        phase: BatchPhase::CopyStarted,
-        verification_passed: false,
-        approved_for_delete: false,
-        deleted: false,
-    };
-    let step_copy_started = plan_resume_step(&copy_started_state, &recon, &dummy_batch);
-    match step_copy_started {
-        caravan::resume::ResumeStepPlan::VerifyBatch => {
-            // Good
-        }
-        other => {
-            panic!(
-                "CopyStarted with ready files should plan VerifyBatch, not {:?}",
-                other
-            );
-        }
-    }
+    assert_eq!(
+        fs::read_to_string(dest_dir.join("file3.txt")).expect("planned batch file should exist"),
+        "cccc"
+    );
+    assert!(source_dir.join("file1.txt").exists());
+    assert!(source_dir.join("file2.txt").exists());
+    assert!(source_dir.join("file3.txt").exists());
 }
