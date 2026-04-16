@@ -1,5 +1,5 @@
 use caravan::cli::parse_cli_from;
-use caravan::config::{Config, CopyStrategy, OutputFormat, VerificationMode};
+use caravan::config::{Config, CopyStrategy, OutputFormat};
 
 #[test]
 fn missing_required_arguments_are_rejected() {
@@ -170,8 +170,6 @@ fn parsed_configuration_is_typed_and_deterministic() {
         "/dst",
         "--batch-size",
         "2GiB",
-        "--verification",
-        "strict",
         "--snapshot-every",
         "2",
     ])
@@ -180,7 +178,6 @@ fn parsed_configuration_is_typed_and_deterministic() {
     match parsed {
         Config::Migrate(cfg) => {
             assert_eq!(cfg.batch_size_bytes, 2 * 1024 * 1024 * 1024);
-            assert_eq!(cfg.verification, VerificationMode::Strict);
             assert_eq!(cfg.snapshot_every, Some(2));
             assert_eq!(cfg.log_level, "debug");
         }
@@ -444,4 +441,22 @@ fn snapshot_dir_requires_snapshot_every() {
     assert!(err
         .to_string()
         .contains("snapshot-dir requires snapshot-every"));
+}
+
+#[test]
+fn verification_flag_is_rejected_for_transfer_commands() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--verification",
+        "strict",
+    ]);
+
+    assert!(result.is_err());
 }

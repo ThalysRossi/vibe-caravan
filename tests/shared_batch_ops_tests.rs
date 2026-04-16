@@ -8,10 +8,6 @@ use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::transfer::LocalFsCopyBackend;
 use tempfile::TempDir;
 
-mod config {
-    pub use caravan::config::*;
-}
-
 mod error {
     pub use caravan::error::*;
 }
@@ -46,7 +42,6 @@ mod verify {
 mod batch_ops;
 
 use batch_ops::{copy_batch_with_state_updates, verify_batch_with_state_updates, CopyBatchOp};
-use config::VerificationMode;
 
 fn single_file_batch(batch_id: &str, rel_path: &str, size_bytes: u64) -> Batch {
     Batch {
@@ -226,7 +221,6 @@ fn verify_batch_marks_batch_verified_on_success() {
         &batch,
         src.path(),
         dst.path(),
-        &VerificationMode::Digest,
         &mut state,
         &mut persist,
         &|batch_id| CaravanError::InvalidArguments(format!("missing state for {batch_id}")),
@@ -258,7 +252,6 @@ fn verify_batch_returns_error_and_records_failed_verification() {
         &batch,
         src.path(),
         dst.path(),
-        &VerificationMode::Digest,
         &mut state,
         &mut persist,
         &|batch_id| CaravanError::InvalidArguments(format!("missing state for {batch_id}")),

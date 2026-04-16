@@ -63,7 +63,6 @@ pub(super) fn apply_transfer_config(state: &mut MigrationState, config: &Transfe
         .snapshot_dir
         .as_ref()
         .map(|path| path.to_string_lossy().to_string());
-    state.verification_mode = config.verification.clone();
     state.copy_strategy = config.copy_strategy;
     state.copy_buffer_size = config.copy_buffer_size;
     state.buffered_copy_threshold = config.buffered_copy_threshold;

@@ -1,7 +1,6 @@
 use std::fs;
 use std::path::Path;
 
-use crate::config::VerificationMode;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::verification::{DigestModeUsed, VerificationReport, VerificationStatus};
@@ -22,13 +21,11 @@ pub fn verify_batch(
     batch: &Batch,
     source_root: &Path,
     destination_root: &Path,
-    mode: VerificationMode,
 ) -> Result<VerificationReport, CaravanError> {
     verify_batch_with_progress(
         batch,
         source_root,
         destination_root,
-        mode,
         &mut crate::progress::NoopProgress,
     )
 }
@@ -37,7 +34,6 @@ pub fn verify_batch_with_progress(
     batch: &Batch,
     source_root: &Path,
     destination_root: &Path,
-    mode: VerificationMode,
     progress: &mut dyn ProgressReporter,
 ) -> Result<VerificationReport, CaravanError> {
     let mut missing_files = Vec::new();
@@ -83,24 +79,22 @@ pub fn verify_batch_with_progress(
             continue;
         }
 
-        if mode != VerificationMode::Structural {
-            let source_digest = match digest_file(&source_path) {
-                Ok(value) => value,
-                Err(_) => {
-                    unreadable_files.push(rel.clone());
-                    continue;
-                }
-            };
-            let destination_digest = match digest_file(&destination_path) {
-                Ok(value) => value,
-                Err(_) => {
-                    unreadable_files.push(rel.clone());
-                    continue;
-                }
-            };
-            if source_digest != destination_digest {
-                mismatched_files.push(rel);
+        let source_digest = match digest_file(&source_path) {
+            Ok(value) => value,
+            Err(_) => {
+                unreadable_files.push(rel.clone());
+                continue;
             }
+        };
+        let destination_digest = match digest_file(&destination_path) {
+            Ok(value) => value,
+            Err(_) => {
+                unreadable_files.push(rel.clone());
+                continue;
+            }
+        };
+        if source_digest != destination_digest {
+            mismatched_files.push(rel);
         }
 
         progress.advance(index + 1, Some(&entry.relative_path.to_string_lossy()));
@@ -108,11 +102,7 @@ pub fn verify_batch_with_progress(
 
     progress.finish();
 
-    let digest_mode_used = if mode == VerificationMode::Structural {
-        DigestModeUsed::None
-    } else {
-        DigestModeUsed::Blake3
-    };
+    let digest_mode_used = DigestModeUsed::Blake3;
 
     let status =
         if missing_files.is_empty() && mismatched_files.is_empty() && unreadable_files.is_empty() {

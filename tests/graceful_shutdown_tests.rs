@@ -1,9 +1,9 @@
 //! Integration tests for graceful shutdown behavior.
 
 use std::fs;
+use std::process::Command;
 #[cfg(unix)]
 use std::process::{Child, Stdio};
-use std::process::Command;
 #[cfg(unix)]
 use std::thread;
 #[cfg(unix)]
@@ -249,7 +249,9 @@ fn resume_continues_after_sigint_checkpoint() {
     let child = spawn_long_running_staging(&binary_path, &source_dir, &dest_dir, temp_dir.path());
     let _ = wait_for_copy_activity(&state_path);
     send_sigint(child.id());
-    let _ = child.wait_with_output().expect("wait on interrupted staging");
+    let _ = child
+        .wait_with_output()
+        .expect("wait on interrupted staging");
 
     let state_before_resume = load_state(&state_path).expect("load pre-resume state");
     let progressed_before = progressed_batches(&state_before_resume);
@@ -259,12 +261,19 @@ fn resume_continues_after_sigint_checkpoint() {
     );
 
     let output = Command::new(&binary_path)
-        .args(["resume", "--state", state_path.to_str().expect("utf8 state")])
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state"),
+        ])
         .current_dir(temp_dir.path())
         .output()
         .expect("execute resume");
 
-    assert!(output.status.success(), "resume should complete successfully");
+    assert!(
+        output.status.success(),
+        "resume should complete successfully"
+    );
 
     let state_after_resume = load_state(&state_path).expect("load post-resume state");
     let progressed_after = progressed_batches(&state_after_resume);

@@ -25,7 +25,6 @@ fn verify_batch_for_resume(
         batch,
         &config.source,
         &config.dest,
-        &config.verification,
         state,
         &mut persist_state,
         &|batch_id| {

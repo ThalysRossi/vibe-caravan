@@ -84,7 +84,6 @@ fn build_transfer_config(
         snapshot_every,
         snapshot_dir,
         interactive: args.interactive,
-        verification: args.verification.into(),
         log_level,
         skip_conflicts: args.skip_conflicts,
         recover_failed: args.recover_failed,

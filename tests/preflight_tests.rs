@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use caravan::config::{CopyStrategy, Mode, TransferConfig, VerificationMode};
+use caravan::config::{CopyStrategy, Mode, TransferConfig};
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::plan::PlanningSnapshot;
@@ -88,7 +88,6 @@ fn staging_config(dest: &str) -> TransferConfig {
         snapshot_every: None,
         snapshot_dir: None,
         interactive: false,
-        verification: VerificationMode::Digest,
         log_level: "info".to_string(),
         skip_conflicts: false,
         recover_failed: false,
@@ -109,7 +108,6 @@ fn migrate_config(source: &str, dest: &str) -> TransferConfig {
         snapshot_every: None,
         snapshot_dir: None,
         interactive: false,
-        verification: VerificationMode::Digest,
         log_level: "info".to_string(),
         skip_conflicts: false,
         recover_failed: false,
@@ -308,7 +306,6 @@ fn transfer_preflight_includes_migrate_filesystem_warnings() {
         snapshot_every: None,
         snapshot_dir: None,
         interactive: false,
-        verification: VerificationMode::Digest,
         log_level: "info".to_string(),
         skip_conflicts: false,
         recover_failed: false,

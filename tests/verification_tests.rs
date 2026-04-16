@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::Write;
 
-use caravan::config::VerificationMode;
 use caravan::models::verification::VerificationStatus;
 use caravan::plan::{build_plan, PlanOptions};
 use caravan::transfer::{transfer_batch, LocalFsCopyBackend};
@@ -34,8 +33,7 @@ fn copied_file_contents_match_source() {
 
     transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed");
-    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
-        .expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
 
     assert_eq!(report.status, VerificationStatus::Pass);
 }
@@ -56,8 +54,7 @@ fn missing_files_fail_verification() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
-        .expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.missing_files.len(), 1);
 }
@@ -82,8 +79,7 @@ fn size_mismatch_fails_verification() {
 
     create_file(dst.path(), "bin/data.bin", b"abc");
 
-    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
-        .expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.mismatched_files.len(), 1);
 }
@@ -108,8 +104,7 @@ fn digest_mismatch_fails_verification() {
 
     create_file(dst.path(), "docs/report.txt", b"same-size-datA");
 
-    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
-        .expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.mismatched_files.len(), 1);
 }
@@ -134,8 +129,7 @@ fn unreadable_file_fails_verification() {
 
     fs::remove_file(src.path().join("x/file.txt")).expect("source file removal should succeed");
 
-    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
-        .expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.unreadable_files.len(), 1);
 }
@@ -158,8 +152,7 @@ fn verification_report_serializes_to_json() {
     transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed");
 
-    let report = verify_batch(batch, src.path(), dst.path(), VerificationMode::Digest)
-        .expect("verify should succeed");
+    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
     let json = serde_json::to_string(&report).expect("report should serialize");
     assert!(json.contains("\"status\":\"Pass\""));
 }

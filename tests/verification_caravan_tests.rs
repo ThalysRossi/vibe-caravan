@@ -1,4 +1,3 @@
-use caravan::config::VerificationMode;
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::verify::verify_batch;
@@ -55,8 +54,7 @@ fn verification_skips_caravan_files() {
     };
 
     // Verification should pass because .caravan files are skipped
-    let report = verify_batch(&batch, src.path(), dst.path(), VerificationMode::Digest)
-        .expect("verify should succeed");
+    let report = verify_batch(&batch, src.path(), dst.path()).expect("verify should succeed");
 
     // Should pass despite .caravan/state.json mismatch
     assert_eq!(
@@ -116,8 +114,7 @@ fn verification_skips_caravan_files_in_subdirectories() {
     };
 
     // Verification should pass (skip .caravan file)
-    let report = verify_batch(&batch, src.path(), dst.path(), VerificationMode::Digest)
-        .expect("verify should succeed");
+    let report = verify_batch(&batch, src.path(), dst.path()).expect("verify should succeed");
 
     assert_eq!(
         report.status,

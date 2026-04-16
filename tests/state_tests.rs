@@ -1,4 +1,3 @@
-use caravan::config::VerificationMode;
 use caravan::models::state::{BatchPhase, BatchState, JournalEntry, MigrationState};
 use caravan::state_store::{load_state, persist_state};
 use tempfile::TempDir;
@@ -11,7 +10,6 @@ fn migration_state_new_sets_expected_defaults() {
     assert_eq!(state.destination, "/dst");
     assert_eq!(state.max_files, None);
     assert_eq!(state.snapshot_every, None);
-    assert_eq!(state.verification_mode, VerificationMode::Digest);
     assert_eq!(state.copy_buffer_size, 16 * 1024 * 1024);
     assert_eq!(state.buffered_copy_threshold, 8 * 1024 * 1024);
     assert_eq!(state.last_successful_snapshot_name, None);
@@ -51,7 +49,6 @@ fn persist_and_load_state_round_trip() {
     let mut state = MigrationState::new("migrate", "/source", "/dest");
     state.max_files = Some(128);
     state.snapshot_every = Some(3);
-    state.verification_mode = VerificationMode::Strict;
     state.copy_buffer_size = 4 * 1024 * 1024;
     state.buffered_copy_threshold = 2 * 1024 * 1024;
     state.upsert_batch(BatchState {
@@ -93,7 +90,6 @@ fn load_legacy_state_defaults_new_resume_fields() {
     let loaded = load_state(&state_path).expect("legacy state should load");
     assert_eq!(loaded.max_files, None);
     assert_eq!(loaded.snapshot_every, None);
-    assert_eq!(loaded.verification_mode, VerificationMode::Digest);
     assert_eq!(loaded.copy_buffer_size, 16 * 1024 * 1024);
     assert_eq!(loaded.buffered_copy_threshold, 8 * 1024 * 1024);
 }

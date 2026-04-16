@@ -113,7 +113,6 @@ pub(super) fn verify_single_batch(
         batch,
         &config.source,
         &config.dest,
-        &config.verification,
         state,
         &mut persist_state,
         &|batch_id| {

@@ -1,4 +1,4 @@
-use crate::config::{CopyStrategy, TransferConfig, VerificationMode};
+use crate::config::{CopyStrategy, TransferConfig};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,8 +52,6 @@ pub struct MigrationState {
     pub snapshot_every: Option<u32>,
     #[serde(default)]
     pub snapshot_dir: Option<String>,
-    #[serde(default = "default_verification_mode")]
-    pub verification_mode: VerificationMode,
     #[serde(default = "default_copy_strategy")]
     pub copy_strategy: CopyStrategy,
     #[serde(default = "TransferConfig::default_copy_buffer_size")]
@@ -76,7 +74,6 @@ impl MigrationState {
             max_files: None,
             snapshot_every: None,
             snapshot_dir: None,
-            verification_mode: default_verification_mode(),
             copy_strategy: default_copy_strategy(),
             copy_buffer_size: TransferConfig::default_copy_buffer_size(),
             buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
@@ -144,10 +141,6 @@ impl MigrationState {
             }
         }
     }
-}
-
-const fn default_verification_mode() -> VerificationMode {
-    VerificationMode::Digest
 }
 
 const fn default_copy_strategy() -> CopyStrategy {

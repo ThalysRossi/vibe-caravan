@@ -1,4 +1,3 @@
-use caravan::config::VerificationMode;
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::progress::{NoopProgress, ProgressReporter, TerminalProgress};
@@ -183,14 +182,7 @@ fn verify_batch_calls_progress_correctly() {
 
     let mut mock = MockProgress::default();
 
-    let report = verify_batch_with_progress(
-        &batch,
-        src.path(),
-        dst.path(),
-        VerificationMode::Digest,
-        &mut mock,
-    )
-    .unwrap();
+    let report = verify_batch_with_progress(&batch, src.path(), dst.path(), &mut mock).unwrap();
 
     assert_eq!(
         report.status,

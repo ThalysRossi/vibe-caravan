@@ -8,13 +8,6 @@ pub enum Mode {
     Migrate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum VerificationMode {
-    Structural,
-    Digest,
-    Strict,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CopyStrategy {
     #[default]
@@ -33,7 +26,6 @@ pub struct TransferConfig {
     pub snapshot_every: Option<u32>,
     pub snapshot_dir: Option<PathBuf>,
     pub interactive: bool,
-    pub verification: VerificationMode,
     pub log_level: String,
     pub skip_conflicts: bool,
     #[serde(default)]

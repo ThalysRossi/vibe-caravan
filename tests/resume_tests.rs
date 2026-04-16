@@ -586,7 +586,10 @@ fn all_planned_batches_are_saved_in_state_before_processing() {
     );
 
     let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
-    assert!(state_path.exists(), "state file should exist in source .caravan");
+    assert!(
+        state_path.exists(),
+        "state file should exist in source .caravan"
+    );
 
     let state = load_state(&state_path).expect("load persisted state");
     assert_eq!(

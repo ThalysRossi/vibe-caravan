@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use crate::config::VerificationMode;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, MigrationState};
@@ -52,19 +51,13 @@ pub(crate) fn verify_batch_with_state_updates(
     batch: &Batch,
     source_root: &Path,
     dest_root: &Path,
-    verification_mode: &VerificationMode,
     state: &mut MigrationState,
     persist_state: &mut dyn FnMut(&MigrationState) -> Result<(), CaravanError>,
     missing_state_error: &dyn Fn(&str) -> CaravanError,
 ) -> Result<(), CaravanError> {
     let mut progress = crate::progress::TerminalProgress::new();
-    let verification_report = verify::verify_batch_with_progress(
-        batch,
-        source_root,
-        dest_root,
-        verification_mode.clone(),
-        &mut progress,
-    )?;
+    let verification_report =
+        verify::verify_batch_with_progress(batch, source_root, dest_root, &mut progress)?;
 
     let mut current_state = state
         .batch(&batch.id)

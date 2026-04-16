@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::config::{Config, CopyStrategy, OutputFormat, TransferConfig, VerificationMode};
+use crate::config::{Config, CopyStrategy, OutputFormat, TransferConfig};
 use crate::error::CaravanError;
 
 mod args;
@@ -39,8 +39,6 @@ pub struct TransferArgs {
     pub max_files: Option<u64>,
     #[arg(long, default_value_t = false)]
     pub interactive: bool,
-    #[arg(long, value_enum, default_value_t = VerificationArg::Digest)]
-    pub verification: VerificationArg,
     #[arg(long, default_value_t = false)]
     pub skip_conflicts: bool,
     #[arg(long, default_value_t = false)]
@@ -86,13 +84,6 @@ pub struct ResumeArgs {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum VerificationArg {
-    Structural,
-    Digest,
-    Strict,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum CopyStrategyArg {
     Auto,
     Native,
@@ -103,16 +94,6 @@ pub enum CopyStrategyArg {
 pub enum OutputFormatArg {
     Human,
     Json,
-}
-
-impl From<VerificationArg> for VerificationMode {
-    fn from(value: VerificationArg) -> Self {
-        match value {
-            VerificationArg::Structural => VerificationMode::Structural,
-            VerificationArg::Digest => VerificationMode::Digest,
-            VerificationArg::Strict => VerificationMode::Strict,
-        }
-    }
 }
 
 impl From<CopyStrategyArg> for CopyStrategy {
