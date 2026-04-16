@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use caravan::migration_registry::generate_state_filename;
 use std::fs;
 use tempfile::TempDir;
 
@@ -140,15 +141,8 @@ fn resume_command_works_with_primary_state_file() {
     let primary_state_dir = source_dir.join(".caravan");
     fs::create_dir_all(&primary_state_dir).expect("create primary .caravan dir");
 
-    // Generate filename like migration_<hash>.json
-    use blake3::Hasher;
-    let mut hasher = Hasher::new();
-    hasher.update(source_dir.to_string_lossy().as_bytes());
-    hasher.update(dest_dir.to_string_lossy().as_bytes());
-    let hash = hasher.finalize();
-    let hex_hash = hash.to_hex();
-    let short_hash = &hex_hash[0..16];
-    let state_filename = format!("migration_{}.json", short_hash);
+    let state_filename =
+        generate_state_filename(&source_dir.to_string_lossy(), &dest_dir.to_string_lossy());
 
     let primary_state = serde_json::json!({
         "mode": "staging",

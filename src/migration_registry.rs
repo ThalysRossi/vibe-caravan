@@ -157,16 +157,28 @@ impl Default for MigrationRegistry {
 
 /// Generate a deterministic filename for migration state based on source and destination paths
 pub fn generate_state_filename(source: &str, dest: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    let normalized_source = normalize_path_for_state_hash(source);
+    let normalized_dest = normalize_path_for_state_hash(dest);
 
-    let mut hasher = DefaultHasher::new();
-    source.hash(&mut hasher);
-    dest.hash(&mut hasher);
-    let hash = hasher.finish();
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(normalized_source.as_bytes());
+    hasher.update(&[0x00]);
+    hasher.update(normalized_dest.as_bytes());
+    let hash_hex = hasher.finalize().to_hex();
+    let short_hash = &hash_hex[..16];
+    format!("migration_{short_hash}.json")
+}
 
-    // Use first 8 hex digits for brevity
-    format!("migration_{:08x}.json", hash & 0xFFFFFFFF)
+fn normalize_path_for_state_hash(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    #[cfg(windows)]
+    {
+        return normalized.to_ascii_lowercase();
+    }
+    #[cfg(not(windows))]
+    {
+        normalized
+    }
 }
 
 /// Get the default registry path in current directory

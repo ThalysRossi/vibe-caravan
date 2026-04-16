@@ -45,7 +45,14 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
 
     register_migration(&source_str, &dest_str, mode, &state_filename)?;
 
-    let mut state = load_or_create_state(&config, &state_path, mode, &source_str, &dest_str)?;
+    let mut state = load_or_create_state(
+        &config,
+        &state_path,
+        &secondary_state_path,
+        mode,
+        &source_str,
+        &dest_str,
+    )?;
     apply_transfer_config(&mut state, &config);
 
     ensure_no_operator_review_blocks_with_policy(

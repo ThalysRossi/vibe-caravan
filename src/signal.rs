@@ -4,7 +4,7 @@
 //! Uses the `ctrlc` crate internally for cross-platform compatibility.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::error::CaravanError;
 
@@ -52,6 +52,24 @@ impl Default for ShutdownFlag {
     }
 }
 
+fn active_shutdown_target() -> &'static Mutex<Option<Arc<AtomicBool>>> {
+    static ACTIVE_TARGET: OnceLock<Mutex<Option<Arc<AtomicBool>>>> = OnceLock::new();
+    ACTIVE_TARGET.get_or_init(|| Mutex::new(None))
+}
+
+fn install_guard() -> &'static Mutex<()> {
+    static INSTALL_GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+    INSTALL_GUARD.get_or_init(|| Mutex::new(()))
+}
+
+fn update_active_shutdown_target(shutdown_flag: &ShutdownFlag) -> Result<(), CaravanError> {
+    let mut guard = active_shutdown_target().lock().map_err(|_| {
+        CaravanError::Io("failed to lock active shutdown target due to poisoned mutex".to_string())
+    })?;
+    *guard = Some(Arc::clone(shutdown_flag.inner()));
+    Ok(())
+}
+
 /// Install signal handlers for graceful shutdown.
 ///
 /// This function sets up handlers for SIGINT (Ctrl+C) and SIGTERM on Unix-like systems,
@@ -61,13 +79,27 @@ impl Default for ShutdownFlag {
 ///
 /// Returns `CaravanError::Io` if signal handler installation fails.
 pub fn install_signal_handlers(shutdown_flag: &ShutdownFlag) -> Result<(), CaravanError> {
-    let flag_clone = Arc::clone(shutdown_flag.inner());
+    static HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+    let _install_lock = install_guard().lock().map_err(|_| {
+        CaravanError::Io(
+            "failed to lock signal installation guard due to poisoned mutex".to_string(),
+        )
+    })?;
 
-    ctrlc::set_handler(move || {
-        flag_clone.store(true, Ordering::SeqCst);
-        eprintln!("\nShutdown requested. Finishing current operation...");
-    })
-    .map_err(|err| CaravanError::Io(format!("failed to install signal handler: {}", err)))
+    if HANDLER_INSTALLED.get().is_none() {
+        ctrlc::set_handler(move || {
+            if let Ok(guard) = active_shutdown_target().lock() {
+                if let Some(active_flag) = guard.as_ref() {
+                    active_flag.store(true, Ordering::SeqCst);
+                }
+            }
+            eprintln!("\nShutdown requested. Finishing current operation...");
+        })
+        .map_err(|err| CaravanError::Io(format!("failed to install signal handler: {}", err)))?;
+        let _ = HANDLER_INSTALLED.set(());
+    }
+
+    update_active_shutdown_target(shutdown_flag)
 }
 
 /// Check if shutdown has been requested and return appropriate error.

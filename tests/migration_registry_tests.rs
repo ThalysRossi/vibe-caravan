@@ -171,6 +171,13 @@ fn generate_state_filename_deterministic() {
 }
 
 #[test]
+fn generate_state_filename_normalizes_path_separators() {
+    let filename_unix = generate_state_filename("/source/path", "/dest/path");
+    let filename_windows_like = generate_state_filename("\\source\\path", "\\dest\\path");
+    assert_eq!(filename_unix, filename_windows_like);
+}
+
+#[test]
 fn state_dir_in_source_creates_correct_path() {
     let tmp = TempDir::new().expect("temp dir");
     let source = tmp.path().join("my_source");

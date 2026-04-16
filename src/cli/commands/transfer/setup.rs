@@ -41,12 +41,14 @@ pub(super) fn register_migration(
 pub(super) fn load_or_create_state(
     config: &TransferConfig,
     state_path: &Path,
+    secondary_state_path: &Path,
     mode: &str,
     source: &str,
     dest: &str,
 ) -> Result<MigrationState, CaravanError> {
-    if state_path.exists() {
-        let loaded_state = state_store::load_state(state_path)?;
+    if state_path.exists() || secondary_state_path.exists() {
+        let loaded_state =
+            state_store::load_state_with_compat_reconciliation(state_path, secondary_state_path)?;
         println!("Loaded existing state from: {}", state_path.display());
         return Ok(loaded_state);
     }

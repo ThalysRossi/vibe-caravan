@@ -16,6 +16,13 @@ fn first_state_file_in(dir: &std::path::Path) -> std::path::PathBuf {
         .expect("state file should exist")
 }
 
+fn load_state_document(path: &std::path::Path) -> serde_json::Value {
+    let doc: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(path).expect("read state file json"))
+            .expect("parse state json");
+    doc.get("state").cloned().unwrap_or(doc)
+}
+
 #[test]
 fn skip_conflicts_marks_batch_failed_instead_of_copy_completed() {
     let tmp = TempDir::new().expect("temp dir");
@@ -55,9 +62,7 @@ fn skip_conflicts_marks_batch_failed_instead_of_copy_completed() {
     );
 
     let state_path = first_state_file_in(&source_dir.join(".caravan"));
-    let state_json: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(&state_path).expect("read state"))
-            .expect("parse state");
+    let state_json = load_state_document(&state_path);
 
     assert_eq!(
         state_json["batches"][0]["phase"],

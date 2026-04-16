@@ -1,5 +1,5 @@
 use caravan::error::CaravanError;
-use caravan::signal::{check_shutdown, ShutdownFlag};
+use caravan::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
 use std::thread;
 
 // Test 1: Shutdown flag starts as false
@@ -101,4 +101,14 @@ fn shutdown_flag_clone_creates_independent_flag() {
     flag2.reset();
     assert!(!flag1.is_shutdown_requested());
     assert!(!flag2.is_shutdown_requested());
+}
+
+// Test 10: signal handler installation is idempotent for repeated command flows.
+#[test]
+fn install_signal_handlers_is_idempotent() {
+    let flag1 = ShutdownFlag::new();
+    let flag2 = ShutdownFlag::new();
+
+    install_signal_handlers(&flag1).expect("first install should succeed");
+    install_signal_handlers(&flag2).expect("second install should reuse existing handler");
 }
