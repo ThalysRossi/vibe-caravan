@@ -3,10 +3,11 @@ use std::fs;
 use assert_cmd::Command;
 use caravan::models::state::{BatchPhase, BatchState, JournalEntry, MigrationState};
 use caravan::state_store::persist_state;
+use serde_json::Value;
 use tempfile::TempDir;
 
 #[test]
-fn status_command_output_includes_expected_sections() {
+fn status_command_json_output_contains_expected_state_contract() {
     let tmp = TempDir::new().expect("create temp dir");
     let state_path = tmp.path().join("state.json");
 
@@ -35,26 +36,29 @@ fn status_command_output_includes_expected_sections() {
             "status",
             "--state",
             state_path.to_str().expect("state path utf8"),
+            "--output",
+            "json",
         ])
         .current_dir(tmp.path())
         .output()
         .expect("run status command");
 
     assert!(output.status.success(), "status should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("parse JSON status output");
 
-    assert!(stdout.contains("=== Caravan Status ==="));
-    assert!(stdout.contains("Mode: staging"));
-    assert!(stdout.contains("Source: /src"));
-    assert!(stdout.contains("Destination: /dst"));
-    assert!(stdout.contains("Batches: 1"));
-    assert!(stdout.contains("Snapshot cadence: every 2 deleted batch(es)"));
-    assert!(stdout.contains("Snapshot directory: /dst/snapshots"));
-    assert!(stdout
-        .contains("batch-000001 - Planned (verified: false, approved: false, deleted: false)"));
-    assert!(stdout.contains("Last snapshot: snap-123"));
-    assert!(stdout.contains("Journal entries: 1"));
-    assert!(stdout.contains("[123] copy_completed - batch-000001 (test)"));
+    assert_eq!(parsed["mode"], "staging");
+    assert_eq!(parsed["source"], "/src");
+    assert_eq!(parsed["destination"], "/dst");
+    assert_eq!(parsed["snapshot_every"], 2);
+    assert_eq!(parsed["snapshot_dir"], "/dst/snapshots");
+    assert_eq!(parsed["last_successful_snapshot_name"], "snap-123");
+    assert_eq!(parsed["batches"][0]["batch_id"], "batch-000001");
+    assert_eq!(parsed["batches"][0]["phase"], "Planned");
+    assert_eq!(parsed["batches"][0]["verification_passed"], false);
+    assert_eq!(parsed["journal"][0]["event"], "copy_completed");
+    assert_eq!(parsed["journal"][0]["batch_id"], "batch-000001");
+    assert_eq!(parsed["journal"][0]["timestamp_unix_secs"], 123);
+    assert_eq!(parsed["journal"][0]["context"], "test");
 }
 
 #[test]
@@ -176,21 +180,28 @@ fn resume_inspect_failed_outputs_destination_diff_without_mutating_state() {
             "--state",
             state_path.to_str().expect("state path utf8"),
             "--inspect-failed",
+            "--output",
+            "json",
         ])
         .current_dir(tmp.path())
         .output()
         .expect("run resume inspect command");
 
     assert!(output.status.success(), "inspect mode should succeed");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    assert!(stdout.contains("=== Failed Batch Inspection ==="));
-    assert!(stdout.contains("batch-000001"));
-    assert!(stdout.contains("missing_in_destination"));
-    assert!(stdout.contains("file1.txt"));
-    assert!(
-        !stdout.contains("Resuming transfer"),
-        "inspect mode should not enter transfer execution"
+    let parsed: Value = serde_json::from_slice(&output.stdout).expect("parse JSON inspect output");
+    assert_eq!(parsed["failed_batch_count"], 1);
+    assert_eq!(parsed["failed_batches"][0]["batch_id"], "batch-000001");
+    assert_eq!(
+        parsed["failed_batches"][0]["all_destination_files_ready"],
+        false
+    );
+    assert_eq!(
+        parsed["failed_batches"][0]["missing_in_destination"][0],
+        "file1.txt"
+    );
+    assert_eq!(
+        parsed["failed_batches"][0]["size_mismatches"],
+        Value::Array(vec![])
     );
 
     let state_after = caravan::state_store::load_state(&state_path).expect("load state");
@@ -201,5 +212,55 @@ fn resume_inspect_failed_outputs_destination_diff_without_mutating_state() {
     assert!(
         !dest_dir.join("file1.txt").exists(),
         "inspect mode must not copy data"
+    );
+}
+
+#[test]
+fn resume_json_output_requires_inspect_failed_mode() {
+    let tmp = TempDir::new().expect("create temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    let state_path = tmp.path().join("resume-state.json");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create destination");
+    fs::write(source_dir.join("file1.txt"), "content").expect("write source file");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::ApprovedForDelete,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: false,
+    });
+    persist_state(&state_path, &state).expect("persist resume state");
+
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("state path utf8"),
+            "--output",
+            "json",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("run resume with unsupported JSON output mode");
+
+    assert!(
+        !output.status.success(),
+        "resume should reject JSON output when inspect-failed is not enabled"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("resume --output json is only supported with --inspect-failed"),
+        "stderr should explain why JSON output is blocked, got: {stderr}"
     );
 }

@@ -70,6 +70,13 @@ impl TransferConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum OutputFormat {
+    #[default]
+    Human,
+    Json,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Config {
     Staging(TransferConfig),
@@ -77,11 +84,13 @@ pub enum Config {
     Status {
         state: PathBuf,
         log_level: String,
+        output: OutputFormat,
     },
     Resume {
         state: PathBuf,
         log_level: String,
         recover_failed: bool,
         inspect_failed: bool,
+        output: OutputFormat,
     },
 }

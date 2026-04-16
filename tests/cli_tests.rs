@@ -1,5 +1,5 @@
 use caravan::cli::parse_cli_from;
-use caravan::config::{Config, CopyStrategy, VerificationMode};
+use caravan::config::{Config, CopyStrategy, OutputFormat, VerificationMode};
 
 #[test]
 fn missing_required_arguments_are_rejected() {
@@ -87,6 +87,40 @@ fn state_file_path_defaults_are_applied_correctly() {
     }
     match resume {
         Config::Resume { state, .. } => assert_eq!(state.to_string_lossy(), ".caravan/state.json"),
+        _ => panic!("expected resume config"),
+    }
+}
+
+#[test]
+fn status_and_resume_output_formats_default_to_human_and_accept_json() {
+    let status_default = parse_cli_from(["caravan", "status"]).expect("status parse should pass");
+    let status_json = parse_cli_from(["caravan", "status", "--output", "json"])
+        .expect("status parse with json output should pass");
+    let resume_default = parse_cli_from(["caravan", "resume"]).expect("resume parse should pass");
+    let resume_json = parse_cli_from(["caravan", "resume", "--inspect-failed", "--output", "json"])
+        .expect("resume parse with json output should pass");
+
+    match status_default {
+        Config::Status { output, .. } => assert_eq!(output, OutputFormat::Human),
+        _ => panic!("expected status config"),
+    }
+    match status_json {
+        Config::Status { output, .. } => assert_eq!(output, OutputFormat::Json),
+        _ => panic!("expected status config"),
+    }
+    match resume_default {
+        Config::Resume { output, .. } => assert_eq!(output, OutputFormat::Human),
+        _ => panic!("expected resume config"),
+    }
+    match resume_json {
+        Config::Resume {
+            output,
+            inspect_failed,
+            ..
+        } => {
+            assert_eq!(output, OutputFormat::Json);
+            assert!(inspect_failed);
+        }
         _ => panic!("expected resume config"),
     }
 }

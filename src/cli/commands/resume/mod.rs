@@ -1,5 +1,8 @@
 use std::path::Path;
 
+use serde::Serialize;
+
+use crate::config::{OutputFormat, TransferConfig};
 use crate::error::CaravanError;
 use crate::models::state::{BatchPhase, MigrationState};
 use crate::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
@@ -19,10 +22,24 @@ mod step_handlers;
 use batch_flow::run_resume_batches;
 use config::transfer_config_from_state;
 
-fn inspect_failed_batches(
+#[derive(Debug, Serialize)]
+struct FailedBatchInspection {
+    batch_id: String,
+    all_destination_files_ready: bool,
+    missing_in_destination: Vec<String>,
+    size_mismatches: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct FailedBatchInspectionReport {
+    failed_batch_count: usize,
+    failed_batches: Vec<FailedBatchInspection>,
+}
+
+fn build_failed_batch_inspection_report(
     state: &MigrationState,
-    config: &crate::config::TransferConfig,
-) -> Result<(), CaravanError> {
+    config: &TransferConfig,
+) -> Result<FailedBatchInspectionReport, CaravanError> {
     let failed_batch_ids: Vec<String> = state
         .batches
         .iter()
@@ -30,13 +47,7 @@ fn inspect_failed_batches(
         .map(|batch| batch.batch_id.clone())
         .collect();
 
-    println!("\n=== Failed Batch Inspection ===");
-    if failed_batch_ids.is_empty() {
-        println!("No failed batches found in state.");
-        return Ok(());
-    }
-
-    println!("Found {} failed batch(es).", failed_batch_ids.len());
+    let mut failed_batches = Vec::with_capacity(failed_batch_ids.len());
     for batch_id in failed_batch_ids {
         let batch = plan::load_batch_definition(
             &config.source,
@@ -45,13 +56,51 @@ fn inspect_failed_batches(
             state.max_files,
         )?;
         let recon = resume_ops::reconcile_batch_destination(&batch, &config.dest);
+        failed_batches.push(FailedBatchInspection {
+            batch_id,
+            all_destination_files_ready: recon.all_destination_files_ready,
+            missing_in_destination: recon.missing_in_destination,
+            size_mismatches: recon.size_mismatches,
+        });
+    }
+
+    Ok(FailedBatchInspectionReport {
+        failed_batch_count: failed_batches.len(),
+        failed_batches,
+    })
+}
+
+fn print_failed_batch_inspection_human(report: &FailedBatchInspectionReport) {
+    println!("\n=== Failed Batch Inspection ===");
+    if report.failed_batches.is_empty() {
+        println!("No failed batches found in state.");
+        return;
+    }
+
+    println!("Found {} failed batch(es).", report.failed_batch_count);
+    for batch in &report.failed_batches {
+        let recon = resume_ops::ReconciliationResult {
+            all_destination_files_ready: batch.all_destination_files_ready,
+            missing_in_destination: batch.missing_in_destination.clone(),
+            size_mismatches: batch.size_mismatches.clone(),
+        };
         println!(
             "{}: {}",
-            batch_id,
+            batch.batch_id,
             resume_ops::reconciliation_summary(&recon)
         );
     }
+}
 
+fn print_failed_batch_inspection_json(
+    report: &FailedBatchInspectionReport,
+) -> Result<(), CaravanError> {
+    let serialized = serde_json::to_string_pretty(report).map_err(|err| {
+        CaravanError::Io(format!(
+            "failed to serialize failed-batch inspection output: {err}"
+        ))
+    })?;
+    println!("{serialized}");
     Ok(())
 }
 
@@ -59,11 +108,28 @@ pub(super) fn execute_resume(
     state_path: &Path,
     recover_failed: bool,
     inspect_failed: bool,
+    output: OutputFormat,
 ) -> Result<(), CaravanError> {
     let shutdown_flag = ShutdownFlag::new();
     install_signal_handlers(&shutdown_flag)?;
 
     let mut state = resume_ops::resume_run(state_path)?;
+    let config = transfer_config_from_state(&state, recover_failed)?;
+
+    if inspect_failed {
+        let report = build_failed_batch_inspection_report(&state, &config)?;
+        match output {
+            OutputFormat::Human => print_failed_batch_inspection_human(&report),
+            OutputFormat::Json => print_failed_batch_inspection_json(&report)?,
+        }
+        return Ok(());
+    }
+
+    if output == OutputFormat::Json {
+        return Err(CaravanError::InvalidArguments(
+            "resume --output json is only supported with --inspect-failed".to_string(),
+        ));
+    }
 
     print_resume_state_header();
     print_resume_state_details(
@@ -75,13 +141,8 @@ pub(super) fn execute_resume(
 
     let completed_count = state.batches.iter().filter(|b| b.deleted).count();
     print_resume_completed_batches(completed_count, state.batches.len());
-
-    let config = transfer_config_from_state(&state, recover_failed)?;
     print_status_snapshot_policy(config.snapshot_every, config.snapshot_dir.as_deref());
-    if inspect_failed {
-        inspect_failed_batches(&state, &config)?;
-        return Ok(());
-    }
+
     snapshot::validate_snapshot_configuration(
         config.mode.clone(),
         config.snapshot_every,

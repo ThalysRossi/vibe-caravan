@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::config::{Config, CopyStrategy, TransferConfig, VerificationMode};
+use crate::config::{Config, CopyStrategy, OutputFormat, TransferConfig, VerificationMode};
 use crate::error::CaravanError;
 
 mod args;
@@ -69,6 +69,8 @@ pub struct MigrateArgs {
 pub struct StateArgs {
     #[arg(long, default_value = ".caravan/state.json")]
     pub state: PathBuf,
+    #[arg(long, value_enum, default_value_t = OutputFormatArg::Human)]
+    pub output: OutputFormatArg,
 }
 
 #[derive(Debug, clap::Args)]
@@ -79,6 +81,8 @@ pub struct ResumeArgs {
     pub recover_failed: bool,
     #[arg(long, default_value_t = false)]
     pub inspect_failed: bool,
+    #[arg(long, value_enum, default_value_t = OutputFormatArg::Human)]
+    pub output: OutputFormatArg,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -93,6 +97,12 @@ pub enum CopyStrategyArg {
     Auto,
     Native,
     Buffered,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum OutputFormatArg {
+    Human,
+    Json,
 }
 
 impl From<VerificationArg> for VerificationMode {
@@ -111,6 +121,15 @@ impl From<CopyStrategyArg> for CopyStrategy {
             CopyStrategyArg::Auto => CopyStrategy::Auto,
             CopyStrategyArg::Native => CopyStrategy::Native,
             CopyStrategyArg::Buffered => CopyStrategy::Buffered,
+        }
+    }
+}
+
+impl From<OutputFormatArg> for OutputFormat {
+    fn from(value: OutputFormatArg) -> Self {
+        match value {
+            OutputFormatArg::Human => OutputFormat::Human,
+            OutputFormatArg::Json => OutputFormat::Json,
         }
     }
 }
@@ -134,13 +153,15 @@ pub fn run() -> Result<(), CaravanError> {
         Config::Status {
             state,
             log_level: _,
-        } => commands::execute_status(&state),
+            output,
+        } => commands::execute_status(&state, output),
         Config::Resume {
             state,
             log_level: _,
             recover_failed,
             inspect_failed,
-        } => commands::execute_resume(&state, recover_failed, inspect_failed),
+            output,
+        } => commands::execute_resume(&state, recover_failed, inspect_failed, output),
     }
 }
 

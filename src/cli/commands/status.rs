@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::config::OutputFormat;
 use crate::error::CaravanError;
 use crate::state_store;
 
@@ -8,8 +9,15 @@ use super::shared::{
     print_status_journal_header, print_status_snapshot_policy,
 };
 
-pub(super) fn execute_status(state_path: &Path) -> Result<(), CaravanError> {
+pub(super) fn execute_status(state_path: &Path, output: OutputFormat) -> Result<(), CaravanError> {
     let state = state_store::load_state(state_path)?;
+
+    if output == OutputFormat::Json {
+        let serialized = serde_json::to_string_pretty(&state)
+            .map_err(|err| CaravanError::Io(format!("failed to serialize status output: {err}")))?;
+        println!("{serialized}");
+        return Ok(());
+    }
 
     print_status_header(
         &state.mode,

@@ -48,12 +48,14 @@ pub(super) fn to_config(cli: Cli) -> Result<Config, CaravanError> {
         Some(Command::Status(args)) => Ok(Config::Status {
             state: args.state,
             log_level,
+            output: args.output.into(),
         }),
         Some(Command::Resume(args)) => Ok(Config::Resume {
             state: args.state,
             log_level,
             recover_failed: args.recover_failed,
             inspect_failed: args.inspect_failed,
+            output: args.output.into(),
         }),
         None => Err(CaravanError::InvalidArguments(
             "missing subcommand".to_string(),
