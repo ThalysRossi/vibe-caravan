@@ -1,13 +1,10 @@
-use std::path::Path;
-
-use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchState, MigrationState};
-use crate::signal::{check_shutdown, ShutdownFlag};
-use crate::{resume as resume_ops, transfer};
+use crate::resume as resume_ops;
 
 use super::super::shared::print_resume_skip_already_completed;
+use super::context::ResumeContext;
 use super::step_handlers::execute_resume_step;
 
 fn load_batch_for_resume(
@@ -27,18 +24,21 @@ fn load_batch_for_resume(
 fn plan_next_step(
     batch_state: &BatchState,
     batch: &Batch,
-    config: &TransferConfig,
+    context: &ResumeContext<'_>,
 ) -> resume_ops::ResumeStepPlan {
-    let recon = resume_ops::reconcile_batch_destination(batch, &config.dest);
-    resume_ops::plan_resume_step_with_recovery(batch_state, &recon, batch, config.recover_failed)
+    let recon = resume_ops::reconcile_batch_destination(batch, &context.config.dest);
+    resume_ops::plan_resume_step_with_recovery(
+        batch_state,
+        &recon,
+        batch,
+        context.config.recover_failed,
+    )
 }
 
 fn process_resume_batch(
     batch_id: &str,
-    config: &TransferConfig,
+    context: &ResumeContext<'_>,
     state: &mut MigrationState,
-    state_path: &Path,
-    copy_backend: &transfer::LocalFsCopyBackend,
 ) -> Result<(), CaravanError> {
     let batch_state = state
         .batch(batch_id)
@@ -56,22 +56,19 @@ fn process_resume_batch(
     }
 
     let batch = load_batch_for_resume(&batch_state, state)?;
-    let step = plan_next_step(&batch_state, &batch, config);
-    execute_resume_step(step, &batch, config, state, state_path, copy_backend)
+    let step = plan_next_step(&batch_state, &batch, context);
+    execute_resume_step(step, &batch, context, state)
 }
 
 pub(super) fn run_resume_batches(
     state: &mut MigrationState,
-    config: &TransferConfig,
-    state_path: &Path,
-    shutdown_flag: &ShutdownFlag,
-    copy_backend: &transfer::LocalFsCopyBackend,
+    context: &ResumeContext<'_>,
 ) -> Result<(), CaravanError> {
     let batch_ids: Vec<String> = state.batches.iter().map(|b| b.batch_id.clone()).collect();
 
     for batch_id in batch_ids {
-        check_shutdown(shutdown_flag)?;
-        process_resume_batch(&batch_id, config, state, state_path, copy_backend)?;
+        context.check_shutdown()?;
+        process_resume_batch(&batch_id, context, state)?;
     }
 
     Ok(())

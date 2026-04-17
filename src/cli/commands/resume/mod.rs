@@ -6,8 +6,8 @@ use crate::config::{OutputFormat, TransferConfig};
 use crate::error::CaravanError;
 use crate::models::state::{BatchPhase, MigrationState};
 use crate::plan::PlanOptions;
-use crate::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
-use crate::{plan, resume as resume_ops, snapshot, state_store, transfer};
+use crate::signal::{install_signal_handlers, ShutdownFlag};
+use crate::{plan, resume as resume_ops, snapshot, state_store};
 
 use super::shared::{
     approve_and_delete_verified_batches, ensure_no_operator_review_blocks,
@@ -18,10 +18,12 @@ use super::shared::{
 
 mod batch_flow;
 mod config;
+mod context;
 mod step_handlers;
 
 use batch_flow::run_resume_batches;
 use config::transfer_config_from_state;
+use context::ResumeContext;
 
 #[derive(Debug, Serialize)]
 struct FailedBatchInspection {
@@ -186,37 +188,28 @@ pub(super) fn execute_resume(
 
     print_resuming_transfer();
 
-    let copy_backend = transfer::LocalFsCopyBackend::with_transfer_config(&config);
+    let context = ResumeContext::new(&config, state_path, shutdown_flag);
+    run_resume_batches(&mut state, &context)?;
 
-    run_resume_batches(
-        &mut state,
-        &config,
-        state_path,
-        &shutdown_flag,
-        &copy_backend,
-    )?;
-
-    check_shutdown(&shutdown_flag)?;
+    context.check_shutdown()?;
     ensure_no_operator_review_blocks(&state)?;
 
-    let mut persist_state =
-        |current_state: &MigrationState| state_store::persist_state(state_path, current_state);
+    let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
     approve_and_delete_verified_batches(
         &mut state,
-        &config.source,
-        config.interactive,
-        &shutdown_flag,
+        &context.config.source,
+        context.config.interactive,
+        &context.shutdown_flag,
         &mut persist_state,
         "resume",
     )?;
-    let snapshot_backend = snapshot::SystemSnapshotBackend;
     snapshot::process_pending_snapshots(
-        config.mode.clone(),
-        config.snapshot_every,
-        &config.dest,
-        config.snapshot_dir.as_deref(),
+        context.config.mode.clone(),
+        context.config.snapshot_every,
+        &context.config.dest,
+        context.config.snapshot_dir.as_deref(),
         &mut state,
-        &snapshot_backend,
+        &context.snapshot_backend,
         &mut persist_state,
     )?;
 
