@@ -28,16 +28,29 @@ impl SnapshotBackend for SystemSnapshotBackend {
     }
 }
 
+pub struct SnapshotRequest<'a> {
+    pub mode: Mode,
+    pub snapshot_every: Option<u32>,
+    pub completed_batch_count: u32,
+    pub batch_id: &'a str,
+    pub destination_root: &'a Path,
+    pub snapshot_root: Option<&'a Path>,
+}
+
 pub fn snapshot_if_needed(
-    mode: Mode,
-    snapshot_every: Option<u32>,
-    completed_batch_count: u32,
-    batch_id: &str,
-    destination_root: &Path,
-    snapshot_root: Option<&Path>,
+    request: SnapshotRequest<'_>,
     state: &mut MigrationState,
     backend: &dyn SnapshotBackend,
 ) -> Result<Option<String>, CaravanError> {
+    let SnapshotRequest {
+        mode,
+        snapshot_every,
+        completed_batch_count,
+        batch_id,
+        destination_root,
+        snapshot_root,
+    } = request;
+
     if mode == Mode::Staging {
         if snapshot_every.is_some() {
             return Err(CaravanError::InvalidArguments(
@@ -209,12 +222,14 @@ pub fn process_pending_snapshots(
         }
 
         match snapshot_if_needed(
-            mode.clone(),
-            snapshot_every,
-            deleted_batch_count,
-            &batch_id,
-            destination_root,
-            snapshot_root,
+            SnapshotRequest {
+                mode: mode.clone(),
+                snapshot_every,
+                completed_batch_count: deleted_batch_count,
+                batch_id: &batch_id,
+                destination_root,
+                snapshot_root,
+            },
             state,
             backend,
         ) {

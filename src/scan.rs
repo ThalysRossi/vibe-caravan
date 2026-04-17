@@ -48,6 +48,15 @@ impl Drop for WinFindHandle {
     }
 }
 
+#[cfg(windows)]
+#[derive(Debug)]
+struct WinEnumeratedEntry {
+    path: PathBuf,
+    attributes: u32,
+    size_bytes: u64,
+    modified_time: Option<std::time::SystemTime>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanBackend {
     StdFs,
@@ -202,9 +211,66 @@ fn map_io(context: &'static str) -> impl Fn(std::io::Error) -> CaravanError {
 #[cfg(windows)]
 fn visit_dir_win32(
     source_root: &Path,
-    current_dir: &Path,
+    start_dir: &Path,
     output: &mut Vec<FileEntry>,
 ) -> Result<(), CaravanError> {
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ATTRIBUTE_DEVICE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+    };
+
+    let mut stack: Vec<WinEnumeratedEntry> = Vec::new();
+    push_win_children_in_reverse_sorted_order(start_dir, &mut stack)?;
+
+    while let Some(child) = stack.pop() {
+        let is_dir = child.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+        let is_reparse_point = child.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        let is_device = child.attributes & FILE_ATTRIBUTE_DEVICE != 0;
+
+        if is_reparse_point || is_device {
+            continue;
+        }
+
+        if is_dir {
+            if let Some(file_name) = child.path.file_name() {
+                if file_name == ".caravan" {
+                    continue;
+                }
+            }
+            push_win_children_in_reverse_sorted_order(&child.path, &mut stack)?;
+            continue;
+        }
+
+        let relative_path = child.path.strip_prefix(source_root).map_err(|_| {
+            CaravanError::StateCorrupt(format!(
+                "failed to derive relative path during scan: {} is not under {}",
+                child.path.display(),
+                source_root.display()
+            ))
+        })?;
+        output.push(FileEntry {
+            relative_path: relative_path.to_path_buf(),
+            size_bytes: child.size_bytes,
+            modified_time: child.modified_time,
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn push_win_children_in_reverse_sorted_order(
+    dir: &Path,
+    stack: &mut Vec<WinEnumeratedEntry>,
+) -> Result<(), CaravanError> {
+    let children = enumerate_children_win32(dir)?;
+    for child in children.into_iter().rev() {
+        stack.push(child);
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn enumerate_children_win32(current_dir: &Path) -> Result<Vec<WinEnumeratedEntry>, CaravanError> {
     use std::ffi::OsString;
     use std::mem;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -213,21 +279,12 @@ fn visit_dir_win32(
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_NO_MORE_FILES};
     use windows_sys::Win32::Storage::FileSystem::{
         FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
-        FILE_ATTRIBUTE_DEVICE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
         FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
     };
 
     fn wide_to_os_string(wide: &[u16]) -> OsString {
         let len = wide.iter().position(|&c| c == 0).unwrap_or(wide.len());
         OsString::from_wide(&wide[..len])
-    }
-
-    #[derive(Debug)]
-    struct WinEnumeratedEntry {
-        path: PathBuf,
-        attributes: u32,
-        size_bytes: u64,
-        modified_time: Option<std::time::SystemTime>,
     }
 
     let search_pattern = current_dir.join("*");
@@ -291,49 +348,15 @@ fn visit_dir_win32(
     }
 
     children.sort_by(|a, b| a.path.cmp(&b.path));
-
-    for child in children {
-        let is_dir = child.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
-        let is_reparse_point = child.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
-        let is_device = child.attributes & FILE_ATTRIBUTE_DEVICE != 0;
-
-        if is_reparse_point || is_device {
-            continue;
-        }
-
-        if is_dir {
-            if let Some(file_name) = child.path.file_name() {
-                if file_name == ".caravan" {
-                    continue;
-                }
-            }
-            visit_dir_win32(source_root, &child.path, output)?;
-            continue;
-        }
-
-        let relative_path = child.path.strip_prefix(source_root).map_err(|_| {
-            CaravanError::StateCorrupt(format!(
-                "failed to derive relative path during scan: {} is not under {}",
-                child.path.display(),
-                source_root.display()
-            ))
-        })?;
-        output.push(FileEntry {
-            relative_path: relative_path.to_path_buf(),
-            size_bytes: child.size_bytes,
-            modified_time: child.modified_time,
-        });
-    }
-
-    Ok(())
+    Ok(children)
 }
 
 #[cfg(not(windows))]
 fn visit_dir_win32(
     source_root: &Path,
-    current_dir: &Path,
+    start_dir: &Path,
     output: &mut Vec<FileEntry>,
 ) -> Result<(), CaravanError> {
     // Non-Windows fallback for tests and cross-platform behavior.
-    visit_dir_std(source_root, current_dir, output)
+    visit_dir_std(source_root, start_dir, output)
 }

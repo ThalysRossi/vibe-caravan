@@ -7,6 +7,7 @@ use caravan::error::CaravanError;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::snapshot::{
     process_pending_snapshots, snapshot_if_needed, validate_snapshot_configuration, SnapshotBackend,
+    SnapshotRequest,
 };
 use tempfile::TempDir;
 
@@ -102,12 +103,14 @@ fn snapshots_are_rejected_in_staging_mode() {
     };
 
     let err = snapshot_if_needed(
-        Mode::Staging,
-        Some(1),
-        1,
-        "batch-1",
-        Path::new("/dst"),
-        None,
+        SnapshotRequest {
+            mode: Mode::Staging,
+            snapshot_every: Some(1),
+            completed_batch_count: 1,
+            batch_id: "batch-1",
+            destination_root: Path::new("/dst"),
+            snapshot_root: None,
+        },
         &mut state,
         &backend,
     )
@@ -134,12 +137,14 @@ fn snapshot_creation_is_invoked_only_in_migrate_mode_and_cadence() {
     };
 
     let skipped = snapshot_if_needed(
-        Mode::Migrate,
-        Some(2),
-        1,
-        "batch-2",
-        Path::new("/dst"),
-        None,
+        SnapshotRequest {
+            mode: Mode::Migrate,
+            snapshot_every: Some(2),
+            completed_batch_count: 1,
+            batch_id: "batch-2",
+            destination_root: Path::new("/dst"),
+            snapshot_root: None,
+        },
         &mut state,
         &backend,
     )
@@ -147,12 +152,14 @@ fn snapshot_creation_is_invoked_only_in_migrate_mode_and_cadence() {
     assert_eq!(skipped, None);
 
     let created = snapshot_if_needed(
-        Mode::Migrate,
-        Some(2),
-        2,
-        "batch-2",
-        Path::new("/dst"),
-        None,
+        SnapshotRequest {
+            mode: Mode::Migrate,
+            snapshot_every: Some(2),
+            completed_batch_count: 2,
+            batch_id: "batch-2",
+            destination_root: Path::new("/dst"),
+            snapshot_root: None,
+        },
         &mut state,
         &backend,
     )
@@ -169,12 +176,14 @@ fn snapshot_failures_are_recorded() {
     };
 
     let err = snapshot_if_needed(
-        Mode::Migrate,
-        Some(1),
-        1,
-        "batch-3",
-        Path::new("/dst"),
-        None,
+        SnapshotRequest {
+            mode: Mode::Migrate,
+            snapshot_every: Some(1),
+            completed_batch_count: 1,
+            batch_id: "batch-3",
+            destination_root: Path::new("/dst"),
+            snapshot_root: None,
+        },
         &mut state,
         &backend,
     )
@@ -200,12 +209,14 @@ fn snapshot_metadata_is_persisted_in_state() {
         fail_message: None,
     };
     snapshot_if_needed(
-        Mode::Migrate,
-        Some(1),
-        1,
-        "batch-4",
-        Path::new("/dst"),
-        None,
+        SnapshotRequest {
+            mode: Mode::Migrate,
+            snapshot_every: Some(1),
+            completed_batch_count: 1,
+            batch_id: "batch-4",
+            destination_root: Path::new("/dst"),
+            snapshot_root: None,
+        },
         &mut state,
         &backend,
     )
