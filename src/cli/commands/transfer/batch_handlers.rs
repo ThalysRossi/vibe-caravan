@@ -70,6 +70,7 @@ pub(super) fn copy_single_batch(
 
     state.upsert_batch(batch_state);
     let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
+    let mut check_shutdown = || crate::signal::check_shutdown(&context.shutdown_flag);
     copy_batch_with_state_updates(
         batch,
         state,
@@ -80,6 +81,7 @@ pub(super) fn copy_single_batch(
             reset_verification_passed: true,
         },
         &mut persist_state,
+        &mut check_shutdown,
         &|batch_id| {
             CaravanError::StateCorrupt(format!(
                 "batch {} disappeared from state during copy",
@@ -99,12 +101,14 @@ pub(super) fn verify_single_batch(
     print_verify_batch_banner(batch);
 
     let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
+    let mut check_shutdown = || crate::signal::check_shutdown(&context.shutdown_flag);
     if let Err(err) = verify_batch_with_state_updates(
         batch,
         &context.config.source,
         &context.config.dest,
         state,
         &mut persist_state,
+        &mut check_shutdown,
         &|batch_id| {
             CaravanError::StateCorrupt(format!(
                 "missing batch state for {} before verification",

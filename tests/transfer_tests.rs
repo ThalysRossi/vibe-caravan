@@ -5,12 +5,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use caravan::config::{CopyStrategy, Mode};
+use caravan::error::CaravanError;
+use caravan::models::batch::Batch;
+use caravan::models::file_entry::FileEntry;
 use caravan::plan::{build_plan, PlanOptions};
 use caravan::progress::NoopProgress;
 use caravan::transfer::{
-    copy_batch_with_components, resolve_copy_strategy, summarize_transfer_execution,
-    summarize_transfer_plan, transfer_batch, CopyBackend, DirectoryCreator, FileCopier,
-    LocalFsCopyBackend, ResolvedCopyStrategy,
+    copy_batch_with_components_and_durability, resolve_copy_strategy, summarize_transfer_execution,
+    summarize_transfer_plan, DirectoryCreator, FileCopier, LocalFsCopyBackend,
+    ResolvedCopyStrategy,
 };
 use tempfile::TempDir;
 
@@ -20,6 +23,22 @@ fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
         fs::create_dir_all(parent).expect("parent dirs should be created");
     }
     fs::write(path, bytes).expect("file should be created");
+}
+
+fn copy_batch_noop(
+    batch: &Batch,
+    source_root: &Path,
+    destination_root: &Path,
+    backend: &LocalFsCopyBackend,
+) -> Result<(), CaravanError> {
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
+    backend.copy_batch(
+        batch,
+        source_root,
+        destination_root,
+        &mut NoopProgress,
+        &mut no_interrupt,
+    )
 }
 
 #[test]
@@ -81,7 +100,7 @@ fn transfer_batch_copies_multiple_files_with_nested_paths() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+    copy_batch_noop(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed");
 
     assert_eq!(
@@ -111,8 +130,15 @@ fn backend_copy_batch_direct_call_is_successful() {
     let batch = &plan.batches[0];
 
     let backend = LocalFsCopyBackend::new();
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
     backend
-        .copy_batch(batch, src.path(), dst.path())
+        .copy_batch(
+            batch,
+            src.path(),
+            dst.path(),
+            &mut NoopProgress,
+            &mut no_interrupt,
+        )
         .expect("direct backend copy should succeed");
 
     assert_eq!(
@@ -139,7 +165,7 @@ fn transfer_batch_returns_error_when_source_file_is_missing() {
 
     fs::remove_file(src.path().join("x/data.bin")).expect("source file removal should succeed");
 
-    let err = transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+    let err = copy_batch_noop(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect_err("copy should fail for missing source");
     assert!(err.to_string().contains("failed to copy"));
 }
@@ -208,7 +234,7 @@ fn native_strategy_falls_back_when_native_copy_is_unavailable() {
 
     let backend =
         LocalFsCopyBackend::with_strategy(1024 * 1024, 1024, CopyStrategy::Native, &Mode::Staging);
-    transfer_batch(batch, src.path(), dst.path(), &backend).expect("copy should succeed");
+    copy_batch_noop(batch, src.path(), dst.path(), &backend).expect("copy should succeed");
 
     assert_eq!(
         fs::read(dst.path().join("media/clip.bin")).expect("copied file should exist"),
@@ -237,7 +263,7 @@ fn directory_creation_deduplicated_for_files_in_same_directory() {
     let batch = &plan.batches[0];
 
     // This should work correctly with deduplication
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+    copy_batch_noop(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed with multiple files in same directory");
 
     // Verify all files were copied
@@ -273,7 +299,7 @@ fn nested_directories_created_correctly_with_deduplication() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+    copy_batch_noop(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed with nested directories");
 
     // Verify all files and directories
@@ -313,7 +339,7 @@ fn files_at_root_level_need_no_directory_creation() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
+    copy_batch_noop(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
         .expect("copy should succeed for root-level files");
 
     assert_eq!(fs::read(dst.path().join("file1.txt")).unwrap(), b"one");
@@ -341,7 +367,7 @@ fn error_message_includes_file_path_when_directory_creation_fails() {
     fs::write(&blocked_destination_root, b"not a directory")
         .expect("create file that blocks destination root");
 
-    let err = transfer_batch(
+    let err = copy_batch_noop(
         batch,
         src.path(),
         &blocked_destination_root,
@@ -479,13 +505,16 @@ fn copy_batch_with_components_surfaces_file_copier_failures() {
     let creator = TrackingDirectoryCreator::default();
     let mut progress = NoopProgress;
 
-    let err = copy_batch_with_components(
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
+    let err = copy_batch_with_components_and_durability(
         batch,
         src.path(),
         dst.path(),
         &copier,
         &creator,
         &mut progress,
+        false,
+        &mut no_interrupt,
     )
     .expect_err("copy should fail on second file");
 
@@ -520,13 +549,16 @@ fn copy_batch_with_components_surfaces_directory_creator_failures() {
     let creator = TrackingDirectoryCreator::failing_on(failing_parent.clone());
     let mut progress = NoopProgress;
 
-    let err = copy_batch_with_components(
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
+    let err = copy_batch_with_components_and_durability(
         batch,
         src.path(),
         dst.path(),
         &caravan::transfer::OsFileCopier,
         &creator,
         &mut progress,
+        false,
+        &mut no_interrupt,
     )
     .expect_err("directory creation should fail");
 
@@ -555,13 +587,16 @@ fn copy_batch_with_components_passes_planned_size_hints_to_copier() {
     let creator = TrackingDirectoryCreator::default();
     let mut progress = NoopProgress;
 
-    copy_batch_with_components(
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
+    copy_batch_with_components_and_durability(
         batch,
         src.path(),
         dst.path(),
         &copier,
         &creator,
         &mut progress,
+        false,
+        &mut no_interrupt,
     )
     .expect("copy should succeed");
 
@@ -590,13 +625,16 @@ fn copy_batch_with_components_cleans_temp_file_and_keeps_destination_atomic_on_f
     let creator = TrackingDirectoryCreator::default();
     let mut progress = NoopProgress;
 
-    let err = copy_batch_with_components(
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
+    let err = copy_batch_with_components_and_durability(
         batch,
         src.path(),
         dst.path(),
         &copier,
         &creator,
         &mut progress,
+        false,
+        &mut no_interrupt,
     )
     .expect_err("copy should fail after partial temp write");
 
@@ -615,5 +653,73 @@ fn copy_batch_with_components_cleans_temp_file_and_keeps_destination_atomic_on_f
     assert!(
         !temp_destination.exists(),
         "temp file should be cleaned after failed copy"
+    );
+}
+
+#[test]
+fn interruptible_transfer_stops_before_next_file_after_shutdown_request() {
+    let src = TempDir::new().expect("source temp dir");
+    let dst = TempDir::new().expect("destination temp dir");
+    create_file(src.path(), "a.txt", b"a");
+    create_file(src.path(), "b.txt", b"b");
+    create_file(src.path(), "c.txt", b"c");
+
+    let batch = Batch {
+        id: "batch-000001".to_string(),
+        files: vec![
+            FileEntry {
+                relative_path: PathBuf::from("a.txt"),
+                size_bytes: 1,
+                modified_time: None,
+            },
+            FileEntry {
+                relative_path: PathBuf::from("b.txt"),
+                size_bytes: 1,
+                modified_time: None,
+            },
+            FileEntry {
+                relative_path: PathBuf::from("c.txt"),
+                size_bytes: 1,
+                modified_time: None,
+            },
+        ],
+        total_bytes: 3,
+        file_count: 3,
+    };
+
+    let backend = LocalFsCopyBackend::new();
+    let mut progress = NoopProgress;
+    let mut check_calls = 0usize;
+    let mut check_interrupt = || {
+        check_calls += 1;
+        if check_calls >= 2 {
+            Err(CaravanError::GracefulShutdown)
+        } else {
+            Ok(())
+        }
+    };
+
+    let err = backend
+        .copy_batch(
+            &batch,
+            src.path(),
+            dst.path(),
+            &mut progress,
+            &mut check_interrupt,
+        )
+        .expect_err("copy should stop after current file when shutdown is requested");
+
+    assert!(matches!(err, CaravanError::GracefulShutdown));
+    assert!(
+        dst.path().join("a.txt").exists(),
+        "first file should be copied"
+    );
+    assert!(
+        !dst.path().join("b.txt").exists(),
+        "second file should not be copied"
+    );
+    assert!(
+        !dst.path().join("c.txt").exists(),
+        "third file should not be copied"
     );
 }

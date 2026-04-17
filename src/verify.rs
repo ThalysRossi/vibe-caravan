@@ -22,11 +22,13 @@ pub fn verify_batch(
     source_root: &Path,
     destination_root: &Path,
 ) -> Result<VerificationReport, CaravanError> {
+    let mut no_interrupt = || Ok(());
     verify_batch_with_progress(
         batch,
         source_root,
         destination_root,
         &mut crate::progress::NoopProgress,
+        &mut no_interrupt,
     )
 }
 
@@ -35,6 +37,7 @@ pub fn verify_batch_with_progress(
     source_root: &Path,
     destination_root: &Path,
     progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<VerificationReport, CaravanError> {
     let mut missing_files = Vec::new();
     let mut mismatched_files = Vec::new();
@@ -44,6 +47,8 @@ pub fn verify_batch_with_progress(
     progress.start(batch.files.len(), "Verifying");
 
     for (index, entry) in batch.files.iter().enumerate() {
+        check_interrupt()?;
+
         let source_path = source_root.join(&entry.relative_path);
         let destination_path = destination_root.join(&entry.relative_path);
         let rel = entry.relative_path.to_string_lossy().to_string();

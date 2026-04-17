@@ -1,7 +1,7 @@
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::progress::{NoopProgress, ProgressReporter, TerminalProgress};
-use caravan::transfer::{transfer_batch_with_progress, LocalFsCopyBackend};
+use caravan::transfer::LocalFsCopyBackend;
 use caravan::verify::verify_batch_with_progress;
 use std::time::Duration;
 use tempfile::tempdir;
@@ -134,8 +134,11 @@ fn transfer_batch_calls_progress_correctly() {
 
     let mut mock = MockProgress::default();
     let backend = LocalFsCopyBackend::new();
+    let mut no_interrupt = || Ok::<(), caravan::error::CaravanError>(());
 
-    transfer_batch_with_progress(&batch, src.path(), dst.path(), &backend, &mut mock).unwrap();
+    backend
+        .copy_batch(&batch, src.path(), dst.path(), &mut mock, &mut no_interrupt)
+        .unwrap();
 
     assert!(mock.start_called);
     assert_eq!(mock.total_items, 3);
@@ -181,8 +184,11 @@ fn verify_batch_calls_progress_correctly() {
     };
 
     let mut mock = MockProgress::default();
+    let mut no_interrupt = || Ok::<(), caravan::error::CaravanError>(());
 
-    let report = verify_batch_with_progress(&batch, src.path(), dst.path(), &mut mock).unwrap();
+    let report =
+        verify_batch_with_progress(&batch, src.path(), dst.path(), &mut mock, &mut no_interrupt)
+            .unwrap();
 
     assert_eq!(
         report.status,

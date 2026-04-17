@@ -350,23 +350,6 @@ impl FileCopier for HybridFileCopier {
     }
 }
 
-pub trait CopyBackend {
-    fn copy_batch(
-        &self,
-        batch: &Batch,
-        source_root: &Path,
-        destination_root: &Path,
-    ) -> Result<(), CaravanError>;
-
-    fn copy_batch_with_progress(
-        &self,
-        batch: &Batch,
-        source_root: &Path,
-        destination_root: &Path,
-        progress: &mut dyn ProgressReporter,
-    ) -> Result<(), CaravanError>;
-}
-
 #[derive(Debug, Clone)]
 enum LocalFileCopier {
     Hybrid(HybridFileCopier),
@@ -433,6 +416,26 @@ impl LocalFsCopyBackend {
     pub fn durable_writes_enabled(&self) -> bool {
         self.durable_writes
     }
+
+    pub fn copy_batch(
+        &self,
+        batch: &Batch,
+        source_root: &Path,
+        destination_root: &Path,
+        progress: &mut dyn ProgressReporter,
+        check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+    ) -> Result<(), CaravanError> {
+        copy_batch_with_components_and_durability(
+            batch,
+            source_root,
+            destination_root,
+            &self.file_copier,
+            &FsDirectoryCreator,
+            progress,
+            self.durable_writes,
+            check_interrupt,
+        )
+    }
 }
 
 impl Default for LocalFsCopyBackend {
@@ -448,40 +451,6 @@ impl LocalFileCopier {
             LocalFileCopier::NativePreferred(copier) => copier.copy_file(source, destination),
             LocalFileCopier::Buffered(copier) => copier.copy_file(source, destination),
         }
-    }
-}
-
-impl CopyBackend for LocalFsCopyBackend {
-    fn copy_batch(
-        &self,
-        batch: &Batch,
-        source_root: &Path,
-        destination_root: &Path,
-    ) -> Result<(), CaravanError> {
-        self.copy_batch_with_progress(
-            batch,
-            source_root,
-            destination_root,
-            &mut crate::progress::NoopProgress,
-        )
-    }
-
-    fn copy_batch_with_progress(
-        &self,
-        batch: &Batch,
-        source_root: &Path,
-        destination_root: &Path,
-        progress: &mut dyn ProgressReporter,
-    ) -> Result<(), CaravanError> {
-        copy_batch_with_components_and_durability(
-            batch,
-            source_root,
-            destination_root,
-            &self.file_copier,
-            &FsDirectoryCreator,
-            progress,
-            self.durable_writes,
-        )
     }
 }
 
@@ -506,50 +475,6 @@ impl FileCopier for LocalFileCopier {
     }
 }
 
-pub fn transfer_batch(
-    batch: &Batch,
-    source_root: &Path,
-    destination_root: &Path,
-    backend: &dyn CopyBackend,
-) -> Result<(), CaravanError> {
-    transfer_batch_with_progress(
-        batch,
-        source_root,
-        destination_root,
-        backend,
-        &mut crate::progress::NoopProgress,
-    )
-}
-
-pub fn transfer_batch_with_progress(
-    batch: &Batch,
-    source_root: &Path,
-    destination_root: &Path,
-    backend: &dyn CopyBackend,
-    progress: &mut dyn ProgressReporter,
-) -> Result<(), CaravanError> {
-    backend.copy_batch_with_progress(batch, source_root, destination_root, progress)
-}
-
-pub fn copy_batch_with_components(
-    batch: &Batch,
-    source_root: &Path,
-    destination_root: &Path,
-    file_copier: &dyn FileCopier,
-    dir_creator: &dyn DirectoryCreator,
-    progress: &mut dyn ProgressReporter,
-) -> Result<(), CaravanError> {
-    copy_batch_with_components_and_durability(
-        batch,
-        source_root,
-        destination_root,
-        file_copier,
-        dir_creator,
-        progress,
-        false,
-    )
-}
-
 pub fn copy_batch_with_components_and_durability(
     batch: &Batch,
     source_root: &Path,
@@ -558,6 +483,7 @@ pub fn copy_batch_with_components_and_durability(
     dir_creator: &dyn DirectoryCreator,
     progress: &mut dyn ProgressReporter,
     durable_writes: bool,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
     progress.start(batch.files.len(), "Copying");
 
@@ -565,6 +491,8 @@ pub fn copy_batch_with_components_and_durability(
     let mut touched_parent_dirs = HashSet::new();
 
     for (index, file) in batch.files.iter().enumerate() {
+        check_interrupt()?;
+
         let source_path = source_root.join(&file.relative_path);
         let destination_path = destination_root.join(&file.relative_path);
 

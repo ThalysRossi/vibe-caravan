@@ -1,4 +1,5 @@
 use std::time::{Duration, Instant};
+use std::{io::stderr, io::Write};
 
 /// Progress reporter trait for tracking long running operations
 pub trait ProgressReporter {
@@ -129,7 +130,17 @@ impl ProgressReporter for TerminalProgress {
         self.operation = operation.to_string();
         self.last_printed_percent = -1.0;
         self.last_printed_time = Instant::now();
-        eprint!("\r  {} 0/{} files", self.operation, self.total);
+        let bar = Self::progress_bar(0.0, 20);
+        let throughput = if self.total_bytes.is_some() {
+            "-- files/s, -- MB/s"
+        } else {
+            "-- files/s"
+        };
+        eprint!(
+            "\r  {} 0/{} files {} 0.0% | {} | ETA --",
+            self.operation, self.total, bar, throughput
+        );
+        let _ = stderr().flush();
     }
 
     fn advance(&mut self, current: usize, _item_name: Option<&str>) {
@@ -159,6 +170,7 @@ impl ProgressReporter for TerminalProgress {
             "\r  {} {}/{} files {} {:.1}% | {} | {}",
             self.operation, current, self.total, bar, percent, throughput, eta
         );
+        let _ = stderr().flush();
     }
 
     fn finish(&mut self) {

@@ -93,7 +93,7 @@ pub fn install_signal_handlers(shutdown_flag: &ShutdownFlag) -> Result<(), Carav
                     active_flag.store(true, Ordering::SeqCst);
                 }
             }
-            eprintln!("\nShutdown requested. Finishing current operation...");
+            eprintln!("\nShutdown requested. Finishing current file...");
         })
         .map_err(|err| CaravanError::Io(format!("failed to install signal handler: {}", err)))?;
         let _ = HANDLER_INSTALLED.set(());

@@ -18,12 +18,14 @@ fn verify_batch_for_resume(
 ) -> Result<(), CaravanError> {
     println!("Verifying {}...", batch.id);
     let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
+    let mut check_shutdown = || context.check_shutdown();
     if let Err(err) = verify_batch_with_state_updates(
         batch,
         &context.config.source,
         &context.config.dest,
         state,
         &mut persist_state,
+        &mut check_shutdown,
         &|batch_id| {
             CaravanError::StateCorrupt(format!(
                 "batch {} disappeared from state during verification",
@@ -50,6 +52,7 @@ fn copy_batch_for_resume(
 
     ensure_destination_capacity(&context.config.dest, batch.total_bytes)?;
     let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
+    let mut check_shutdown = || context.check_shutdown();
     copy_batch_with_state_updates(
         batch,
         state,
@@ -60,6 +63,7 @@ fn copy_batch_for_resume(
             reset_verification_passed: false,
         },
         &mut persist_state,
+        &mut check_shutdown,
         &|batch_id| {
             CaravanError::StateCorrupt(format!(
                 "batch {} disappeared from state during copy",

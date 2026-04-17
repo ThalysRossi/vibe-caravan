@@ -1,9 +1,11 @@
 use std::fs;
 use std::io::Write;
 
+use caravan::error::CaravanError;
 use caravan::models::verification::VerificationStatus;
 use caravan::plan::{build_plan, PlanOptions};
-use caravan::transfer::{transfer_batch, LocalFsCopyBackend};
+use caravan::progress::NoopProgress;
+use caravan::transfer::LocalFsCopyBackend;
 use caravan::verify::{digest_file, verify_batch};
 use tempfile::TempDir;
 
@@ -13,6 +15,21 @@ fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
         fs::create_dir_all(parent).expect("parent dirs should be created");
     }
     fs::write(path, bytes).expect("file should be created");
+}
+
+fn copy_batch_noop(
+    batch: &caravan::models::batch::Batch,
+    source_root: &std::path::Path,
+    destination_root: &std::path::Path,
+) -> Result<(), CaravanError> {
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
+    LocalFsCopyBackend::new().copy_batch(
+        batch,
+        source_root,
+        destination_root,
+        &mut NoopProgress,
+        &mut no_interrupt,
+    )
 }
 
 #[test]
@@ -31,8 +48,7 @@ fn copied_file_contents_match_source() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
-        .expect("copy should succeed");
+    copy_batch_noop(batch, src.path(), dst.path()).expect("copy should succeed");
     let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
 
     assert_eq!(report.status, VerificationStatus::Pass);
@@ -74,8 +90,7 @@ fn size_mismatch_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
-        .expect("copy should succeed");
+    copy_batch_noop(batch, src.path(), dst.path()).expect("copy should succeed");
 
     create_file(dst.path(), "bin/data.bin", b"abc");
 
@@ -99,8 +114,7 @@ fn digest_mismatch_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
-        .expect("copy should succeed");
+    copy_batch_noop(batch, src.path(), dst.path()).expect("copy should succeed");
 
     create_file(dst.path(), "docs/report.txt", b"same-size-datA");
 
@@ -124,8 +138,7 @@ fn unreadable_file_fails_verification() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
-        .expect("copy should succeed");
+    copy_batch_noop(batch, src.path(), dst.path()).expect("copy should succeed");
 
     fs::remove_file(src.path().join("x/file.txt")).expect("source file removal should succeed");
 
@@ -149,8 +162,7 @@ fn verification_report_serializes_to_json() {
     )
     .expect("planning should succeed");
     let batch = &plan.batches[0];
-    transfer_batch(batch, src.path(), dst.path(), &LocalFsCopyBackend::new())
-        .expect("copy should succeed");
+    copy_batch_noop(batch, src.path(), dst.path()).expect("copy should succeed");
 
     let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
     let json = serde_json::to_string(&report).expect("report should serialize");

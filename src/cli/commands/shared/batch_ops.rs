@@ -17,6 +17,7 @@ pub(crate) fn copy_batch_with_state_updates(
     state: &mut MigrationState,
     op: CopyBatchOp<'_>,
     persist_state: &mut dyn FnMut(&MigrationState) -> Result<(), CaravanError>,
+    check_shutdown: &mut dyn FnMut() -> Result<(), CaravanError>,
     missing_state_error: &dyn Fn(&str) -> CaravanError,
 ) -> Result<(), CaravanError> {
     let mut current_state = state
@@ -29,12 +30,12 @@ pub(crate) fn copy_batch_with_state_updates(
     persist_state(state)?;
 
     let mut progress = crate::progress::TerminalProgress::new();
-    transfer::transfer_batch_with_progress(
+    op.copy_backend.copy_batch(
         batch,
         op.source_root,
         op.dest_root,
-        op.copy_backend,
         &mut progress,
+        check_shutdown,
     )?;
 
     current_state.phase = BatchPhase::CopyCompleted;
@@ -53,11 +54,17 @@ pub(crate) fn verify_batch_with_state_updates(
     dest_root: &Path,
     state: &mut MigrationState,
     persist_state: &mut dyn FnMut(&MigrationState) -> Result<(), CaravanError>,
+    check_shutdown: &mut dyn FnMut() -> Result<(), CaravanError>,
     missing_state_error: &dyn Fn(&str) -> CaravanError,
 ) -> Result<(), CaravanError> {
     let mut progress = crate::progress::TerminalProgress::new();
-    let verification_report =
-        verify::verify_batch_with_progress(batch, source_root, dest_root, &mut progress)?;
+    let verification_report = verify::verify_batch_with_progress(
+        batch,
+        source_root,
+        dest_root,
+        &mut progress,
+        check_shutdown,
+    )?;
 
     let mut current_state = state
         .batch(&batch.id)
