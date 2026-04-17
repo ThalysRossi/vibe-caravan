@@ -1,6 +1,6 @@
 use caravan::migration_registry::{
-    check_source_writable, generate_state_filename, state_dir_in_source, state_file_in_source,
-    MigrationRegistry, MigrationStatus,
+    check_source_writable, generate_state_filename, persist_status_transition_with_intent,
+    state_dir_in_source, state_file_in_source, MigrationRegistry, MigrationStatus,
 };
 use tempfile::TempDir;
 
@@ -41,9 +41,11 @@ fn save_and_load_registry_round_trip() {
     assert_eq!(m1.destination, "/dest1");
     assert_eq!(m1.mode, "staging");
     assert_eq!(m1.status, MigrationStatus::Running);
+    assert_eq!(m1.pending_status, None);
 
     let m2 = loaded.find_by_id(id2).expect("migration 2 should exist");
     assert_eq!(m2.status, MigrationStatus::Completed);
+    assert_eq!(m2.pending_status, None);
 }
 
 #[test]
@@ -154,6 +156,76 @@ fn find_first_incomplete() {
         .update_status(id2, MigrationStatus::Completed)
         .expect("should update");
     assert!(registry.find_first_incomplete().is_none());
+}
+
+#[test]
+fn effective_status_prefers_pending_status() {
+    let mut registry = MigrationRegistry::new();
+    let id = registry.add_migration("/src", "/dst", "staging", "state.json");
+    registry
+        .begin_status_transition(id, MigrationStatus::Verifying)
+        .expect("begin transition");
+
+    let entry = registry.find_by_id(id).expect("entry should exist");
+    assert_eq!(entry.status, MigrationStatus::NotStarted);
+    assert_eq!(entry.pending_status, Some(MigrationStatus::Verifying));
+    assert_eq!(entry.effective_status(), MigrationStatus::Verifying);
+}
+
+#[test]
+fn find_first_incomplete_uses_effective_status_with_pending_transition() {
+    let mut registry = MigrationRegistry::new();
+    let id = registry.add_migration("/src", "/dst", "staging", "state.json");
+    registry
+        .begin_status_transition(id, MigrationStatus::Completed)
+        .expect("begin transition");
+
+    assert!(
+        registry.find_first_incomplete().is_none(),
+        "pending completed transition should be treated as completed for lookup"
+    );
+}
+
+#[test]
+fn persist_status_transition_with_intent_commits_and_clears_pending() {
+    let tmp = TempDir::new().expect("temp dir");
+    let registry_path = tmp.path().join("registry.json");
+
+    let mut registry = MigrationRegistry::new();
+    let id = registry.add_migration("/src", "/dst", "staging", "state.json");
+    registry
+        .save(&registry_path)
+        .expect("save initial registry");
+
+    persist_status_transition_with_intent(&registry_path, id, MigrationStatus::Running)
+        .expect("persist transition");
+
+    let loaded = MigrationRegistry::load(&registry_path).expect("load registry");
+    let entry = loaded.find_by_id(id).expect("entry should exist");
+    assert_eq!(entry.status, MigrationStatus::Running);
+    assert_eq!(entry.pending_status, None);
+}
+
+#[test]
+fn pending_transition_persists_as_recoverable_intent() {
+    let tmp = TempDir::new().expect("temp dir");
+    let registry_path = tmp.path().join("registry.json");
+
+    let mut registry = MigrationRegistry::new();
+    let id = registry.add_migration("/src", "/dst", "staging", "state.json");
+    registry
+        .begin_status_transition(id, MigrationStatus::AwaitingDeletion)
+        .expect("begin transition");
+    registry.save(&registry_path).expect("save registry");
+
+    let loaded = MigrationRegistry::load(&registry_path).expect("load registry");
+    let entry = loaded.find_by_id(id).expect("entry should exist");
+    assert_eq!(entry.status, MigrationStatus::NotStarted);
+    assert_eq!(
+        entry.pending_status,
+        Some(MigrationStatus::AwaitingDeletion)
+    );
+    assert_eq!(entry.effective_status(), MigrationStatus::AwaitingDeletion);
 }
 
 #[test]

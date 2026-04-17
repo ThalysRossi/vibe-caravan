@@ -33,8 +33,12 @@ pub(super) fn register_migration(
             new_id
         };
 
-    registry.update_status(migration_id, migration_registry::MigrationStatus::Running)?;
     registry.save(&registry_path)?;
+    migration_registry::persist_status_transition_with_intent(
+        &registry_path,
+        migration_id,
+        migration_registry::MigrationStatus::Running,
+    )?;
     Ok(migration_id)
 }
 
@@ -43,9 +47,7 @@ pub(super) fn set_migration_status(
     status: migration_registry::MigrationStatus,
 ) -> Result<(), CaravanError> {
     let registry_path = migration_registry::default_registry_path();
-    let mut registry = migration_registry::MigrationRegistry::load(&registry_path)?;
-    registry.update_status(migration_id, status)?;
-    registry.save(&registry_path)
+    migration_registry::persist_status_transition_with_intent(&registry_path, migration_id, status)
 }
 
 pub(super) fn load_or_create_state(

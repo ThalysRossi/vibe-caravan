@@ -24,9 +24,17 @@ pub struct MigrationEntry {
     pub destination: String,
     pub mode: String, // "staging" or "migrate"
     pub status: MigrationStatus,
+    #[serde(default)]
+    pub pending_status: Option<MigrationStatus>,
     pub created_at: u64,
     pub updated_at: u64,
     pub state_file: String, // e.g., "migration_source_hash_dest_hash.json"
+}
+
+impl MigrationEntry {
+    pub fn effective_status(&self) -> MigrationStatus {
+        self.pending_status.unwrap_or(self.status)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,18 +95,20 @@ impl MigrationRegistry {
         mode: &str,
     ) -> Option<&MigrationEntry> {
         self.migrations.iter().find(|m| {
+            let status = m.effective_status();
             m.source == source
                 && m.destination == dest
                 && m.mode == mode
-                && m.status != MigrationStatus::Completed
-                && m.status != MigrationStatus::Failed
+                && status != MigrationStatus::Completed
+                && status != MigrationStatus::Failed
         })
     }
 
     pub fn find_first_incomplete(&self) -> Option<&MigrationEntry> {
-        self.migrations
-            .iter()
-            .find(|m| m.status != MigrationStatus::Completed && m.status != MigrationStatus::Failed)
+        self.migrations.iter().find(|m| {
+            let status = m.effective_status();
+            status != MigrationStatus::Completed && status != MigrationStatus::Failed
+        })
     }
 
     pub fn add_migration(
@@ -122,6 +132,7 @@ impl MigrationRegistry {
             destination: destination.to_string(),
             mode: mode.to_string(),
             status: MigrationStatus::NotStarted,
+            pending_status: None,
             created_at: now,
             updated_at: now,
             state_file: state_file.to_string(),
@@ -132,13 +143,42 @@ impl MigrationRegistry {
     }
 
     pub fn update_status(&mut self, id: u64, status: MigrationStatus) -> Result<(), CaravanError> {
+        self.begin_status_transition(id, status)?;
+        self.commit_status_transition(id)
+    }
+
+    pub fn begin_status_transition(
+        &mut self,
+        id: u64,
+        target_status: MigrationStatus,
+    ) -> Result<(), CaravanError> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
 
         if let Some(entry) = self.find_by_id_mut(id) {
-            entry.status = status;
+            entry.pending_status = Some(target_status);
+            entry.updated_at = now;
+            Ok(())
+        } else {
+            Err(CaravanError::StateCorrupt(format!(
+                "migration with id {} not found",
+                id
+            )))
+        }
+    }
+
+    pub fn commit_status_transition(&mut self, id: u64) -> Result<(), CaravanError> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        if let Some(entry) = self.find_by_id_mut(id) {
+            if let Some(target_status) = entry.pending_status.take() {
+                entry.status = target_status;
+            }
             entry.updated_at = now;
             Ok(())
         } else {
@@ -228,4 +268,22 @@ pub fn check_source_writable(source: &Path) -> Result<(), CaravanError> {
     let _ = fs::remove_file(&test_file);
 
     Ok(())
+}
+
+/// Persist a migration status update using an explicit recoverable intent protocol.
+///
+/// If a crash occurs after the intent is saved but before commit, the registry will retain
+/// `pending_status`, which callers can interpret via `MigrationEntry::effective_status()`.
+pub fn persist_status_transition_with_intent(
+    registry_path: &Path,
+    migration_id: u64,
+    target_status: MigrationStatus,
+) -> Result<(), CaravanError> {
+    let mut registry = MigrationRegistry::load(registry_path)?;
+    registry.begin_status_transition(migration_id, target_status)?;
+    registry.save(registry_path)?;
+
+    let mut registry = MigrationRegistry::load(registry_path)?;
+    registry.commit_status_transition(migration_id)?;
+    registry.save(registry_path)
 }
