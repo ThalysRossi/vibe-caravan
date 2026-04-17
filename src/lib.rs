@@ -19,6 +19,7 @@ pub mod size;
 pub mod snapshot;
 pub mod state_discovery;
 pub mod state_store;
+pub mod status;
 pub mod transfer;
 pub mod verify;
 

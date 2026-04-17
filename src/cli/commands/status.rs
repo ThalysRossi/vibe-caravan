@@ -3,6 +3,7 @@ use std::path::Path;
 use crate::config::OutputFormat;
 use crate::error::CaravanError;
 use crate::state_store;
+use crate::status;
 
 use super::shared::{
     print_last_snapshot, print_status_batch, print_status_header, print_status_journal_entry,
@@ -19,27 +20,26 @@ pub(super) fn execute_status(state_path: &Path, output: OutputFormat) -> Result<
         return Ok(());
     }
 
-    print_status_header(
-        &state.mode,
-        &state.source,
-        &state.destination,
-        state.batches.len(),
-    );
-    print_status_snapshot_policy(
-        state.snapshot_every,
-        state.snapshot_dir.as_deref().map(Path::new),
-    );
+    let summary = status::summarize_status(&state, 5);
 
-    for batch in &state.batches {
+    print_status_header(
+        summary.mode,
+        summary.source,
+        summary.destination,
+        summary.batches.len(),
+    );
+    print_status_snapshot_policy(summary.snapshot_every, summary.snapshot_dir.map(Path::new));
+
+    for batch in summary.batches {
         print_status_batch(batch);
     }
 
-    if let Some(snapshot) = &state.last_successful_snapshot_name {
+    if let Some(snapshot) = summary.last_successful_snapshot_name {
         print_last_snapshot(snapshot);
     }
 
-    print_status_journal_header(state.journal.len());
-    for entry in state.journal.iter().rev().take(5) {
+    print_status_journal_header(summary.journal_entry_count);
+    for entry in summary.recent_journal_entries {
         print_status_journal_entry(entry);
     }
 

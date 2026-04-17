@@ -19,13 +19,13 @@ pub(super) fn parse_copy_options(
     buffered_copy_threshold: Option<&str>,
 ) -> Result<(usize, u64), CaravanError> {
     let copy_buffer_size = match copy_buffer_size {
-        Some(s) => parse_size_usize(s)
+        Some(s) => parse_size_as_usize(s)
             .map_err(|e| CaravanError::InvalidArguments(format!("copy-buffer-size: {e}")))?,
         None => TransferConfig::default_copy_buffer_size(),
     };
 
     let buffered_copy_threshold = match buffered_copy_threshold {
-        Some(s) => parse_size_u64(s)
+        Some(s) => parse_size_with_label(s, "size")
             .map_err(|e| CaravanError::InvalidArguments(format!("buffered-copy-threshold: {e}")))?,
         None => TransferConfig::default_buffered_copy_threshold(),
     };
@@ -46,19 +46,14 @@ pub(super) fn parse_copy_options(
 }
 
 pub(super) fn parse_batch_size(input: &str) -> Result<u64, String> {
-    crate::size::parse_size(input).map_err(|err| format_size_error("batch-size", err))
+    parse_size_with_label(input, "batch-size")
 }
 
-fn parse_size_usize(input: &str) -> Result<usize, String> {
-    let result = parse_size_u64(input)?;
-
-    if result > usize::MAX as u64 {
-        return Err("size exceeds maximum allowed value".to_string());
-    }
-
-    Ok(result as usize)
+fn parse_size_as_usize(input: &str) -> Result<usize, String> {
+    let parsed = parse_size_with_label(input, "size")?;
+    usize::try_from(parsed).map_err(|_| "size exceeds maximum allowed value".to_string())
 }
 
-fn parse_size_u64(input: &str) -> Result<u64, String> {
-    crate::size::parse_size(input).map_err(|err| format_size_error("size", err))
+fn parse_size_with_label(input: &str, label: &str) -> Result<u64, String> {
+    crate::size::parse_size(input).map_err(|err| format_size_error(label, err))
 }

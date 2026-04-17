@@ -242,6 +242,28 @@ fn zero_copy_buffer_size_is_rejected() {
 }
 
 #[test]
+fn invalid_copy_buffer_size_preserves_option_specific_error_wording() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--copy-buffer-size",
+        "abc",
+    ]);
+    let err = result.expect_err("invalid copy-buffer-size should fail");
+    assert!(
+        err.to_string()
+            .contains("copy-buffer-size: size must start with digits"),
+        "expected option-specific message, got: {err}"
+    );
+}
+
+#[test]
 fn zero_buffered_copy_threshold_is_rejected() {
     let result = parse_cli_from([
         "caravan",
@@ -257,6 +279,29 @@ fn zero_buffered_copy_threshold_is_rejected() {
     ]);
 
     assert!(result.is_err());
+}
+
+#[test]
+fn invalid_buffered_copy_threshold_preserves_option_specific_error_wording() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--buffered-copy-threshold",
+        "1MB",
+    ]);
+    let err = result.expect_err("invalid buffered-copy-threshold should fail");
+    assert!(
+        err.to_string().contains(
+            "buffered-copy-threshold: unsupported size unit; use B, KiB, MiB, GiB, or TiB"
+        ),
+        "expected option-specific message, got: {err}"
+    );
 }
 
 #[test]
