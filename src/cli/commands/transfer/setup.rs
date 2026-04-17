@@ -7,6 +7,8 @@ use crate::models::state::{BatchPhase, BatchState, MigrationState};
 use crate::plan::PlanningSnapshot;
 use crate::state_store;
 
+use super::super::shared::AppContext;
+
 pub(super) fn mode_name(mode: &Mode) -> &'static str {
     match mode {
         Mode::Staging => "staging",
@@ -15,39 +17,30 @@ pub(super) fn mode_name(mode: &Mode) -> &'static str {
 }
 
 pub(super) fn register_migration(
+    app_context: &AppContext,
     source: &str,
     dest: &str,
     mode: &str,
     state_filename: &str,
 ) -> Result<u64, CaravanError> {
-    let registry_path = migration_registry::default_registry_path();
-    let mut registry = migration_registry::MigrationRegistry::load(&registry_path)?;
-
-    let migration_id =
-        if let Some(existing_migration) = registry.find_by_source_dest(source, dest, mode) {
-            println!("Resuming existing migration ID: {}", existing_migration.id);
-            existing_migration.id
-        } else {
-            let new_id = registry.add_migration(source, dest, mode, state_filename);
-            println!("Migration registered with new ID: {}", new_id);
-            new_id
-        };
-
-    registry.save(&registry_path)?;
-    migration_registry::persist_status_transition_with_intent(
-        &registry_path,
-        migration_id,
-        migration_registry::MigrationStatus::Running,
-    )?;
+    let (migration_id, created) =
+        app_context.register_or_reuse_migration(source, dest, mode, state_filename)?;
+    if created {
+        println!("Migration registered with new ID: {}", migration_id);
+    } else {
+        println!("Resuming existing migration ID: {}", migration_id);
+    }
+    app_context
+        .persist_migration_status(migration_id, migration_registry::MigrationStatus::Running)?;
     Ok(migration_id)
 }
 
 pub(super) fn set_migration_status(
+    app_context: &AppContext,
     migration_id: u64,
     status: migration_registry::MigrationStatus,
 ) -> Result<(), CaravanError> {
-    let registry_path = migration_registry::default_registry_path();
-    migration_registry::persist_status_transition_with_intent(&registry_path, migration_id, status)
+    app_context.persist_migration_status(migration_id, status)
 }
 
 pub(super) fn load_or_create_state(

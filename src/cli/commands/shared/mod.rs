@@ -1,3 +1,4 @@
+mod app_context;
 mod batch_ops;
 mod capacity_guard;
 mod deletion;
@@ -5,6 +6,7 @@ mod operator_review;
 mod output;
 mod persistence;
 
+pub(super) use app_context::AppContext;
 pub(super) use batch_ops::{
     copy_batch_with_state_updates, verify_batch_with_state_updates, CopyBatchOp,
 };

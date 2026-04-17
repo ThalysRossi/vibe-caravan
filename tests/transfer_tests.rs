@@ -8,8 +8,9 @@ use caravan::config::{CopyStrategy, Mode};
 use caravan::plan::{build_plan, PlanOptions};
 use caravan::progress::NoopProgress;
 use caravan::transfer::{
-    copy_batch_with_components, resolve_copy_strategy, transfer_batch, CopyBackend,
-    DirectoryCreator, FileCopier, LocalFsCopyBackend, ResolvedCopyStrategy,
+    copy_batch_with_components, resolve_copy_strategy, summarize_transfer_execution,
+    summarize_transfer_plan, transfer_batch, CopyBackend, DirectoryCreator, FileCopier,
+    LocalFsCopyBackend, ResolvedCopyStrategy,
 };
 use tempfile::TempDir;
 
@@ -19,6 +20,48 @@ fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
         fs::create_dir_all(parent).expect("parent dirs should be created");
     }
     fs::write(path, bytes).expect("file should be created");
+}
+
+#[test]
+fn transfer_domain_summaries_capture_plan_and_execution_counts() {
+    let src = TempDir::new().expect("source temp dir");
+    create_file(src.path(), "a.txt", b"a");
+    create_file(src.path(), "b.txt", b"bb");
+
+    let plan = build_plan(
+        src.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+    let plan_summary = summarize_transfer_plan(&plan);
+    assert_eq!(plan_summary.batch_count, plan.batches.len());
+    assert_eq!(plan_summary.source_file_count, 2);
+    assert_eq!(plan_summary.source_total_bytes, 3);
+
+    let mut state = caravan::models::state::MigrationState::new("staging", "/src", "/dst");
+    state.upsert_batch(caravan::models::state::BatchState {
+        batch_id: "batch-1".to_string(),
+        phase: caravan::models::state::BatchPhase::DeleteCompleted,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: true,
+    });
+    state.upsert_batch(caravan::models::state::BatchState {
+        batch_id: "batch-2".to_string(),
+        phase: caravan::models::state::BatchPhase::VerifyCompleted,
+        verification_passed: true,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    let execution_summary = summarize_transfer_execution(&state, 7);
+    assert_eq!(execution_summary.processed_batches, 7);
+    assert_eq!(execution_summary.total_batches, 2);
+    assert_eq!(execution_summary.completed_batches, 1);
+    assert_eq!(execution_summary.pending_delete_batches, 1);
 }
 
 #[test]

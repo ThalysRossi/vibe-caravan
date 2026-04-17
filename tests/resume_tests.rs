@@ -11,8 +11,8 @@ use caravan::resume::{
     classify_capacity_failure_message, classify_copy_failure_message,
     classify_verification_failure_message, inspect_failed_batches, load_state_for_resume,
     plan_resume_step, plan_resume_step_with_recovery, reconcile_batch_destination,
-    recovery_message, require_delete_permission_for_resume, resume_run, FailureClass,
-    ReconciliationResult, ResumeOptions, ResumeStepPlan,
+    recovery_message, require_delete_permission_for_resume, resume_run, summarize_resume_execution,
+    summarize_resume_state, FailureClass, ReconciliationResult, ResumeOptions, ResumeStepPlan,
 };
 use caravan::state_store::{load_state, persist_state};
 use tempfile::TempDir;
@@ -36,6 +36,37 @@ fn create_file(root: &Path, rel: &str, bytes: &[u8]) {
         fs::create_dir_all(parent).expect("parent dirs");
     }
     fs::write(path, bytes).expect("write file");
+}
+
+#[test]
+fn resume_domain_summaries_capture_state_and_execution_counts() {
+    let mut state = MigrationState::new("staging", "/src", "/dst");
+    state.upsert_batch(BatchState {
+        batch_id: "batch-1".to_string(),
+        phase: BatchPhase::DeleteCompleted,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: true,
+    });
+    state.upsert_batch(BatchState {
+        batch_id: "batch-2".to_string(),
+        phase: BatchPhase::VerifyCompleted,
+        verification_passed: true,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    let state_summary = summarize_resume_state(&state);
+    assert_eq!(state_summary.mode, "staging");
+    assert_eq!(state_summary.source, "/src");
+    assert_eq!(state_summary.destination, "/dst");
+    assert_eq!(state_summary.total_batches, 2);
+    assert_eq!(state_summary.completed_batches, 1);
+
+    let execution_summary = summarize_resume_execution(&state);
+    assert_eq!(execution_summary.total_batches, 2);
+    assert_eq!(execution_summary.completed_batches, 1);
+    assert_eq!(execution_summary.pending_delete_batches, 1);
 }
 
 #[test]

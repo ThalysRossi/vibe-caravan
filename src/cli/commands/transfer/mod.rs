@@ -2,11 +2,12 @@ use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
 use crate::plan::PlanOptions;
+use crate::transfer as transfer_ops;
 use crate::{migration_registry, plan, preflight, snapshot};
 
 use super::shared::{
     ensure_no_operator_review_blocks_with_policy, print_migration_complete, print_plan_summary,
-    print_preflight_warnings, print_state_save_locations, print_status_snapshot_policy,
+    print_preflight_warnings, print_state_save_locations, print_status_snapshot_policy, AppContext,
     OperatorReviewPolicy,
 };
 
@@ -31,6 +32,7 @@ fn state_has_manifest(state: &MigrationState) -> bool {
 }
 
 pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
+    let app_context = AppContext::new();
     let context = TransferContext::new(&config)?;
 
     let source_str = config.source.to_string_lossy().to_string();
@@ -38,7 +40,8 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     let mode = mode_name(&config.mode);
     let state_filename = migration_registry::generate_state_filename(&source_str, &dest_str);
 
-    let migration_id = register_migration(&source_str, &dest_str, mode, &state_filename)?;
+    let migration_id =
+        register_migration(&app_context, &source_str, &dest_str, mode, &state_filename)?;
 
     let transfer_result = (|| -> Result<(), CaravanError> {
         let mut state = load_or_create_state(
@@ -76,10 +79,11 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
             state.planned_batches = plan::planned_batches_from_snapshot(&plan);
         }
 
+        let planning_summary = transfer_ops::summarize_transfer_plan(&plan);
         print_plan_summary(
-            plan.batches.len(),
-            plan.source_file_count,
-            plan.source_total_bytes,
+            planning_summary.batch_count,
+            planning_summary.source_file_count,
+            planning_summary.source_total_bytes,
         );
         let preflight_report = preflight::analyze_transfer_preflight(&config, &plan)?;
         print_preflight_warnings(&preflight_report.warnings);
@@ -97,9 +101,14 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
 
         let mut processed_batches = 0_u32;
         processed_batches += run_copy_phase(&context, &plan, &mut state)?;
-        set_migration_status(migration_id, migration_registry::MigrationStatus::Verifying)?;
+        set_migration_status(
+            &app_context,
+            migration_id,
+            migration_registry::MigrationStatus::Verifying,
+        )?;
         processed_batches += run_verify_phase(&context, &plan, &mut state)?;
         set_migration_status(
+            &app_context,
             migration_id,
             migration_registry::MigrationStatus::AwaitingDeletion,
         )?;
@@ -116,19 +125,29 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
             &mut persist_state,
         )?;
 
-        let completed_count = state.batches.iter().filter(|b| b.deleted).count();
-        print_migration_complete(processed_batches, completed_count);
+        let execution_summary =
+            transfer_ops::summarize_transfer_execution(&state, processed_batches);
+        print_migration_complete(
+            execution_summary.processed_batches,
+            execution_summary.completed_batches,
+        );
         Ok(())
     })();
 
     match &transfer_result {
         Ok(()) => {
-            set_migration_status(migration_id, migration_registry::MigrationStatus::Completed)?;
+            set_migration_status(
+                &app_context,
+                migration_id,
+                migration_registry::MigrationStatus::Completed,
+            )?;
         }
         Err(original_err) => {
-            if let Err(status_err) =
-                set_migration_status(migration_id, migration_registry::MigrationStatus::Failed)
-            {
+            if let Err(status_err) = set_migration_status(
+                &app_context,
+                migration_id,
+                migration_registry::MigrationStatus::Failed,
+            ) {
                 eprintln!(
                     "[WARNING] transfer failed and migration status could not be updated to failed: {}; original error: {}",
                     status_err, original_err
