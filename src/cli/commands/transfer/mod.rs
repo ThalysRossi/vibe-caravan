@@ -1,6 +1,6 @@
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
-use crate::models::state::MigrationState;
+use crate::models::state::{MigrationPhase, MigrationState};
 use crate::plan::PlanOptions;
 use crate::transfer as transfer_ops;
 use crate::{migration_registry, plan, preflight, snapshot};
@@ -43,7 +43,7 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     let migration_id =
         register_migration(&app_context, &source_str, &dest_str, mode, &state_filename)?;
 
-    let transfer_result = (|| -> Result<(), CaravanError> {
+    let transfer_result = (|| -> Result<transfer_ops::TransferExecutionSummary, CaravanError> {
         let mut state = load_or_create_state(
             &config,
             &context.state_path,
@@ -107,6 +107,8 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
             migration_registry::MigrationStatus::Verifying,
         )?;
         processed_batches += run_verify_phase(&context, &plan, &mut state)?;
+        state.migration_phase = MigrationPhase::AwaitingDeletion;
+        context.persist_state(&state)?;
         set_migration_status(
             &app_context,
             migration_id,
@@ -127,20 +129,28 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
 
         let execution_summary =
             transfer_ops::summarize_transfer_execution(&state, processed_batches);
+        let final_phase = if execution_summary.pending_delete_batches > 0 {
+            MigrationPhase::AwaitingDeletion
+        } else {
+            MigrationPhase::Completed
+        };
+        state.migration_phase = final_phase;
+        context.persist_state(&state)?;
         print_migration_complete(
             execution_summary.processed_batches,
             execution_summary.completed_batches,
         );
-        Ok(())
+        Ok(execution_summary)
     })();
 
     match &transfer_result {
-        Ok(()) => {
-            set_migration_status(
-                &app_context,
-                migration_id,
-                migration_registry::MigrationStatus::Completed,
-            )?;
+        Ok(summary) => {
+            let final_status = if summary.pending_delete_batches > 0 {
+                migration_registry::MigrationStatus::AwaitingDeletion
+            } else {
+                migration_registry::MigrationStatus::Completed
+            };
+            set_migration_status(&app_context, migration_id, final_status)?;
         }
         Err(original_err) => {
             if let Err(status_err) = set_migration_status(
@@ -156,5 +166,5 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
         }
     }
 
-    transfer_result
+    transfer_result.map(|_| ())
 }

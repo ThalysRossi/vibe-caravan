@@ -8,8 +8,8 @@ use crate::prompt::PromptBackend;
 
 use super::super::shared::{
     copy_batch_with_state_updates, ensure_destination_capacity, print_copy_batch_banner,
-    print_verification_passed, print_verify_batch_banner, verify_batch_with_state_updates,
-    CopyBatchOp,
+    print_verification_failed, print_verification_passed, print_verify_batch_banner,
+    verify_batch_with_state_updates, CopyBatchOp,
 };
 use super::context::TransferContext;
 use super::setup::planned_batch_state;
@@ -99,7 +99,7 @@ pub(super) fn verify_single_batch(
     print_verify_batch_banner(batch);
 
     let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
-    verify_batch_with_state_updates(
+    if let Err(err) = verify_batch_with_state_updates(
         batch,
         &context.config.source,
         &context.config.dest,
@@ -111,7 +111,12 @@ pub(super) fn verify_single_batch(
                 batch_id
             ))
         },
-    )?;
+    ) {
+        if let CaravanError::VerificationFailed(failure) = &err {
+            print_verification_failed(failure);
+        }
+        return Err(err);
+    }
 
     print_verification_passed();
     Ok(())

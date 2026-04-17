@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::config::{OutputFormat, TransferConfig};
 use crate::error::CaravanError;
 use crate::migration_registry::MigrationStatus;
-use crate::models::state::MigrationState;
+use crate::models::state::{MigrationPhase, MigrationState};
 use crate::plan::PlanOptions;
 use crate::signal::{install_signal_handlers, ShutdownFlag};
 use crate::{plan, resume as resume_ops, snapshot, state_store};
@@ -178,6 +178,14 @@ pub(super) fn execute_resume(
         context.check_shutdown()?;
         ensure_no_operator_review_blocks(&state)?;
 
+        state.migration_phase = MigrationPhase::AwaitingDeletion;
+        context.persist_state(&state)?;
+        persist_resume_migration_status(
+            &app_context,
+            migration_id,
+            MigrationStatus::AwaitingDeletion,
+        )?;
+
         let mut persist_state =
             |current_state: &MigrationState| context.persist_state(current_state);
         approve_and_delete_verified_batches(
@@ -210,6 +218,12 @@ pub(super) fn execute_resume(
     match &resume_result {
         Ok(()) => {
             let has_pending_deletion = state.batches.iter().any(|batch| !batch.deleted);
+            state.migration_phase = if has_pending_deletion {
+                MigrationPhase::AwaitingDeletion
+            } else {
+                MigrationPhase::Completed
+            };
+            state_store::persist_state(state_path, &state)?;
             let final_status = if has_pending_deletion {
                 MigrationStatus::AwaitingDeletion
             } else {
@@ -218,6 +232,13 @@ pub(super) fn execute_resume(
             persist_resume_migration_status(&app_context, migration_id, final_status)?;
         }
         Err(original_err) => {
+            state.migration_phase = MigrationPhase::Failed;
+            if let Err(state_err) = state_store::persist_state(state_path, &state) {
+                eprintln!(
+                    "[WARNING] resume failed and state phase could not be updated to failed: {}; original error: {}",
+                    state_err, original_err
+                );
+            }
             if let Err(status_err) =
                 persist_resume_migration_status(&app_context, migration_id, MigrationStatus::Failed)
             {

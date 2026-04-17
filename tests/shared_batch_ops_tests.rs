@@ -258,10 +258,19 @@ fn verify_batch_returns_error_and_records_failed_verification() {
     )
     .expect_err("verify helper should fail on digest mismatch");
 
-    assert_eq!(
-        err.to_string(),
-        "verification failed: Verification failed; stop and require human review before deletion."
-    );
+    assert_eq!(err.to_string(), "verification failed");
+    match err {
+        CaravanError::VerificationFailed(failure) => {
+            assert_eq!(
+                failure.recommended_action,
+                "Verification failed; stop and require human review before deletion."
+            );
+            assert!(failure.missing_files.is_empty());
+            assert_eq!(failure.mismatched_files, vec!["file.txt".to_string()]);
+            assert!(failure.unreadable_files.is_empty());
+        }
+        other => panic!("unexpected error variant: {other}"),
+    }
     let final_state = state.batch(&batch.id).expect("batch missing after verify");
     assert_eq!(final_state.phase, BatchPhase::VerifyCompleted);
     assert!(!final_state.verification_passed);

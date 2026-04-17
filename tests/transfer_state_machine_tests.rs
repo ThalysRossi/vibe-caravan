@@ -57,6 +57,13 @@ fn transfer_success_marks_migration_registry_completed() {
     let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
     assert_eq!(registry.migrations.len(), 1);
     assert_eq!(registry.migrations[0].status, MigrationStatus::Completed);
+
+    let state_path = first_state_file_in(&source_dir.join(".caravan"));
+    let state_json = load_state_document(&state_path);
+    assert_eq!(
+        state_json["migration_phase"],
+        serde_json::Value::String("Completed".to_string())
+    );
 }
 
 #[test]
@@ -164,6 +171,12 @@ fn resume_success_marks_migration_registry_completed() {
     let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
     assert_eq!(registry.migrations.len(), 1);
     assert_eq!(registry.migrations[0].status, MigrationStatus::Completed);
+
+    let state_json = load_state_document(&state_path);
+    assert_eq!(
+        state_json["migration_phase"],
+        serde_json::Value::String("Completed".to_string())
+    );
 }
 
 #[test]
@@ -422,6 +435,61 @@ fn resume_without_deletion_approval_keeps_registry_at_awaiting_deletion() {
         .find_by_id(migration_id)
         .expect("migration entry should exist");
     assert_eq!(entry.status, MigrationStatus::AwaitingDeletion);
+
+    let state_json = load_state_document(&state_path);
+    assert_eq!(
+        state_json["migration_phase"],
+        serde_json::Value::String("AwaitingDeletion".to_string())
+    );
+}
+
+#[test]
+fn transfer_without_deletion_approval_keeps_registry_at_awaiting_deletion() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "source contents").expect("write source");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("utf8 source"),
+            "--dest",
+            dest_dir.to_str().expect("utf8 dest"),
+            "--batch-size",
+            "1MiB",
+            "--interactive",
+        ])
+        .write_stdin("n\n")
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
+
+    assert!(output.status.success(), "transfer should succeed");
+    assert!(
+        source_dir.join("file1.txt").exists(),
+        "source file should remain when deletion is not approved"
+    );
+
+    let registry_path = tmp.path().join(".caravan/migrations.json");
+    let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
+    assert_eq!(registry.migrations.len(), 1);
+    assert_eq!(
+        registry.migrations[0].status,
+        MigrationStatus::AwaitingDeletion
+    );
+
+    let state_path = first_state_file_in(&source_dir.join(".caravan"));
+    let state_json = load_state_document(&state_path);
+    assert_eq!(
+        state_json["migration_phase"],
+        serde_json::Value::String("AwaitingDeletion".to_string())
+    );
 }
 
 #[test]

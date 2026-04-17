@@ -6,7 +6,8 @@ use crate::resume as resume_ops;
 use super::super::shared::{
     copy_batch_with_state_updates, ensure_destination_capacity, print_resume_continue_to_deletion,
     print_resume_processing_batch_banner, print_resume_skip_already_completed,
-    print_resume_verification_passed, verify_batch_with_state_updates, CopyBatchOp,
+    print_resume_verification_passed, print_verification_failed, verify_batch_with_state_updates,
+    CopyBatchOp,
 };
 use super::context::ResumeContext;
 
@@ -17,7 +18,7 @@ fn verify_batch_for_resume(
 ) -> Result<(), CaravanError> {
     println!("Verifying {}...", batch.id);
     let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
-    verify_batch_with_state_updates(
+    if let Err(err) = verify_batch_with_state_updates(
         batch,
         &context.config.source,
         &context.config.dest,
@@ -29,7 +30,12 @@ fn verify_batch_for_resume(
                 batch_id
             ))
         },
-    )?;
+    ) {
+        if let CaravanError::VerificationFailed(failure) = &err {
+            print_verification_failed(failure);
+        }
+        return Err(err);
+    }
 
     print_resume_verification_passed();
     Ok(())

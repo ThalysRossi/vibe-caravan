@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::error::VerificationFailure;
 use crate::format;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, BatchState, JournalEntry};
@@ -67,6 +68,19 @@ pub(crate) fn print_skip_verification_already_completed(batch_id: &str, phase: B
 
 pub(crate) fn print_verification_passed() {
     println!("Verification passed!");
+}
+
+pub(crate) fn print_verification_failed(failure: &VerificationFailure) {
+    eprintln!("Verification failed: {}", failure.recommended_action);
+    if !failure.missing_files.is_empty() {
+        eprintln!("Missing: {:?}", failure.missing_files);
+    }
+    if !failure.mismatched_files.is_empty() {
+        eprintln!("Mismatched: {:?}", failure.mismatched_files);
+    }
+    if !failure.unreadable_files.is_empty() {
+        eprintln!("Unreadable: {:?}", failure.unreadable_files);
+    }
 }
 
 pub(crate) fn print_resume_verification_passed() {

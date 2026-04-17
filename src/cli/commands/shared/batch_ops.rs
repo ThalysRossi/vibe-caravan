@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::CaravanError;
+use crate::error::{CaravanError, VerificationFailure};
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, MigrationState};
 use crate::{transfer, verify};
@@ -70,14 +70,8 @@ pub(crate) fn verify_batch_with_state_updates(
     persist_state(state)?;
 
     if !current_state.verification_passed {
-        eprintln!(
-            "Verification failed: {}",
-            verification_report.recommended_action
-        );
-        eprintln!("Missing: {:?}", verification_report.missing_files);
-        eprintln!("Mismatched: {:?}", verification_report.mismatched_files);
         return Err(CaravanError::VerificationFailed(
-            verification_report.recommended_action,
+            VerificationFailure::from_report(verification_report),
         ));
     }
 
