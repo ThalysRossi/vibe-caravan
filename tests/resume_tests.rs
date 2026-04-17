@@ -9,10 +9,10 @@ use caravan::models::file_entry::FileEntry;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::resume::{
     classify_capacity_failure_message, classify_copy_failure_message,
-    classify_verification_failure_message, load_state_for_resume, plan_resume_step,
-    plan_resume_step_with_recovery, reconcile_batch_destination, recovery_message,
-    require_delete_permission_for_resume, resume_run, FailureClass, ReconciliationResult,
-    ResumeOptions, ResumeStepPlan,
+    classify_verification_failure_message, inspect_failed_batches, load_state_for_resume,
+    plan_resume_step, plan_resume_step_with_recovery, reconcile_batch_destination,
+    recovery_message, require_delete_permission_for_resume, resume_run, FailureClass,
+    ReconciliationResult, ResumeOptions, ResumeStepPlan,
 };
 use caravan::state_store::{load_state, persist_state};
 use tempfile::TempDir;
@@ -81,6 +81,81 @@ fn classify_helpers_return_expected_classes() {
         classify_capacity_failure_message("any"),
         FailureClass::CapacityExhausted
     );
+}
+
+#[test]
+fn inspect_failed_batches_reports_destination_differences() {
+    let tmp = TempDir::new().expect("tmp");
+    let source = tmp.path().join("source");
+    let dest = tmp.path().join("dest");
+    fs::create_dir_all(&source).expect("create source");
+    fs::create_dir_all(&dest).expect("create dest");
+
+    create_file(&source, "a.txt", b"abc");
+    create_file(&source, "b.txt", b"xyz");
+    create_file(&dest, "a.txt", b"abc");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source.to_string_lossy(),
+        &dest.to_string_lossy(),
+    );
+    state.upsert_planned_batch(caravan::models::state::PlannedBatch {
+        batch_id: "batch-000001".to_string(),
+        file_count: 2,
+        total_bytes: 6,
+        files: vec![
+            caravan::models::state::PlannedFile {
+                relative_path: "a.txt".into(),
+                size_bytes: 3,
+            },
+            caravan::models::state::PlannedFile {
+                relative_path: "b.txt".into(),
+                size_bytes: 3,
+            },
+        ],
+    });
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::Failed,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    let report = inspect_failed_batches(&state, &dest).expect("inspection should succeed");
+    assert_eq!(report.failed_batch_count, 1);
+    assert_eq!(report.failed_batches[0].batch_id, "batch-000001");
+    assert!(
+        !report.failed_batches[0].all_destination_files_ready,
+        "destination is missing b.txt"
+    );
+    assert_eq!(
+        report.failed_batches[0].missing_in_destination,
+        vec!["b.txt".to_string()]
+    );
+    assert!(report.failed_batches[0].size_mismatches.is_empty());
+}
+
+#[test]
+fn inspect_failed_batches_requires_planned_manifest_entries() {
+    let tmp = TempDir::new().expect("tmp");
+    let dest = tmp.path().join("dest");
+    fs::create_dir_all(&dest).expect("create dest");
+
+    let mut state = MigrationState::new("staging", "/src", &dest.to_string_lossy());
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::Failed,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    let err = inspect_failed_batches(&state, &dest).expect_err("inspection should fail");
+    let message = err.to_string();
+    assert!(message.contains("missing immutable batch manifest"));
+    assert!(message.contains("batch-000001"));
 }
 
 #[test]
