@@ -10,7 +10,10 @@ use super::shared::{
     print_status_journal_header, print_status_snapshot_policy,
 };
 
-pub(super) fn execute_status(state_path: &Path, output: OutputFormat) -> Result<(), CaravanError> {
+pub(in crate::cli) fn execute_status(
+    state_path: &Path,
+    output: OutputFormat,
+) -> Result<(), CaravanError> {
     let state = state_store::load_state(state_path)?;
 
     if output == OutputFormat::Json {

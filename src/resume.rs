@@ -353,21 +353,3 @@ pub fn require_delete_permission_for_resume(
         detail: recovery_message(FailureClass::ResumePolicyBlocked).to_string(),
     })
 }
-
-/// Map common external failures into a stable class (for logging / UI).
-pub fn classify_verification_failure_message(_detail: &str) -> FailureClass {
-    FailureClass::VerificationMismatch
-}
-
-pub fn classify_copy_failure_message(_detail: &str) -> FailureClass {
-    FailureClass::CopyBackendFailure
-}
-
-pub fn classify_capacity_failure_message(_detail: &str) -> FailureClass {
-    FailureClass::CapacityExhausted
-}
-
-/// Entry point for CLI resume: load checkpoint from disk (same rules as [`load_state_for_resume`]).
-pub fn resume_run(state_path: &Path) -> Result<MigrationState, CaravanError> {
-    load_state_for_resume(state_path)
-}

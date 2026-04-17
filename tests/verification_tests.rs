@@ -6,7 +6,7 @@ use caravan::models::verification::VerificationStatus;
 use caravan::plan::{build_plan, PlanOptions};
 use caravan::progress::NoopProgress;
 use caravan::transfer::LocalFsCopyBackend;
-use caravan::verify::{digest_file, verify_batch};
+use caravan::verify::{digest_file, verify_batch_with_progress};
 use tempfile::TempDir;
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
@@ -32,6 +32,21 @@ fn copy_batch_noop(
     )
 }
 
+fn verify_batch_noop(
+    batch: &caravan::models::batch::Batch,
+    source_root: &std::path::Path,
+    destination_root: &std::path::Path,
+) -> Result<caravan::models::verification::VerificationReport, CaravanError> {
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
+    verify_batch_with_progress(
+        batch,
+        source_root,
+        destination_root,
+        &mut NoopProgress,
+        &mut no_interrupt,
+    )
+}
+
 #[test]
 fn copied_file_contents_match_source() {
     let src = TempDir::new().expect("source temp dir");
@@ -49,7 +64,7 @@ fn copied_file_contents_match_source() {
     let batch = &plan.batches[0];
 
     copy_batch_noop(batch, src.path(), dst.path()).expect("copy should succeed");
-    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
+    let report = verify_batch_noop(batch, src.path(), dst.path()).expect("verify should succeed");
 
     assert_eq!(report.status, VerificationStatus::Pass);
 }
@@ -70,7 +85,7 @@ fn missing_files_fail_verification() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
+    let report = verify_batch_noop(batch, src.path(), dst.path()).expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.missing_files.len(), 1);
 }
@@ -94,7 +109,7 @@ fn size_mismatch_fails_verification() {
 
     create_file(dst.path(), "bin/data.bin", b"abc");
 
-    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
+    let report = verify_batch_noop(batch, src.path(), dst.path()).expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.mismatched_files.len(), 1);
 }
@@ -118,7 +133,7 @@ fn digest_mismatch_fails_verification() {
 
     create_file(dst.path(), "docs/report.txt", b"same-size-datA");
 
-    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
+    let report = verify_batch_noop(batch, src.path(), dst.path()).expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.mismatched_files.len(), 1);
 }
@@ -142,7 +157,7 @@ fn unreadable_file_fails_verification() {
 
     fs::remove_file(src.path().join("x/file.txt")).expect("source file removal should succeed");
 
-    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
+    let report = verify_batch_noop(batch, src.path(), dst.path()).expect("verify should succeed");
     assert_eq!(report.status, VerificationStatus::Fail);
     assert_eq!(report.unreadable_files.len(), 1);
 }
@@ -164,7 +179,7 @@ fn verification_report_serializes_to_json() {
     let batch = &plan.batches[0];
     copy_batch_noop(batch, src.path(), dst.path()).expect("copy should succeed");
 
-    let report = verify_batch(batch, src.path(), dst.path()).expect("verify should succeed");
+    let report = verify_batch_noop(batch, src.path(), dst.path()).expect("verify should succeed");
     let json = serde_json::to_string(&report).expect("report should serialize");
     assert!(json.contains("\"status\":\"Pass\""));
 }

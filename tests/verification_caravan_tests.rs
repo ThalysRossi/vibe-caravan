@@ -1,8 +1,24 @@
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
-use caravan::verify::verify_batch;
+use caravan::progress::NoopProgress;
+use caravan::verify::verify_batch_with_progress;
 use std::fs;
 use tempfile::TempDir;
+
+fn verify_batch_noop(
+    batch: &Batch,
+    source_root: &std::path::Path,
+    destination_root: &std::path::Path,
+) -> Result<caravan::models::verification::VerificationReport, caravan::error::CaravanError> {
+    let mut no_interrupt = || Ok::<(), caravan::error::CaravanError>(());
+    verify_batch_with_progress(
+        batch,
+        source_root,
+        destination_root,
+        &mut NoopProgress,
+        &mut no_interrupt,
+    )
+}
 
 #[test]
 fn verification_skips_caravan_files() {
@@ -54,7 +70,7 @@ fn verification_skips_caravan_files() {
     };
 
     // Verification should pass because .caravan files are skipped
-    let report = verify_batch(&batch, src.path(), dst.path()).expect("verify should succeed");
+    let report = verify_batch_noop(&batch, src.path(), dst.path()).expect("verify should succeed");
 
     // Should pass despite .caravan/state.json mismatch
     assert_eq!(
@@ -114,7 +130,7 @@ fn verification_skips_caravan_files_in_subdirectories() {
     };
 
     // Verification should pass (skip .caravan file)
-    let report = verify_batch(&batch, src.path(), dst.path()).expect("verify should succeed");
+    let report = verify_batch_noop(&batch, src.path(), dst.path()).expect("verify should succeed");
 
     assert_eq!(
         report.status,

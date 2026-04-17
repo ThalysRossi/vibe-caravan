@@ -35,14 +35,6 @@ pub(super) fn register_migration(
     Ok(migration_id)
 }
 
-pub(super) fn set_migration_status(
-    app_context: &AppContext,
-    migration_id: u64,
-    status: migration_registry::MigrationStatus,
-) -> Result<(), CaravanError> {
-    app_context.persist_migration_status(migration_id, status)
-}
-
 pub(super) fn load_or_create_state(
     config: &TransferConfig,
     state_path: &Path,

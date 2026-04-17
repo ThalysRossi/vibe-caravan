@@ -8,11 +8,10 @@ use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::resume::{
-    classify_capacity_failure_message, classify_copy_failure_message,
-    classify_verification_failure_message, inspect_failed_batches, load_state_for_resume,
-    plan_resume_step, plan_resume_step_with_recovery, reconcile_batch_destination,
-    recovery_message, require_delete_permission_for_resume, resume_run, summarize_resume_execution,
-    summarize_resume_state, FailureClass, ReconciliationResult, ResumeOptions, ResumeStepPlan,
+    inspect_failed_batches, load_state_for_resume, plan_resume_step,
+    plan_resume_step_with_recovery, reconcile_batch_destination, recovery_message,
+    require_delete_permission_for_resume, summarize_resume_execution, summarize_resume_state,
+    FailureClass, ReconciliationResult, ResumeOptions, ResumeStepPlan,
 };
 use caravan::state_store::{load_state, persist_state};
 use tempfile::TempDir;
@@ -96,22 +95,6 @@ fn recovery_message_covers_each_failure_class() {
 #[test]
 fn failure_class_as_str_is_stable() {
     assert_eq!(FailureClass::StateMissing.as_str(), "state_missing");
-}
-
-#[test]
-fn classify_helpers_return_expected_classes() {
-    assert_eq!(
-        classify_verification_failure_message("any"),
-        FailureClass::VerificationMismatch
-    );
-    assert_eq!(
-        classify_copy_failure_message("any"),
-        FailureClass::CopyBackendFailure
-    );
-    assert_eq!(
-        classify_capacity_failure_message("any"),
-        FailureClass::CapacityExhausted
-    );
 }
 
 #[test]
@@ -450,8 +433,6 @@ fn resume_with_missing_state_file_fails_cleanly() {
         }
         _ => panic!("expected CaravanError::Resume"),
     }
-    let err2 = resume_run(&missing).expect_err("resume_run should fail same way");
-    assert!(matches!(err2, CaravanError::Resume { .. }));
 }
 
 #[test]
@@ -609,7 +590,7 @@ fn delete_gate_blocks_when_verification_did_not_pass() {
 }
 
 #[test]
-fn resume_run_loads_valid_state() {
+fn load_state_for_resume_loads_valid_state() {
     let tmp = TempDir::new().expect("tmp");
     let path = tmp.path().join("ok.json");
     let mut migration = MigrationState::new("staging", "/a", "/b");
@@ -621,7 +602,7 @@ fn resume_run_loads_valid_state() {
         deleted: false,
     });
     persist_state(&path, &migration).expect("persist");
-    let loaded = resume_run(&path).expect("resume_run loads");
+    let loaded = load_state_for_resume(&path).expect("load_state_for_resume loads");
     assert_eq!(loaded.mode, "staging");
 }
 

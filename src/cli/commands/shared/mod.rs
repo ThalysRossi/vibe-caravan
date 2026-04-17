@@ -4,7 +4,6 @@ mod capacity_guard;
 mod deletion;
 mod operator_review;
 mod output;
-mod persistence;
 
 pub(super) use app_context::AppContext;
 pub(super) use batch_ops::{
@@ -29,4 +28,3 @@ pub(super) use output::{
     print_status_journal_entry, print_status_journal_header, print_status_snapshot_policy,
     print_verification_failed, print_verification_passed, print_verify_batch_banner,
 };
-pub(super) use persistence::persist_state_both_locations;

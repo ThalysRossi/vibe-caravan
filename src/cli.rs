@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::config::{Config, CopyStrategy, OutputFormat, TransferConfig};
+use crate::config::{Config, CopyStrategy, OutputFormat};
 use crate::error::CaravanError;
 use crate::logging;
 
@@ -137,23 +137,19 @@ pub fn run() -> Result<(), CaravanError> {
 
     match config {
         Config::Staging(transfer_config) | Config::Migrate(transfer_config) => {
-            execute_transfer(transfer_config)
+            commands::transfer::execute_transfer(transfer_config)
         }
         Config::Status {
             state,
             log_level: _,
             output,
-        } => commands::execute_status(&state, output),
+        } => commands::status::execute_status(&state, output),
         Config::Resume {
             state,
             log_level: _,
             recover_failed,
             inspect_failed,
             output,
-        } => commands::execute_resume(&state, recover_failed, inspect_failed, output),
+        } => commands::resume::execute_resume(&state, recover_failed, inspect_failed, output),
     }
-}
-
-pub fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
-    commands::execute_transfer(config)
 }

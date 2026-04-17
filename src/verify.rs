@@ -17,21 +17,6 @@ fn should_skip_caravan(path: &Path) -> bool {
     })
 }
 
-pub fn verify_batch(
-    batch: &Batch,
-    source_root: &Path,
-    destination_root: &Path,
-) -> Result<VerificationReport, CaravanError> {
-    let mut no_interrupt = || Ok(());
-    verify_batch_with_progress(
-        batch,
-        source_root,
-        destination_root,
-        &mut crate::progress::NoopProgress,
-        &mut no_interrupt,
-    )
-}
-
 pub fn verify_batch_with_progress(
     batch: &Batch,
     source_root: &Path,

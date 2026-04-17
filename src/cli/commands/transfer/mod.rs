@@ -23,7 +23,7 @@ use copy_phase::run_copy_phase;
 use delete_phase::run_delete_phase;
 use setup::{
     apply_transfer_config, load_or_create_state, mode_name, register_migration, seed_state_batches,
-    set_migration_status, warn_copy_backend_config,
+    warn_copy_backend_config,
 };
 use verify_phase::run_verify_phase;
 
@@ -31,7 +31,7 @@ fn state_has_manifest(state: &MigrationState) -> bool {
     !state.planned_batches.is_empty()
 }
 
-pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
+pub(in crate::cli) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     let app_context = AppContext::new();
     let context = TransferContext::new(&config)?;
 
@@ -101,16 +101,14 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
 
         let mut processed_batches = 0_u32;
         processed_batches += run_copy_phase(&context, &plan, &mut state)?;
-        set_migration_status(
-            &app_context,
+        app_context.persist_migration_status(
             migration_id,
             migration_registry::MigrationStatus::Verifying,
         )?;
         processed_batches += run_verify_phase(&context, &plan, &mut state)?;
         state.migration_phase = MigrationPhase::AwaitingDeletion;
         context.persist_state(&state)?;
-        set_migration_status(
-            &app_context,
+        app_context.persist_migration_status(
             migration_id,
             migration_registry::MigrationStatus::AwaitingDeletion,
         )?;
@@ -150,14 +148,12 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
             } else {
                 migration_registry::MigrationStatus::Completed
             };
-            set_migration_status(&app_context, migration_id, final_status)?;
+            app_context.persist_migration_status(migration_id, final_status)?;
         }
         Err(original_err) => {
-            if let Err(status_err) = set_migration_status(
-                &app_context,
-                migration_id,
-                migration_registry::MigrationStatus::Failed,
-            ) {
+            if let Err(status_err) = app_context
+                .persist_migration_status(migration_id, migration_registry::MigrationStatus::Failed)
+            {
                 eprintln!(
                     "[WARNING] transfer failed and migration status could not be updated to failed: {}; original error: {}",
                     status_err, original_err

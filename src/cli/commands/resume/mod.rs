@@ -106,7 +106,7 @@ fn persist_resume_migration_status(
     app_context.persist_migration_status(migration_id, status)
 }
 
-pub(super) fn execute_resume(
+pub(in crate::cli) fn execute_resume(
     state_path: &Path,
     recover_failed: bool,
     inspect_failed: bool,
@@ -115,7 +115,7 @@ pub(super) fn execute_resume(
     let shutdown_flag = ShutdownFlag::new();
     install_signal_handlers(&shutdown_flag)?;
 
-    let mut state = resume_ops::resume_run(state_path)?;
+    let mut state = resume_ops::load_state_for_resume(state_path)?;
     let config = transfer_config_from_state(&state, recover_failed)?;
     ensure_resume_manifest_is_consistent(&mut state, &config, state_path)?;
 

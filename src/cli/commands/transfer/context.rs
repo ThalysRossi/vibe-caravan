@@ -4,9 +4,7 @@ use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
 use crate::signal::{install_signal_handlers, ShutdownFlag};
-use crate::{migration_registry, snapshot, transfer};
-
-use super::super::shared::persist_state_both_locations;
+use crate::{migration_registry, snapshot, state_store, transfer};
 
 pub(super) struct TransferContext<'a> {
     pub(super) config: &'a TransferConfig,
@@ -38,6 +36,10 @@ impl<'a> TransferContext<'a> {
     }
 
     pub(super) fn persist_state(&self, state: &MigrationState) -> Result<(), CaravanError> {
-        persist_state_both_locations(&self.state_path, &self.secondary_state_path, state)
+        state_store::persist_state_with_compat_backup(
+            &self.state_path,
+            &self.secondary_state_path,
+            state,
+        )
     }
 }
