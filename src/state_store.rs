@@ -200,7 +200,9 @@ fn parse_envelope_or_legacy(
                 )));
             }
 
-            let state_payload = serialize_state(&envelope.state)?;
+            let mut state = envelope.state;
+            state.rebuild_indexes();
+            let state_payload = serialize_state(&state)?;
             let expected_checksum = checksum_for_payload(&state_payload);
             if envelope.state_checksum != expected_checksum {
                 return Err(CaravanError::StateCorrupt(format!(
@@ -210,18 +212,19 @@ fn parse_envelope_or_legacy(
             }
 
             Ok(LoadedStateCandidate {
-                state: envelope.state,
+                state,
                 revision: envelope.revision,
                 state_checksum: expected_checksum,
             })
         }
         Err(_) => {
-            let state = serde_json::from_str::<MigrationState>(payload).map_err(|source| {
+            let mut state = serde_json::from_str::<MigrationState>(payload).map_err(|source| {
                 CaravanError::StateParse {
                     path: path.to_path_buf(),
                     source,
                 }
             })?;
+            state.rebuild_indexes();
             let state_payload = serialize_state(&state)?;
             Ok(LoadedStateCandidate {
                 state,

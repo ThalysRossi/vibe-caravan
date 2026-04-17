@@ -1,6 +1,9 @@
 use caravan::error::CaravanError;
-use caravan::models::state::{BatchPhase, BatchState, JournalEntry, MigrationState};
+use caravan::models::state::{
+    BatchPhase, BatchState, JournalEntry, MigrationState, PlannedBatch, PlannedFile,
+};
 use caravan::state_store::{load_state, persist_state};
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[test]
@@ -41,6 +44,53 @@ fn upsert_batch_inserts_and_updates_by_batch_id() {
     let batch = state.batch("batch-1").expect("batch should exist");
     assert_eq!(batch.phase, BatchPhase::ApprovedForDelete);
     assert!(batch.verification_passed);
+}
+
+#[test]
+fn approve_batches_handles_states_pushed_directly_into_vector() {
+    let mut state = MigrationState::new("staging", "/src", "/dst");
+    state.batches.push(BatchState {
+        batch_id: "batch-1".to_string(),
+        phase: BatchPhase::VerifyCompleted,
+        verification_passed: true,
+        approved_for_delete: false,
+        deleted: false,
+    });
+    state.batches.push(BatchState {
+        batch_id: "batch-2".to_string(),
+        phase: BatchPhase::VerifyCompleted,
+        verification_passed: true,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    state.approve_batches(&["batch-2".to_string()]);
+
+    let batch_1 = state.batch("batch-1").expect("batch-1 should exist");
+    assert!(!batch_1.approved_for_delete);
+    let batch_2 = state.batch("batch-2").expect("batch-2 should exist");
+    assert!(batch_2.approved_for_delete);
+    assert_eq!(batch_2.phase, BatchPhase::ApprovedForDelete);
+}
+
+#[test]
+fn planned_batch_lookup_handles_batches_pushed_directly_into_vector() {
+    let mut state = MigrationState::new("staging", "/src", "/dst");
+    state.planned_batches.push(PlannedBatch {
+        batch_id: "batch-1".to_string(),
+        file_count: 1,
+        total_bytes: 123,
+        files: vec![PlannedFile {
+            relative_path: PathBuf::from("dir/file.txt"),
+            size_bytes: 123,
+        }],
+    });
+
+    let planned = state
+        .planned_batch("batch-1")
+        .expect("planned batch should exist");
+    assert_eq!(planned.batch_id, "batch-1");
+    assert_eq!(planned.file_count, 1);
 }
 
 #[test]
