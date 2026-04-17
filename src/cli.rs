@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::config::{Config, CopyStrategy, OutputFormat, TransferConfig};
 use crate::error::CaravanError;
+use crate::logging;
 
 mod args;
 mod commands;
@@ -126,6 +127,13 @@ where
 
 pub fn run() -> Result<(), CaravanError> {
     let config = parse_cli_from(std::env::args())?;
+    let log_level = match &config {
+        Config::Staging(transfer_config) | Config::Migrate(transfer_config) => {
+            transfer_config.log_level.as_str()
+        }
+        Config::Status { log_level, .. } | Config::Resume { log_level, .. } => log_level.as_str(),
+    };
+    logging::init_logging(log_level)?;
 
     match config {
         Config::Staging(transfer_config) | Config::Migrate(transfer_config) => {

@@ -28,7 +28,7 @@ fn verify_batch_for_resume(
         state,
         &mut persist_state,
         &|batch_id| {
-            CaravanError::InvalidArguments(format!(
+            CaravanError::StateCorrupt(format!(
                 "batch {} disappeared from state during verification",
                 batch_id
             ))
@@ -62,7 +62,7 @@ fn copy_batch_for_resume(
         },
         &mut persist_state,
         &|batch_id| {
-            CaravanError::InvalidArguments(format!(
+            CaravanError::StateCorrupt(format!(
                 "batch {} disappeared from state during copy",
                 batch_id
             ))
@@ -87,13 +87,13 @@ pub(super) fn execute_resume_step(
             Ok(())
         }
         resume_ops::ResumeStepPlan::ConflictOperatorReview { reason } => {
-            Err(CaravanError::InvalidArguments(format!(
+            Err(CaravanError::PolicyBlocked(format!(
                 "batch {} requires operator review before continuing: {}",
                 batch.id, reason
             )))
         }
         resume_ops::ResumeStepPlan::BlockedFailedVerification => {
-            Err(CaravanError::InvalidArguments(format!(
+            Err(CaravanError::PolicyBlocked(format!(
                 "batch {} failed verification and requires operator review before continuing",
                 batch.id
             )))

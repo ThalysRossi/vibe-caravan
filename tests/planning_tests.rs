@@ -187,3 +187,24 @@ fn load_batch_definition_uses_original_max_files_for_deterministic_batches() {
         std::path::PathBuf::from("c.txt")
     );
 }
+
+#[test]
+fn build_plan_handles_large_flat_tree() {
+    let tmp = TempDir::new().expect("temp dir");
+    for idx in 0..2000 {
+        create_file(tmp.path(), &format!("flat/file-{idx:04}.txt"), 1);
+    }
+
+    let plan = build_plan(
+        tmp.path(),
+        &PlanOptions {
+            batch_size_bytes: 500,
+            max_files: Some(250),
+        },
+    )
+    .expect("planning should succeed for large flat tree");
+
+    assert_eq!(plan.source_file_count, 2000);
+    assert_eq!(plan.source_total_bytes, 2000);
+    assert_eq!(plan.batches.len(), 8);
+}

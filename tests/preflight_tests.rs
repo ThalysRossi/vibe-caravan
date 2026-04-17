@@ -239,6 +239,24 @@ fn does_not_warn_when_available_and_volume_free_are_close() {
         .all(|warning| warning.code != PreflightWarningCode::SpaceAccountingDivergence));
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_preflight_allows_missing_destination_attributes() {
+    let mut config = staging_config("C:\\definitely-missing-caravan-destination");
+    // Ensure source is not the same path so config remains valid.
+    config.source = PathBuf::from("C:\\source");
+    let snapshot = snapshot_with_files(vec![file("movie.mkv", 1)]);
+    let probe = caravan::preflight::SystemDestinationProbe;
+
+    let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
+        .expect("missing destination should not fail preflight on windows");
+    assert!(
+        report.warnings.len() <= 4,
+        "sanity bound for warning count: {:?}",
+        report.warnings
+    );
+}
+
 #[test]
 fn migrate_warns_when_source_is_not_ntfs_like() {
     let config = migrate_config("/src", "/dest");

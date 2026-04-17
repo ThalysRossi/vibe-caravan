@@ -529,13 +529,16 @@ pub fn copy_batch_with_components_and_durability(
 
         if let Some(parent) = destination_path.parent() {
             if !created_dirs.contains(parent) {
-                dir_creator.create_dir_all(parent).map_err(|err| {
-                    CaravanError::InvalidArguments(format!(
-                        "failed to create directory '{}' while processing file '{}': {err}",
-                        parent.display(),
-                        file.relative_path.display()
-                    ))
-                })?;
+                dir_creator
+                    .create_dir_all(parent)
+                    .map_err(|source| CaravanError::IoContext {
+                        context: format!(
+                            "failed to create directory '{}' while processing file '{}'",
+                            parent.display(),
+                            file.relative_path.display()
+                        ),
+                        source,
+                    })?;
                 created_dirs.insert(parent.to_path_buf());
             }
         }
@@ -575,33 +578,42 @@ fn copy_file_atomically(
     let temp_destination_path = temp_destination_path(destination_path);
     clear_stale_temp_file(&temp_destination_path, destination_path)?;
 
-    if let Err(err) =
+    if let Err(source) =
         file_copier.copy_file_with_size_hint(source_path, &temp_destination_path, Some(size_hint))
     {
         let _ = std::fs::remove_file(&temp_destination_path);
-        return Err(CaravanError::InvalidArguments(format!(
-            "failed to copy {} to {}: {err}",
-            source_path.display(),
-            destination_path.display()
-        )));
+        return Err(CaravanError::IoContext {
+            context: format!(
+                "failed to copy {} to {}",
+                source_path.display(),
+                destination_path.display()
+            ),
+            source,
+        });
     }
 
     if durable_writes {
-        if let Err(err) = sync_file_data(&temp_destination_path) {
+        if let Err(source) = sync_file_data(&temp_destination_path) {
             let _ = std::fs::remove_file(&temp_destination_path);
-            return Err(CaravanError::InvalidArguments(format!(
-                "failed to flush copied file before finalize {}: {err}",
-                destination_path.display()
-            )));
+            return Err(CaravanError::IoContext {
+                context: format!(
+                    "failed to flush copied file before finalize {}",
+                    destination_path.display()
+                ),
+                source,
+            });
         }
     }
 
-    if let Err(err) = std::fs::rename(&temp_destination_path, destination_path) {
+    if let Err(source) = std::fs::rename(&temp_destination_path, destination_path) {
         let _ = std::fs::remove_file(&temp_destination_path);
-        return Err(CaravanError::InvalidArguments(format!(
-            "failed to finalize copied file {}: {err}",
-            destination_path.display()
-        )));
+        return Err(CaravanError::IoContext {
+            context: format!(
+                "failed to finalize copied file {}",
+                destination_path.display()
+            ),
+            source,
+        });
     }
 
     Ok(())
@@ -628,11 +640,14 @@ fn clear_stale_temp_file(temp_path: &Path, destination_path: &Path) -> Result<()
     match std::fs::remove_file(temp_path) {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(CaravanError::InvalidArguments(format!(
-            "failed to remove stale temporary file for {} ({}): {err}",
-            destination_path.display(),
-            temp_path.display()
-        ))),
+        Err(source) => Err(CaravanError::IoContext {
+            context: format!(
+                "failed to remove stale temporary file for {} ({})",
+                destination_path.display(),
+                temp_path.display()
+            ),
+            source,
+        }),
     }
 }
 
@@ -645,11 +660,9 @@ fn sync_parent_directories(parents: HashSet<PathBuf>) -> Result<(), CaravanError
     parents.sort();
 
     for parent in parents {
-        sync_directory(&parent).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "failed to flush destination directory {}: {err}",
-                parent.display()
-            ))
+        sync_directory(&parent).map_err(|source| CaravanError::IoContext {
+            context: format!("failed to flush destination directory {}", parent.display()),
+            source,
         })?;
     }
 

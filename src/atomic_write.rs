@@ -8,11 +8,9 @@ use crate::error::CaravanError;
 
 pub fn write_bytes(path: &Path, payload: &[u8], subject: &str) -> Result<(), CaravanError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "failed to create {subject} directory {}: {err}",
-                parent.display()
-            ))
+        fs::create_dir_all(parent).map_err(|source| CaravanError::IoContext {
+            context: format!("failed to create {subject} directory {}", parent.display()),
+            source,
         })?;
     }
 
@@ -29,31 +27,33 @@ pub fn write_bytes(path: &Path, payload: &[u8], subject: &str) -> Result<(), Car
             .write(true)
             .create_new(true)
             .open(&temp_path)
-            .map_err(|err| {
-                CaravanError::InvalidArguments(format!(
-                    "failed to create temporary {subject} file {}: {err}",
+            .map_err(|source| CaravanError::IoContext {
+                context: format!(
+                    "failed to create temporary {subject} file {}",
                     temp_path.display()
-                ))
+                ),
+                source,
             })?;
-        file.write_all(payload).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "failed to write temporary {subject} file {}: {err}",
+        file.write_all(payload)
+            .map_err(|source| CaravanError::IoContext {
+                context: format!(
+                    "failed to write temporary {subject} file {}",
+                    temp_path.display()
+                ),
+                source,
+            })?;
+        file.sync_all().map_err(|source| CaravanError::IoContext {
+            context: format!(
+                "failed to flush temporary {subject} file {}",
                 temp_path.display()
-            ))
-        })?;
-        file.sync_all().map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "failed to flush temporary {subject} file {}: {err}",
-                temp_path.display()
-            ))
+            ),
+            source,
         })?;
         drop(file);
 
-        fs::rename(&temp_path, path).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "failed to replace {subject} file {}: {err}",
-                path.display()
-            ))
+        fs::rename(&temp_path, path).map_err(|source| CaravanError::IoContext {
+            context: format!("failed to replace {subject} file {}", path.display()),
+            source,
         })?;
 
         sync_parent_directory(path, subject)?;
@@ -87,18 +87,22 @@ fn sync_parent_directory(path: &Path, subject: &str) -> Result<(), CaravanError>
         return Ok(());
     };
 
-    let parent_dir = File::open(parent).map_err(|err| {
-        CaravanError::InvalidArguments(format!(
-            "failed to open {subject} parent directory {} for sync: {err}",
+    let parent_dir = File::open(parent).map_err(|source| CaravanError::IoContext {
+        context: format!(
+            "failed to open {subject} parent directory {} for sync",
             parent.display()
-        ))
+        ),
+        source,
     })?;
-    parent_dir.sync_all().map_err(|err| {
-        CaravanError::InvalidArguments(format!(
-            "failed to sync {subject} parent directory {}: {err}",
-            parent.display()
-        ))
-    })?;
+    parent_dir
+        .sync_all()
+        .map_err(|source| CaravanError::IoContext {
+            context: format!(
+                "failed to sync {subject} parent directory {}",
+                parent.display()
+            ),
+            source,
+        })?;
     Ok(())
 }
 

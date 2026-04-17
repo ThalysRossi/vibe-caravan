@@ -76,8 +76,8 @@ pub(crate) fn verify_batch_with_state_updates(
         );
         eprintln!("Missing: {:?}", verification_report.missing_files);
         eprintln!("Mismatched: {:?}", verification_report.mismatched_files);
-        return Err(CaravanError::InvalidArguments(
-            "verification failed".to_string(),
+        return Err(CaravanError::VerificationFailed(
+            verification_report.recommended_action,
         ));
     }
 

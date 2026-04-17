@@ -17,7 +17,7 @@ pub(crate) fn ensure_destination_capacity(
             "Capacity check failed: {}",
             capacity_report.reason.unwrap_or_default()
         );
-        return Err(CaravanError::InvalidArguments(
+        return Err(CaravanError::PolicyBlocked(
             "insufficient destination space".to_string(),
         ));
     }

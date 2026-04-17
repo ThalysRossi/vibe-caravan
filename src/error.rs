@@ -13,6 +13,16 @@ pub enum CaravanError {
     Resume { class: String, detail: String },
     #[error("io error: {0}")]
     Io(String),
+    #[error("{context}: {source}")]
+    IoContext {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("policy blocked: {0}")]
+    PolicyBlocked(String),
+    #[error("verification failed: {0}")]
+    VerificationFailed(String),
     #[error("state corruption: {0}")]
     StateCorrupt(String),
     #[error("failed to read state file {path}: {source}")]

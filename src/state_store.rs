@@ -164,7 +164,7 @@ fn persist_state_with_revision(
         state: state.clone(),
     };
     let payload = serde_json::to_vec_pretty(&envelope).map_err(|err| {
-        CaravanError::InvalidArguments(format!("failed to serialize state envelope: {err}"))
+        CaravanError::StateCorrupt(format!("failed to serialize state envelope: {err}"))
     })?;
 
     atomic_write::write_bytes(path, &payload, "state")
@@ -234,7 +234,7 @@ fn parse_envelope_or_legacy(
 
 fn serialize_state(state: &MigrationState) -> Result<Vec<u8>, CaravanError> {
     serde_json::to_vec(state)
-        .map_err(|err| CaravanError::InvalidArguments(format!("failed to serialize state: {err}")))
+        .map_err(|err| CaravanError::StateCorrupt(format!("failed to serialize state: {err}")))
 }
 
 fn checksum_for_payload(payload: &[u8]) -> String {

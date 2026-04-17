@@ -37,7 +37,7 @@ fn failed_verification_batches_requiring_review(state: &MigrationState) -> Vec<S
 fn ensure_no_failed_batches(state: &MigrationState) -> Result<(), CaravanError> {
     let failed_batches = failed_batches_requiring_review(state);
     if !failed_batches.is_empty() {
-        return Err(CaravanError::InvalidArguments(format!(
+        return Err(CaravanError::PolicyBlocked(format!(
             "one or more batches require operator review before continuing: {}",
             failed_batches.join(", ")
         )));
@@ -49,7 +49,7 @@ fn ensure_no_failed_batches(state: &MigrationState) -> Result<(), CaravanError> 
 fn ensure_no_failed_verification_batches(state: &MigrationState) -> Result<(), CaravanError> {
     let failed_verification_batches = failed_verification_batches_requiring_review(state);
     if !failed_verification_batches.is_empty() {
-        return Err(CaravanError::InvalidArguments(format!(
+        return Err(CaravanError::PolicyBlocked(format!(
             "one or more batches failed verification and require operator review before continuing: {}",
             failed_verification_batches.join(", ")
         )));

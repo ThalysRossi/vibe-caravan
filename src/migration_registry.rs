@@ -49,14 +49,14 @@ impl MigrationRegistry {
         }
 
         let content = fs::read_to_string(registry_path).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "failed to read migration registry {}: {err}",
-                registry_path.display()
-            ))
+            CaravanError::IoContext {
+                context: format!("failed to read migration registry {}", registry_path.display()),
+                source: err,
+            }
         })?;
 
         serde_json::from_str(&content).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
+            CaravanError::StateCorrupt(format!(
                 "failed to parse migration registry {}: {err}",
                 registry_path.display()
             ))
@@ -65,7 +65,7 @@ impl MigrationRegistry {
 
     pub fn save(&self, registry_path: &Path) -> Result<(), CaravanError> {
         let content = serde_json::to_string_pretty(self).map_err(|err| {
-            CaravanError::InvalidArguments(format!("failed to serialize migration registry: {err}"))
+            CaravanError::StateCorrupt(format!("failed to serialize migration registry: {err}"))
         })?;
 
         atomic_write::write_bytes(registry_path, content.as_bytes(), "migration registry")
@@ -141,7 +141,7 @@ impl MigrationRegistry {
             entry.updated_at = now;
             Ok(())
         } else {
-            Err(CaravanError::InvalidArguments(format!(
+            Err(CaravanError::StateCorrupt(format!(
                 "migration with id {} not found",
                 id
             )))
@@ -204,21 +204,25 @@ pub fn check_source_writable(source: &Path) -> Result<(), CaravanError> {
 
     // Try to create the directory if it doesn't exist
     if !state_dir.exists() {
-        fs::create_dir_all(&state_dir).map_err(|err| {
-            CaravanError::InvalidArguments(format!(
-                "cannot write state to source directory {}: need write access. Error: {err}",
-                source.display()
-            ))
+        fs::create_dir_all(&state_dir).map_err(|io_source| {
+            CaravanError::IoContext {
+                context: format!(
+                    "cannot write state to source directory {}: need write access",
+                    source.display()
+                ),
+                source: io_source,
+            }
         })?;
     }
 
     // Try to write a test file
     let test_file = state_dir.join(".write_test");
-    fs::write(&test_file, "test").map_err(|err| {
-        CaravanError::InvalidArguments(format!(
-            "cannot write state to source directory {}: need write access. Error: {err}",
+    fs::write(&test_file, "test").map_err(|io_source| CaravanError::IoContext {
+        context: format!(
+            "cannot write state to source directory {}: need write access",
             source.display()
-        ))
+        ),
+        source: io_source,
     })?;
 
     // Clean up test file

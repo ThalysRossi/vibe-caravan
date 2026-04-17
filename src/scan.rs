@@ -63,12 +63,34 @@ pub const fn active_scan_backend() -> ScanBackend {
 }
 
 pub fn scan_source(source_root: &Path) -> Result<Vec<FileEntry>, CaravanError> {
-    scan_source_with_backend(source_root, active_scan_backend())
+    scan_source_with_backend_ordering(source_root, active_scan_backend(), ScanOrdering::RelativePath)
+}
+
+pub(crate) fn scan_source_for_planning(source_root: &Path) -> Result<Vec<FileEntry>, CaravanError> {
+    scan_source_with_backend_ordering(
+        source_root,
+        active_scan_backend(),
+        ScanOrdering::Planning,
+    )
 }
 
 pub fn scan_source_with_backend(
     source_root: &Path,
     backend: ScanBackend,
+) -> Result<Vec<FileEntry>, CaravanError> {
+    scan_source_with_backend_ordering(source_root, backend, ScanOrdering::RelativePath)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScanOrdering {
+    RelativePath,
+    Planning,
+}
+
+fn scan_source_with_backend_ordering(
+    source_root: &Path,
+    backend: ScanBackend,
+    ordering: ScanOrdering,
 ) -> Result<Vec<FileEntry>, CaravanError> {
     if !source_root.exists() {
         return Err(CaravanError::InvalidArguments(format!(
@@ -89,23 +111,19 @@ pub fn scan_source_with_backend(
         ScanBackend::Win32FindFirstEx => visit_dir_win32(source_root, source_root, &mut entries)?,
     }
 
-    entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    sort_entries(&mut entries, ordering);
     Ok(entries)
 }
 
 fn visit_dir_std(
     source_root: &Path,
-    current_dir: &Path,
+    start_dir: &Path,
     output: &mut Vec<FileEntry>,
 ) -> Result<(), CaravanError> {
-    let read_dir = fs::read_dir(current_dir).map_err(map_io("failed to read source directory"))?;
-    let mut children: Vec<PathBuf> = read_dir
-        .map(|entry| entry.map(|e| e.path()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(map_io("failed to enumerate source directory entries"))?;
-    children.sort();
+    let mut stack: Vec<PathBuf> = Vec::new();
+    push_children_in_reverse_sorted_order(start_dir, &mut stack)?;
 
-    for child in children {
+    while let Some(child) = stack.pop() {
         let metadata =
             fs::symlink_metadata(&child).map_err(map_io("failed to read source file metadata"))?;
         if metadata.is_dir() {
@@ -115,7 +133,7 @@ fn visit_dir_std(
                     continue;
                 }
             }
-            visit_dir_std(source_root, &child, output)?;
+            push_children_in_reverse_sorted_order(&child, &mut stack)?;
             continue;
         }
         if !metadata.is_file() {
@@ -123,7 +141,11 @@ fn visit_dir_std(
         }
 
         let relative_path = child.strip_prefix(source_root).map_err(|_| {
-            CaravanError::InvalidArguments("failed to derive relative path during scan".to_string())
+            CaravanError::StateCorrupt(format!(
+                "failed to derive relative path during scan: {} is not under {}",
+                child.display(),
+                source_root.display()
+            ))
         })?;
         output.push(FileEntry {
             relative_path: relative_path.to_path_buf(),
@@ -135,8 +157,46 @@ fn visit_dir_std(
     Ok(())
 }
 
+fn push_children_in_reverse_sorted_order(
+    dir: &Path,
+    stack: &mut Vec<PathBuf>,
+) -> Result<(), CaravanError> {
+    let read_dir = fs::read_dir(dir).map_err(map_io("failed to read source directory"))?;
+    let mut children: Vec<PathBuf> = read_dir
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_io("failed to enumerate source directory entries"))?;
+    children.sort();
+    for child in children.into_iter().rev() {
+        stack.push(child);
+    }
+    Ok(())
+}
+
+fn sort_entries(entries: &mut [FileEntry], ordering: ScanOrdering) {
+    match ordering {
+        ScanOrdering::RelativePath => {
+            entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        }
+        ScanOrdering::Planning => {
+            entries.sort_by(cmp_for_planning);
+        }
+    }
+}
+
+fn cmp_for_planning(a: &FileEntry, b: &FileEntry) -> std::cmp::Ordering {
+    let a_parent = a.relative_path.parent().unwrap_or(Path::new(""));
+    let b_parent = b.relative_path.parent().unwrap_or(Path::new(""));
+    a_parent
+        .cmp(b_parent)
+        .then_with(|| a.relative_path.cmp(&b.relative_path))
+}
+
 fn map_io(context: &'static str) -> impl Fn(std::io::Error) -> CaravanError {
-    move |err| CaravanError::InvalidArguments(format!("{context}: {err}"))
+    move |source| CaravanError::IoContext {
+        context: context.to_string(),
+        source,
+    }
 }
 
 #[cfg(windows)]
@@ -252,7 +312,11 @@ fn visit_dir_win32(
         }
 
         let relative_path = child.path.strip_prefix(source_root).map_err(|_| {
-            CaravanError::InvalidArguments("failed to derive relative path during scan".to_string())
+            CaravanError::StateCorrupt(format!(
+                "failed to derive relative path during scan: {} is not under {}",
+                child.path.display(),
+                source_root.display()
+            ))
         })?;
         output.push(FileEntry {
             relative_path: relative_path.to_path_buf(),

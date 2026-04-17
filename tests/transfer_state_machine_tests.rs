@@ -4,6 +4,7 @@ use assert_cmd::Command;
 use tempfile::TempDir;
 
 use caravan::migration_registry;
+use caravan::migration_registry::{MigrationRegistry, MigrationStatus};
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::state_store::persist_state;
 
@@ -21,6 +22,73 @@ fn load_state_document(path: &std::path::Path) -> serde_json::Value {
         serde_json::from_str(&fs::read_to_string(path).expect("read state file json"))
             .expect("parse state json");
     doc.get("state").cloned().unwrap_or(doc)
+}
+
+#[test]
+fn transfer_success_marks_migration_registry_completed() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "source contents").expect("write source");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("utf8 source"),
+            "--dest",
+            dest_dir.to_str().expect("utf8 dest"),
+            "--batch-size",
+            "1MiB",
+            "--interactive",
+        ])
+        .write_stdin("y\n")
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
+
+    assert!(output.status.success(), "transfer should succeed");
+
+    let registry_path = tmp.path().join(".caravan/migrations.json");
+    let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
+    assert_eq!(registry.migrations.len(), 1);
+    assert_eq!(registry.migrations[0].status, MigrationStatus::Completed);
+}
+
+#[test]
+fn transfer_failure_marks_migration_registry_failed() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let invalid_dest = tmp.path().join("missing-parent/dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::write(source_dir.join("file1.txt"), "source contents").expect("write source");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("utf8 source"),
+            "--dest",
+            invalid_dest.to_str().expect("utf8 dest"),
+            "--batch-size",
+            "1MiB",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
+
+    assert!(!output.status.success(), "transfer should fail");
+
+    let registry_path = tmp.path().join(".caravan/migrations.json");
+    let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
+    assert_eq!(registry.migrations.len(), 1);
+    assert_eq!(registry.migrations[0].status, MigrationStatus::Failed);
 }
 
 #[test]

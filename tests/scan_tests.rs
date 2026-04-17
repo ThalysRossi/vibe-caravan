@@ -157,6 +157,39 @@ fn std_backend_scan_is_deterministic_and_sorted() {
     );
 }
 
+#[test]
+fn scan_handles_deep_directory_trees() {
+    let tmp = TempDir::new().expect("temp dir");
+
+    let mut current = tmp.path().to_path_buf();
+    let mut expected_rel = String::new();
+    for depth in 0..256 {
+        let segment = format!("d{depth:03}");
+        current = current.join(&segment);
+        fs::create_dir_all(&current).expect("create nested directory");
+        if !expected_rel.is_empty() {
+            expected_rel.push('/');
+        }
+        expected_rel.push_str(&segment);
+    }
+
+    let deep_file = current.join("leaf.txt");
+    fs::write(&deep_file, "leaf").expect("create deep file");
+    let expected_file = format!("{expected_rel}/leaf.txt");
+
+    let scanned = scan_source(tmp.path()).expect("scan should succeed");
+    let scanned_paths: Vec<String> = scanned
+        .iter()
+        .map(|e| e.relative_path.to_string_lossy().to_string())
+        .collect();
+
+    assert!(
+        scanned_paths.contains(&expected_file),
+        "expected deep file path not found: {}",
+        expected_file
+    );
+}
+
 #[cfg(windows)]
 mod windows_filetime_tests {
     use caravan::scan::windows_filetime_ticks_to_system_time;

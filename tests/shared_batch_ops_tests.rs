@@ -258,7 +258,10 @@ fn verify_batch_returns_error_and_records_failed_verification() {
     )
     .expect_err("verify helper should fail on digest mismatch");
 
-    assert_eq!(err.to_string(), "invalid arguments: verification failed");
+    assert_eq!(
+        err.to_string(),
+        "verification failed: Verification failed; stop and require human review before deletion."
+    );
     let final_state = state.batch(&batch.id).expect("batch missing after verify");
     assert_eq!(final_state.phase, BatchPhase::VerifyCompleted);
     assert!(!final_state.verification_passed);

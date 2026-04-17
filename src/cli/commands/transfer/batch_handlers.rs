@@ -87,7 +87,7 @@ pub(super) fn copy_single_batch(
         },
         &mut persist_state,
         &|batch_id| {
-            CaravanError::InvalidArguments(format!(
+            CaravanError::StateCorrupt(format!(
                 "batch {} disappeared from state during copy",
                 batch_id
             ))
@@ -116,7 +116,7 @@ pub(super) fn verify_single_batch(
         state,
         &mut persist_state,
         &|batch_id| {
-            CaravanError::InvalidArguments(format!(
+            CaravanError::StateCorrupt(format!(
                 "missing batch state for {} before verification",
                 batch_id
             ))

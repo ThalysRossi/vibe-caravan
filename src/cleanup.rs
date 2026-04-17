@@ -36,19 +36,19 @@ pub fn cleanup_batch_with_remover(
     remover: &dyn FileRemover,
 ) -> Result<(), CaravanError> {
     let batch_state = state.batch(&batch.id).cloned().ok_or_else(|| {
-        CaravanError::InvalidArguments(format!(
+        CaravanError::StateCorrupt(format!(
             "missing batch state for {} before cleanup",
             batch.id
         ))
     })?;
 
     if !batch_state.verification_passed {
-        return Err(CaravanError::InvalidArguments(
+        return Err(CaravanError::PolicyBlocked(
             "deletion blocked because verification did not pass".to_string(),
         ));
     }
     if !batch_state.approved_for_delete {
-        return Err(CaravanError::InvalidArguments(
+        return Err(CaravanError::PolicyBlocked(
             "deletion blocked because batch is not approved".to_string(),
         ));
     }
@@ -82,10 +82,10 @@ pub fn cleanup_batch_with_remover(
                         err
                     ),
                 });
-                return Err(CaravanError::InvalidArguments(format!(
-                    "failed to delete source file {}: {err}",
-                    path.display()
-                )));
+                return Err(CaravanError::IoContext {
+                    context: format!("failed to delete source file {}", path.display()),
+                    source: err,
+                });
             }
         }
     }

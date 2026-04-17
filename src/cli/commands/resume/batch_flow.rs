@@ -43,7 +43,7 @@ fn process_resume_batch(
     let batch_state = state
         .batch(batch_id)
         .ok_or_else(|| {
-            CaravanError::InvalidArguments(format!(
+            CaravanError::StateCorrupt(format!(
                 "Batch {} disappeared from state during resume iteration",
                 batch_id
             ))

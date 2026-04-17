@@ -19,7 +19,7 @@ pub(super) fn register_migration(
     dest: &str,
     mode: &str,
     state_filename: &str,
-) -> Result<(), CaravanError> {
+) -> Result<u64, CaravanError> {
     let registry_path = migration_registry::default_registry_path();
     let mut registry = migration_registry::MigrationRegistry::load(&registry_path)?;
 
@@ -35,7 +35,17 @@ pub(super) fn register_migration(
 
     registry.update_status(migration_id, migration_registry::MigrationStatus::Running)?;
     registry.save(&registry_path)?;
-    Ok(())
+    Ok(migration_id)
+}
+
+pub(super) fn set_migration_status(
+    migration_id: u64,
+    status: migration_registry::MigrationStatus,
+) -> Result<(), CaravanError> {
+    let registry_path = migration_registry::default_registry_path();
+    let mut registry = migration_registry::MigrationRegistry::load(&registry_path)?;
+    registry.update_status(migration_id, status)?;
+    registry.save(&registry_path)
 }
 
 pub(super) fn load_or_create_state(
@@ -118,8 +128,10 @@ pub(super) fn warn_copy_backend_config(config: &TransferConfig) {
         );
     }
 
-    eprintln!(
-        "[DEBUG] Using copy strategy: {:?}, copy buffer size: {:.2} MiB, buffered copy threshold: {:.2} MiB",
-        config.copy_strategy, buffer_size_mb, threshold_mb
+    tracing::debug!(
+        copy_strategy = ?config.copy_strategy,
+        copy_buffer_size_mib = buffer_size_mb,
+        buffered_copy_threshold_mib = threshold_mb,
+        "Using copy backend configuration"
     );
 }

@@ -81,11 +81,21 @@ fn query_destination_flags(destination: &Path) -> Result<DestinationFlags, Carav
 
     let attrs = unsafe { GetFileAttributesW(wide_path.as_ptr()) };
     if attrs == INVALID_FILE_ATTRIBUTES {
-        return Err(CaravanError::InvalidArguments(format!(
-            "failed to inspect destination attributes at {}: {}",
-            destination.display(),
-            std::io::Error::last_os_error()
-        )));
+        let last_error = std::io::Error::last_os_error();
+        if last_error.kind() == std::io::ErrorKind::NotFound {
+            return Ok(DestinationFlags {
+                is_compressed: false,
+                is_reparse_point: false,
+            });
+        }
+
+        return Err(CaravanError::IoContext {
+            context: format!(
+                "failed to inspect destination attributes at {}",
+                destination.display()
+            ),
+            source: last_error,
+        });
     }
 
     Ok(DestinationFlags {
@@ -105,8 +115,11 @@ fn query_destination_flags(_destination: &Path) -> Result<DestinationFlags, Cara
 #[cfg(target_os = "linux")]
 fn detect_filesystem_type(path: &Path) -> Result<Option<String>, CaravanError> {
     let probe_path = resolve_probe_path(path);
-    let content = std::fs::read_to_string("/proc/self/mountinfo").map_err(|err| {
-        CaravanError::InvalidArguments(format!("failed to read /proc/self/mountinfo: {err}"))
+    let content = std::fs::read_to_string("/proc/self/mountinfo").map_err(|source| {
+        CaravanError::IoContext {
+            context: "failed to read /proc/self/mountinfo".to_string(),
+            source,
+        }
     })?;
 
     let mut best_match: Option<(usize, String)> = None;
