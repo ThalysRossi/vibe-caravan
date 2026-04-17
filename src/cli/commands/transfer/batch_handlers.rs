@@ -1,27 +1,23 @@
-use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
+use crate::prompt;
 use crate::prompt::PromptBackend;
-use crate::{prompt, transfer};
 
 use super::super::shared::{
-    copy_batch_with_state_updates, ensure_destination_capacity, persist_state_both_locations,
-    print_copy_batch_banner, print_verification_passed, print_verify_batch_banner,
-    verify_batch_with_state_updates, CopyBatchOp,
+    copy_batch_with_state_updates, ensure_destination_capacity, print_copy_batch_banner,
+    print_verification_passed, print_verify_batch_banner, verify_batch_with_state_updates,
+    CopyBatchOp,
 };
+use super::context::TransferContext;
 use super::setup::planned_batch_state;
 
 pub(super) fn copy_single_batch(
     batch: &Batch,
-    config: &TransferConfig,
+    context: &TransferContext<'_>,
     state: &mut MigrationState,
-    state_path: &Path,
-    secondary_state_path: &Path,
-    copy_backend: &transfer::LocalFsCopyBackend,
 ) -> Result<(), CaravanError> {
     print_copy_batch_banner(batch);
 
@@ -30,14 +26,14 @@ pub(super) fn copy_single_batch(
         .cloned()
         .unwrap_or_else(|| planned_batch_state(&batch.id));
 
-    ensure_destination_capacity(&config.dest, batch.total_bytes)?;
+    ensure_destination_capacity(&context.config.dest, batch.total_bytes)?;
 
     let requires_conflict_check =
         matches!(batch_state.phase, BatchPhase::Planned | BatchPhase::Failed);
     if requires_conflict_check {
-        let conflict_report = crate::conflict::detect_batch_conflicts(batch, &config.dest)?;
+        let conflict_report = crate::conflict::detect_batch_conflicts(batch, &context.config.dest)?;
         if conflict_report.has_conflicts {
-            let should_skip = if config.skip_conflicts || !config.interactive {
+            let should_skip = if context.config.skip_conflicts || !context.config.interactive {
                 true
             } else {
                 let prompt_backend = prompt::InteractivePrompt;
@@ -66,23 +62,21 @@ pub(super) fn copy_single_batch(
                         conflict_report.size_mismatches.len()
                     ),
                 });
-                persist_state_both_locations(state_path, secondary_state_path, state)?;
+                context.persist_state(state)?;
                 return Ok(());
             }
         }
     }
 
     state.upsert_batch(batch_state);
-    let mut persist_state = |current_state: &MigrationState| {
-        persist_state_both_locations(state_path, secondary_state_path, current_state)
-    };
+    let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
     copy_batch_with_state_updates(
         batch,
         state,
         CopyBatchOp {
-            source_root: &config.source,
-            dest_root: &config.dest,
-            copy_backend,
+            source_root: &context.config.source,
+            dest_root: &context.config.dest,
+            copy_backend: &context.copy_backend,
             reset_verification_passed: true,
         },
         &mut persist_state,
@@ -99,20 +93,16 @@ pub(super) fn copy_single_batch(
 
 pub(super) fn verify_single_batch(
     batch: &Batch,
-    config: &TransferConfig,
+    context: &TransferContext<'_>,
     state: &mut MigrationState,
-    state_path: &Path,
-    secondary_state_path: &Path,
 ) -> Result<(), CaravanError> {
     print_verify_batch_banner(batch);
 
-    let mut persist_state = |current_state: &MigrationState| {
-        persist_state_both_locations(state_path, secondary_state_path, current_state)
-    };
+    let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
     verify_batch_with_state_updates(
         batch,
-        &config.source,
-        &config.dest,
+        &context.config.source,
+        &context.config.dest,
         state,
         &mut persist_state,
         &|batch_id| {

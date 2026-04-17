@@ -1,31 +1,26 @@
-use std::path::Path;
-
-use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::state::{BatchPhase, MigrationPhase, MigrationState};
-use crate::signal::{check_shutdown, ShutdownFlag};
+use crate::signal::check_shutdown;
 
 use super::super::shared::{
-    persist_state_both_locations, print_phase_banner, print_skip_verification_already_completed,
+    print_phase_banner, print_skip_verification_already_completed,
     print_skip_verification_requires_operator_review,
 };
 use super::batch_handlers::verify_single_batch;
+use super::context::TransferContext;
 
 pub(super) fn run_verify_phase(
-    config: &TransferConfig,
+    context: &TransferContext<'_>,
     plan: &crate::plan::PlanningSnapshot,
     state: &mut MigrationState,
-    state_path: &Path,
-    secondary_state_path: &Path,
-    shutdown_flag: &ShutdownFlag,
 ) -> Result<u32, CaravanError> {
     state.migration_phase = MigrationPhase::Verifying;
-    persist_state_both_locations(state_path, secondary_state_path, state)?;
+    context.persist_state(state)?;
     print_phase_banner("Verifying all batches");
 
     let mut processed_batches = 0_u32;
     for batch in &plan.batches {
-        check_shutdown(shutdown_flag)?;
+        check_shutdown(&context.shutdown_flag)?;
 
         if let Some(existing_batch) = state.batch(&batch.id) {
             if existing_batch.deleted {
@@ -50,7 +45,7 @@ pub(super) fn run_verify_phase(
             }
         }
 
-        verify_single_batch(batch, config, state, state_path, secondary_state_path)?;
+        verify_single_batch(batch, context, state)?;
         processed_batches += 1;
     }
 

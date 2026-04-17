@@ -1,8 +1,9 @@
 use std::fs;
 
-use caravan::detection::{check_state_file_compatibility, detect_state_file};
 use caravan::error::CaravanError;
 use caravan::models::state::MigrationState;
+use caravan::prompt::{BatchSizeMismatchChoice, PromptBackend};
+use caravan::state_discovery::{check_state_file_compatibility, detect_state_file};
 use caravan::state_store::{load_state, persist_state};
 use tempfile::TempDir;
 
@@ -117,9 +118,6 @@ fn handle_corrupted_state_file_gracefully() {
 
 #[test]
 fn prompt_user_when_batch_size_mismatch() {
-    use caravan::detection::{handle_batch_size_mismatch, BatchSizeMismatchChoice};
-    use caravan::prompt::PromptBackend;
-
     struct TestPrompt {
         choice: BatchSizeMismatchChoice,
     }
@@ -146,7 +144,7 @@ fn prompt_user_when_batch_size_mismatch() {
     let prompt = TestPrompt {
         choice: BatchSizeMismatchChoice::UseStateSize,
     };
-    let result = handle_batch_size_mismatch(&prompt, 1024, 2048);
+    let result = prompt.ask_batch_size_mismatch(1024, 2048);
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), BatchSizeMismatchChoice::UseStateSize);
 }

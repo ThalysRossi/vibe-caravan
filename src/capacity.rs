@@ -85,24 +85,21 @@ fn query_space_info(destination: &Path) -> Result<SpaceInfo, CaravanError> {
 
 #[cfg(not(windows))]
 fn query_space_info(destination: &Path) -> Result<SpaceInfo, CaravanError> {
-    let total_bytes = fs2::total_space(destination).map_err(|source| {
-        CaravanError::IoContext {
-            context: format!(
-                "failed to read destination total capacity at {}",
-                destination.display()
-            ),
-            source,
-        }
+    let total_bytes = fs2::total_space(destination).map_err(|source| CaravanError::IoContext {
+        context: format!(
+            "failed to read destination total capacity at {}",
+            destination.display()
+        ),
+        source,
     })?;
-    let available_bytes = fs2::available_space(destination).map_err(|source| {
-        CaravanError::IoContext {
+    let available_bytes =
+        fs2::available_space(destination).map_err(|source| CaravanError::IoContext {
             context: format!(
                 "failed to read destination free space at {}",
                 destination.display()
             ),
             source,
-        }
-    })?;
+        })?;
     let volume_free_bytes = match fs2::free_space(destination) {
         Ok(bytes) => bytes,
         Err(_) => available_bytes,
@@ -129,14 +126,12 @@ impl SpaceProbe for SystemSpaceProbe {
                 Some(p) if p.exists() => {
                     // Top-level directory (parent exists) - create it
                     println!("Creating destination directory: {}", dest.display());
-                    fs::create_dir_all(dest).map_err(|source| {
-                        CaravanError::IoContext {
-                            context: format!(
-                                "failed to create destination directory {}",
-                                dest.display()
-                            ),
-                            source,
-                        }
+                    fs::create_dir_all(dest).map_err(|source| CaravanError::IoContext {
+                        context: format!(
+                            "failed to create destination directory {}",
+                            dest.display()
+                        ),
+                        source,
                     })?;
                     Ok(())
                 }
@@ -151,14 +146,12 @@ impl SpaceProbe for SystemSpaceProbe {
                 None => {
                     // No parent (root-like path) - shouldn't happen but try to create
                     println!("Creating destination directory: {}", dest.display());
-                    fs::create_dir_all(dest).map_err(|source| {
-                        CaravanError::IoContext {
-                            context: format!(
-                                "failed to create destination directory {}",
-                                dest.display()
-                            ),
-                            source,
-                        }
+                    fs::create_dir_all(dest).map_err(|source| CaravanError::IoContext {
+                        context: format!(
+                            "failed to create destination directory {}",
+                            dest.display()
+                        ),
+                        source,
                     })?;
                     Ok(())
                 }

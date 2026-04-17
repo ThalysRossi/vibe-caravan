@@ -1,5 +1,18 @@
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
+use crate::size::SizeParseError;
+
+fn format_size_error(label: &str, err: SizeParseError) -> String {
+    match err {
+        SizeParseError::Empty => format!("{label} cannot be empty"),
+        SizeParseError::MissingDigits => format!("{label} must start with digits"),
+        SizeParseError::InvalidNumericPart => format!("{label} numeric part is invalid"),
+        SizeParseError::UnsupportedUnit => {
+            format!("unsupported {label} unit; use B, KiB, MiB, GiB, or TiB")
+        }
+        SizeParseError::TooLarge => format!("{label} is too large"),
+    }
+}
 
 pub(super) fn parse_copy_options(
     copy_buffer_size: Option<&str>,
@@ -33,35 +46,7 @@ pub(super) fn parse_copy_options(
 }
 
 pub(super) fn parse_batch_size(input: &str) -> Result<u64, String> {
-    let raw = input.trim();
-    if raw.is_empty() {
-        return Err("batch-size cannot be empty".to_string());
-    }
-
-    let split_idx = raw.find(|c: char| !c.is_ascii_digit()).unwrap_or(raw.len());
-    let (number, unit_raw) = raw.split_at(split_idx);
-    if number.is_empty() {
-        return Err("batch-size must start with digits".to_string());
-    }
-
-    let base = number
-        .parse::<u64>()
-        .map_err(|_| "batch-size numeric part is invalid".to_string())?;
-    let unit = unit_raw.trim().to_ascii_lowercase();
-
-    let multiplier = match unit.as_str() {
-        "" | "b" => 1_u64,
-        "kib" => 1024_u64,
-        "mib" => 1024_u64.pow(2),
-        "gib" => 1024_u64.pow(3),
-        "tib" => 1024_u64.pow(4),
-        _ => {
-            return Err("unsupported batch-size unit; use B, KiB, MiB, GiB, or TiB".to_string());
-        }
-    };
-
-    base.checked_mul(multiplier)
-        .ok_or_else(|| "batch-size is too large".to_string())
+    crate::size::parse_size(input).map_err(|err| format_size_error("batch-size", err))
 }
 
 fn parse_size_usize(input: &str) -> Result<usize, String> {
@@ -75,31 +60,5 @@ fn parse_size_usize(input: &str) -> Result<usize, String> {
 }
 
 fn parse_size_u64(input: &str) -> Result<u64, String> {
-    let raw = input.trim();
-    if raw.is_empty() {
-        return Err("size cannot be empty".to_string());
-    }
-
-    let split_idx = raw.find(|c: char| !c.is_ascii_digit()).unwrap_or(raw.len());
-    let (number, unit_raw) = raw.split_at(split_idx);
-    if number.is_empty() {
-        return Err("size must start with digits".to_string());
-    }
-
-    let base = number
-        .parse::<u64>()
-        .map_err(|_| "size numeric part is invalid".to_string())?;
-    let unit = unit_raw.trim().to_ascii_lowercase();
-
-    let multiplier = match unit.as_str() {
-        "" | "b" => 1_u64,
-        "kib" => 1024_u64,
-        "mib" => 1024_u64.pow(2),
-        "gib" => 1024_u64.pow(3),
-        "tib" => 1024_u64.pow(4),
-        _ => return Err("unsupported size unit; use B, KiB, MiB, GiB, or TiB".to_string()),
-    };
-
-    base.checked_mul(multiplier)
-        .ok_or_else(|| "size is too large".to_string())
+    crate::size::parse_size(input).map_err(|err| format_size_error("size", err))
 }

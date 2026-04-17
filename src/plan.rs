@@ -5,7 +5,7 @@ use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::file_entry::FileEntry;
 use crate::models::state::PlannedBatch;
-use crate::scan::scan_source_for_planning;
+use crate::scan::scan_source;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanOptions {
@@ -35,9 +35,9 @@ pub fn build_plan(
         ));
     }
 
-    let entries = scan_source_for_planning(source_root)?;
+    let entries = scan_source(source_root)?;
     let source_total_bytes = entries.iter().map(|f| f.size_bytes).sum::<u64>();
-    let batches = plan_batches_presorted(entries, options)?;
+    let batches = plan_batches(entries, options)?;
 
     Ok(PlanningSnapshot {
         source_file_count: batches.iter().map(|b| b.file_count).sum(),
@@ -65,24 +65,6 @@ pub fn plan_batches(
     sorted.sort_by(cmp_for_planning);
 
     build_batches_from_ordered_entries(sorted, options)
-}
-
-fn plan_batches_presorted(
-    entries: Vec<FileEntry>,
-    options: &PlanOptions,
-) -> Result<Vec<Batch>, CaravanError> {
-    if options.batch_size_bytes == 0 {
-        return Err(CaravanError::InvalidArguments(
-            "batch-size must be greater than zero".to_string(),
-        ));
-    }
-    if options.max_files == Some(0) {
-        return Err(CaravanError::InvalidArguments(
-            "max-files must be greater than zero when provided".to_string(),
-        ));
-    }
-
-    build_batches_from_ordered_entries(entries, options)
 }
 
 fn build_batches_from_ordered_entries(
@@ -152,7 +134,7 @@ pub fn load_batch_definition(
 ) -> Result<Batch, CaravanError> {
     // We scan source and rebuild batches to find the one with matching ID
     // This works because batch IDs are deterministic and reproducible
-    let entries = scan_source_for_planning(source_root)?;
+    let entries = scan_source(source_root)?;
 
     // ✅ Use the EXACT original batch size that was used when planning!
     let opts = PlanOptions {
@@ -160,7 +142,7 @@ pub fn load_batch_definition(
         max_files: max_files.map(|value| value as usize),
     };
 
-    let batches = plan_batches_presorted(entries, &opts)?;
+    let batches = plan_batches(entries, &opts)?;
 
     batches
         .into_iter()

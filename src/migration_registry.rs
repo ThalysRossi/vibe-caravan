@@ -48,11 +48,12 @@ impl MigrationRegistry {
             return Ok(Self::new());
         }
 
-        let content = fs::read_to_string(registry_path).map_err(|err| {
-            CaravanError::IoContext {
-                context: format!("failed to read migration registry {}", registry_path.display()),
-                source: err,
-            }
+        let content = fs::read_to_string(registry_path).map_err(|err| CaravanError::IoContext {
+            context: format!(
+                "failed to read migration registry {}",
+                registry_path.display()
+            ),
+            source: err,
         })?;
 
         serde_json::from_str(&content).map_err(|err| {
@@ -204,14 +205,12 @@ pub fn check_source_writable(source: &Path) -> Result<(), CaravanError> {
 
     // Try to create the directory if it doesn't exist
     if !state_dir.exists() {
-        fs::create_dir_all(&state_dir).map_err(|io_source| {
-            CaravanError::IoContext {
-                context: format!(
-                    "cannot write state to source directory {}: need write access",
-                    source.display()
-                ),
-                source: io_source,
-            }
+        fs::create_dir_all(&state_dir).map_err(|io_source| CaravanError::IoContext {
+            context: format!(
+                "cannot write state to source directory {}: need write access",
+                source.display()
+            ),
+            source: io_source,
         })?;
     }
 

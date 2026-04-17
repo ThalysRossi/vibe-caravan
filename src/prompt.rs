@@ -2,6 +2,13 @@ use crate::conflict::ConflictReport;
 use crate::error::CaravanError;
 use crate::format::format_bytes;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchSizeMismatchChoice {
+    UseStateSize,
+    EnterNewSize,
+    StartFresh,
+}
+
 pub trait PromptBackend {
     fn confirm_deletion(&self, batch_id: &str) -> Result<bool, CaravanError>;
     fn confirm_batch_deletion(&self, batch_ids: &[String]) -> Result<bool, CaravanError> {
@@ -17,7 +24,7 @@ pub trait PromptBackend {
         &self,
         state_size: u64,
         cli_size: u64,
-    ) -> Result<crate::detection::BatchSizeMismatchChoice, CaravanError> {
+    ) -> Result<BatchSizeMismatchChoice, CaravanError> {
         use std::io::{self, Write};
 
         println!("\n⚠️  Batch size mismatch detected!");
@@ -42,9 +49,9 @@ pub trait PromptBackend {
 
         let choice = input.trim();
         match choice {
-            "1" => Ok(crate::detection::BatchSizeMismatchChoice::UseStateSize),
-            "2" => Ok(crate::detection::BatchSizeMismatchChoice::EnterNewSize),
-            "3" => Ok(crate::detection::BatchSizeMismatchChoice::StartFresh),
+            "1" => Ok(BatchSizeMismatchChoice::UseStateSize),
+            "2" => Ok(BatchSizeMismatchChoice::EnterNewSize),
+            "3" => Ok(BatchSizeMismatchChoice::StartFresh),
             _ => Err(CaravanError::InvalidArguments(format!(
                 "Invalid choice '{}'. Please enter 1, 2, or 3.",
                 choice

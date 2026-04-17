@@ -1,24 +1,23 @@
-use std::path::PathBuf;
-
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
 use crate::plan::PlanOptions;
-use crate::signal::{install_signal_handlers, ShutdownFlag};
-use crate::{migration_registry, plan, preflight, snapshot, transfer};
+use crate::{migration_registry, plan, preflight, snapshot};
 
 use super::shared::{
-    ensure_no_operator_review_blocks_with_policy, persist_state_both_locations,
-    print_migration_complete, print_plan_summary, print_preflight_warnings,
-    print_state_save_locations, print_status_snapshot_policy, OperatorReviewPolicy,
+    ensure_no_operator_review_blocks_with_policy, print_migration_complete, print_plan_summary,
+    print_preflight_warnings, print_state_save_locations, print_status_snapshot_policy,
+    OperatorReviewPolicy,
 };
 
 mod batch_handlers;
+mod context;
 mod copy_phase;
 mod delete_phase;
 mod setup;
 mod verify_phase;
 
+use context::TransferContext;
 use copy_phase::run_copy_phase;
 use delete_phase::run_delete_phase;
 use setup::{
@@ -32,11 +31,7 @@ fn state_has_manifest(state: &MigrationState) -> bool {
 }
 
 pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
-    let shutdown_flag = ShutdownFlag::new();
-    install_signal_handlers(&shutdown_flag)?;
-
-    let state_path = migration_registry::state_file_in_source(&config.source, &config.dest);
-    let secondary_state_path = PathBuf::from(".caravan/state.json");
+    let context = TransferContext::new(&config)?;
 
     let source_str = config.source.to_string_lossy().to_string();
     let dest_str = config.dest.to_string_lossy().to_string();
@@ -48,8 +43,8 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
     let transfer_result = (|| -> Result<(), CaravanError> {
         let mut state = load_or_create_state(
             &config,
-            &state_path,
-            &secondary_state_path,
+            &context.state_path,
+            &context.secondary_state_path,
             mode,
             &source_str,
             &dest_str,
@@ -63,7 +58,7 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
             },
         )?;
 
-        print_state_save_locations(&state_path, &secondary_state_path);
+        print_state_save_locations(&context.state_path, &context.secondary_state_path);
         print_status_snapshot_policy(config.snapshot_every, config.snapshot_dir.as_deref());
 
         let plan_opts = PlanOptions {
@@ -97,52 +92,27 @@ pub(super) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanErro
         )?;
 
         seed_state_batches(&mut state, &plan);
-        persist_state_both_locations(&state_path, &secondary_state_path, &state)?;
-
-        let copy_backend = transfer::LocalFsCopyBackend::with_transfer_config(&config);
+        context.persist_state(&state)?;
         warn_copy_backend_config(&config);
 
         let mut processed_batches = 0_u32;
-        processed_batches += run_copy_phase(
-            &config,
-            &plan,
-            &mut state,
-            &state_path,
-            &secondary_state_path,
-            &shutdown_flag,
-            &copy_backend,
-        )?;
+        processed_batches += run_copy_phase(&context, &plan, &mut state)?;
         set_migration_status(migration_id, migration_registry::MigrationStatus::Verifying)?;
-        processed_batches += run_verify_phase(
-            &config,
-            &plan,
-            &mut state,
-            &state_path,
-            &secondary_state_path,
-            &shutdown_flag,
-        )?;
+        processed_batches += run_verify_phase(&context, &plan, &mut state)?;
         set_migration_status(
             migration_id,
             migration_registry::MigrationStatus::AwaitingDeletion,
         )?;
-        run_delete_phase(
-            &config,
-            &mut state,
-            &state_path,
-            &secondary_state_path,
-            &shutdown_flag,
-        )?;
-        let snapshot_backend = snapshot::SystemSnapshotBackend;
-        let mut persist_state = |current_state: &MigrationState| {
-            persist_state_both_locations(&state_path, &secondary_state_path, current_state)
-        };
+        run_delete_phase(&context, &mut state)?;
+        let mut persist_state =
+            |current_state: &MigrationState| context.persist_state(current_state);
         snapshot::process_pending_snapshots(
             config.mode.clone(),
             config.snapshot_every,
             &config.dest,
             config.snapshot_dir.as_deref(),
             &mut state,
-            &snapshot_backend,
+            &context.snapshot_backend,
             &mut persist_state,
         )?;
 

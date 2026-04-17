@@ -72,34 +72,19 @@ pub const fn active_scan_backend() -> ScanBackend {
 }
 
 pub fn scan_source(source_root: &Path) -> Result<Vec<FileEntry>, CaravanError> {
-    scan_source_with_backend_ordering(source_root, active_scan_backend(), ScanOrdering::RelativePath)
-}
-
-pub(crate) fn scan_source_for_planning(source_root: &Path) -> Result<Vec<FileEntry>, CaravanError> {
-    scan_source_with_backend_ordering(
-        source_root,
-        active_scan_backend(),
-        ScanOrdering::Planning,
-    )
+    scan_source_with_backend(source_root, active_scan_backend())
 }
 
 pub fn scan_source_with_backend(
     source_root: &Path,
     backend: ScanBackend,
 ) -> Result<Vec<FileEntry>, CaravanError> {
-    scan_source_with_backend_ordering(source_root, backend, ScanOrdering::RelativePath)
+    scan_source_with_backend_impl(source_root, backend)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScanOrdering {
-    RelativePath,
-    Planning,
-}
-
-fn scan_source_with_backend_ordering(
+fn scan_source_with_backend_impl(
     source_root: &Path,
     backend: ScanBackend,
-    ordering: ScanOrdering,
 ) -> Result<Vec<FileEntry>, CaravanError> {
     if !source_root.exists() {
         return Err(CaravanError::InvalidArguments(format!(
@@ -120,7 +105,7 @@ fn scan_source_with_backend_ordering(
         ScanBackend::Win32FindFirstEx => visit_dir_win32(source_root, source_root, &mut entries)?,
     }
 
-    sort_entries(&mut entries, ordering);
+    entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
     Ok(entries)
 }
 
@@ -180,25 +165,6 @@ fn push_children_in_reverse_sorted_order(
         stack.push(child);
     }
     Ok(())
-}
-
-fn sort_entries(entries: &mut [FileEntry], ordering: ScanOrdering) {
-    match ordering {
-        ScanOrdering::RelativePath => {
-            entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-        }
-        ScanOrdering::Planning => {
-            entries.sort_by(cmp_for_planning);
-        }
-    }
-}
-
-fn cmp_for_planning(a: &FileEntry, b: &FileEntry) -> std::cmp::Ordering {
-    let a_parent = a.relative_path.parent().unwrap_or(Path::new(""));
-    let b_parent = b.relative_path.parent().unwrap_or(Path::new(""));
-    a_parent
-        .cmp(b_parent)
-        .then_with(|| a.relative_path.cmp(&b.relative_path))
 }
 
 fn map_io(context: &'static str) -> impl Fn(std::io::Error) -> CaravanError {

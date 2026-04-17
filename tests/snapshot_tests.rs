@@ -6,8 +6,8 @@ use caravan::config::Mode;
 use caravan::error::CaravanError;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::snapshot::{
-    process_pending_snapshots, snapshot_if_needed, validate_snapshot_configuration, SnapshotBackend,
-    SnapshotRequest,
+    process_pending_snapshots, snapshot_if_needed, validate_snapshot_configuration,
+    SnapshotBackend, SnapshotRequest,
 };
 use tempfile::TempDir;
 
