@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::config::{OutputFormat, TransferConfig};
 use crate::error::CaravanError;
+use crate::migration_registry::{self, MigrationStatus};
 use crate::models::state::MigrationState;
 use crate::plan::PlanOptions;
 use crate::signal::{install_signal_handlers, ShutdownFlag};
@@ -80,6 +81,55 @@ fn print_failed_batch_inspection_json(
     Ok(())
 }
 
+fn find_resume_migration_id(
+    state: &MigrationState,
+    state_path: &Path,
+) -> Result<Option<u64>, CaravanError> {
+    let registry_path = migration_registry::default_registry_path();
+    let registry = migration_registry::MigrationRegistry::load(&registry_path)?;
+    let requested_state_file = state_path.file_name().and_then(|name| name.to_str());
+
+    let matching_incomplete = |entry: &migration_registry::MigrationEntry| {
+        entry.source == state.source
+            && entry.destination == state.destination
+            && entry.mode == state.mode
+            && entry.effective_status() != MigrationStatus::Completed
+            && entry.effective_status() != MigrationStatus::Failed
+    };
+
+    let exact_file_match = requested_state_file.and_then(|state_file| {
+        registry
+            .migrations
+            .iter()
+            .rev()
+            .find(|entry| matching_incomplete(entry) && entry.state_file == state_file)
+            .map(|entry| entry.id)
+    });
+
+    if exact_file_match.is_some() {
+        return Ok(exact_file_match);
+    }
+
+    Ok(registry
+        .migrations
+        .iter()
+        .rev()
+        .find(|entry| matching_incomplete(entry))
+        .map(|entry| entry.id))
+}
+
+fn persist_resume_migration_status(
+    migration_id: Option<u64>,
+    status: MigrationStatus,
+) -> Result<(), CaravanError> {
+    let Some(migration_id) = migration_id else {
+        return Ok(());
+    };
+
+    let registry_path = migration_registry::default_registry_path();
+    migration_registry::persist_status_transition_with_intent(&registry_path, migration_id, status)
+}
+
 pub(super) fn execute_resume(
     state_path: &Path,
     recover_failed: bool,
@@ -108,63 +158,93 @@ pub(super) fn execute_resume(
         ));
     }
 
-    print_resume_state_header();
-    print_resume_state_details(
-        &state.mode,
-        &state.source,
-        &state.destination,
-        state.batches.len(),
-    );
+    let migration_id = find_resume_migration_id(&state, state_path)?;
+    persist_resume_migration_status(migration_id, MigrationStatus::Running)?;
 
-    let completed_count = state.batches.iter().filter(|b| b.deleted).count();
-    print_resume_completed_batches(completed_count, state.batches.len());
-    print_status_snapshot_policy(config.snapshot_every, config.snapshot_dir.as_deref());
+    let resume_result = (|| -> Result<(), CaravanError> {
+        print_resume_state_header();
+        print_resume_state_details(
+            &state.mode,
+            &state.source,
+            &state.destination,
+            state.batches.len(),
+        );
 
-    snapshot::validate_snapshot_configuration(
-        config.mode.clone(),
-        config.snapshot_every,
-        &config.dest,
-        config.snapshot_dir.as_deref(),
-    )?;
+        let completed_count = state.batches.iter().filter(|b| b.deleted).count();
+        print_resume_completed_batches(completed_count, state.batches.len());
+        print_status_snapshot_policy(config.snapshot_every, config.snapshot_dir.as_deref());
 
-    ensure_no_operator_review_blocks_with_policy(
-        &state,
-        OperatorReviewPolicy {
-            // Failed batches are evaluated per-batch during resume planning so
-            // operators can see destination reconciliation details.
-            allow_failed_batches: true,
-        },
-    )?;
+        snapshot::validate_snapshot_configuration(
+            config.mode.clone(),
+            config.snapshot_every,
+            &config.dest,
+            config.snapshot_dir.as_deref(),
+        )?;
 
-    print_resuming_transfer();
+        ensure_no_operator_review_blocks_with_policy(
+            &state,
+            OperatorReviewPolicy {
+                // Failed batches are evaluated per-batch during resume planning so
+                // operators can see destination reconciliation details.
+                allow_failed_batches: true,
+            },
+        )?;
 
-    let context = ResumeContext::new(&config, state_path, shutdown_flag);
-    run_resume_batches(&mut state, &context)?;
+        print_resuming_transfer();
 
-    context.check_shutdown()?;
-    ensure_no_operator_review_blocks(&state)?;
+        let context = ResumeContext::new(&config, state_path, shutdown_flag);
+        run_resume_batches(&mut state, &context)?;
 
-    let mut persist_state = |current_state: &MigrationState| context.persist_state(current_state);
-    approve_and_delete_verified_batches(
-        &mut state,
-        &context.config.source,
-        context.config.interactive,
-        &context.shutdown_flag,
-        &mut persist_state,
-        "resume",
-    )?;
-    snapshot::process_pending_snapshots(
-        context.config.mode.clone(),
-        context.config.snapshot_every,
-        &context.config.dest,
-        context.config.snapshot_dir.as_deref(),
-        &mut state,
-        &context.snapshot_backend,
-        &mut persist_state,
-    )?;
+        context.check_shutdown()?;
+        ensure_no_operator_review_blocks(&state)?;
 
-    let completed_count = state.batches.iter().filter(|b| b.deleted).count();
-    print_resume_complete(state.batches.len(), completed_count);
+        let mut persist_state =
+            |current_state: &MigrationState| context.persist_state(current_state);
+        approve_and_delete_verified_batches(
+            &mut state,
+            &context.config.source,
+            context.config.interactive,
+            &context.shutdown_flag,
+            &mut persist_state,
+            "resume",
+        )?;
+        snapshot::process_pending_snapshots(
+            context.config.mode.clone(),
+            context.config.snapshot_every,
+            &context.config.dest,
+            context.config.snapshot_dir.as_deref(),
+            &mut state,
+            &context.snapshot_backend,
+            &mut persist_state,
+        )?;
 
-    Ok(())
+        let completed_count = state.batches.iter().filter(|b| b.deleted).count();
+        print_resume_complete(state.batches.len(), completed_count);
+
+        Ok(())
+    })();
+
+    match &resume_result {
+        Ok(()) => {
+            let has_pending_deletion = state.batches.iter().any(|batch| !batch.deleted);
+            let final_status = if has_pending_deletion {
+                MigrationStatus::AwaitingDeletion
+            } else {
+                MigrationStatus::Completed
+            };
+            persist_resume_migration_status(migration_id, final_status)?;
+        }
+        Err(original_err) => {
+            if let Err(status_err) =
+                persist_resume_migration_status(migration_id, MigrationStatus::Failed)
+            {
+                eprintln!(
+                    "[WARNING] resume failed and migration status could not be updated to failed: {}; original error: {}",
+                    status_err, original_err
+                );
+            }
+        }
+    }
+
+    resume_result
 }

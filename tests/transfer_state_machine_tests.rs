@@ -92,6 +92,339 @@ fn transfer_failure_marks_migration_registry_failed() {
 }
 
 #[test]
+fn resume_success_marks_migration_registry_completed() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "source contents").expect("write source");
+    fs::write(dest_dir.join("file1.txt"), "source contents").expect("write destination");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.upsert_planned_batch(caravan::models::state::PlannedBatch {
+        batch_id: "batch-000001".to_string(),
+        file_count: 1,
+        total_bytes: "source contents".len() as u64,
+        files: vec![caravan::models::state::PlannedFile {
+            relative_path: std::path::PathBuf::from("file1.txt"),
+            size_bytes: "source contents".len() as u64,
+        }],
+    });
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::ApprovedForDelete,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: false,
+    });
+
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+    persist_state(&state_path, &state).expect("persist resume state");
+
+    let registry_path = tmp.path().join(".caravan/migrations.json");
+    let mut registry = MigrationRegistry::new();
+    let migration_id = registry.add_migration(
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+        "staging",
+        state_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("state filename"),
+    );
+    registry
+        .update_status(migration_id, MigrationStatus::AwaitingDeletion)
+        .expect("set initial status");
+    registry.save(&registry_path).expect("save registry");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan resume");
+
+    assert!(output.status.success(), "resume should succeed");
+    assert!(
+        !source_dir.join("file1.txt").exists(),
+        "resume should complete deletion for approved batch"
+    );
+
+    let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
+    assert_eq!(registry.migrations.len(), 1);
+    assert_eq!(registry.migrations[0].status, MigrationStatus::Completed);
+}
+
+#[test]
+fn resume_prefers_incomplete_registry_entry_when_history_contains_completed_entry() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "source contents").expect("write source");
+    fs::write(dest_dir.join("file1.txt"), "source contents").expect("write destination");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.upsert_planned_batch(caravan::models::state::PlannedBatch {
+        batch_id: "batch-000001".to_string(),
+        file_count: 1,
+        total_bytes: "source contents".len() as u64,
+        files: vec![caravan::models::state::PlannedFile {
+            relative_path: std::path::PathBuf::from("file1.txt"),
+            size_bytes: "source contents".len() as u64,
+        }],
+    });
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::ApprovedForDelete,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: false,
+    });
+
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+    persist_state(&state_path, &state).expect("persist resume state");
+
+    let registry_path = tmp.path().join(".caravan/migrations.json");
+    let mut registry = MigrationRegistry::new();
+    let incomplete_id = registry.add_migration(
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+        "staging",
+        state_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("state filename"),
+    );
+    registry
+        .update_status(incomplete_id, MigrationStatus::AwaitingDeletion)
+        .expect("set incomplete status");
+
+    let completed_id = registry.add_migration(
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+        "staging",
+        state_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("state filename"),
+    );
+    registry
+        .update_status(completed_id, MigrationStatus::Completed)
+        .expect("set completed status");
+    registry.save(&registry_path).expect("save registry");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan resume");
+
+    assert!(output.status.success(), "resume should succeed");
+
+    let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
+    let incomplete = registry
+        .find_by_id(incomplete_id)
+        .expect("incomplete entry should exist");
+    let completed = registry
+        .find_by_id(completed_id)
+        .expect("completed entry should exist");
+
+    assert_eq!(incomplete.status, MigrationStatus::Completed);
+    assert_eq!(completed.status, MigrationStatus::Completed);
+}
+
+#[test]
+fn resume_updates_registry_entry_matching_state_file_when_multiple_incomplete_exist() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "source contents").expect("write source");
+    fs::write(dest_dir.join("file1.txt"), "source contents").expect("write destination");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.upsert_planned_batch(caravan::models::state::PlannedBatch {
+        batch_id: "batch-000001".to_string(),
+        file_count: 1,
+        total_bytes: "source contents".len() as u64,
+        files: vec![caravan::models::state::PlannedFile {
+            relative_path: std::path::PathBuf::from("file1.txt"),
+            size_bytes: "source contents".len() as u64,
+        }],
+    });
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::ApprovedForDelete,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: false,
+    });
+
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+    persist_state(&state_path, &state).expect("persist resume state");
+    let state_file = state_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("state filename")
+        .to_string();
+
+    let registry_path = tmp.path().join(".caravan/migrations.json");
+    let mut registry = MigrationRegistry::new();
+    let correct_id = registry.add_migration(
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+        "staging",
+        &state_file,
+    );
+    registry
+        .update_status(correct_id, MigrationStatus::AwaitingDeletion)
+        .expect("set correct entry status");
+
+    let wrong_id = registry.add_migration(
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+        "staging",
+        "legacy-state.json",
+    );
+    registry
+        .update_status(wrong_id, MigrationStatus::AwaitingDeletion)
+        .expect("set wrong entry status");
+    registry.save(&registry_path).expect("save registry");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan resume");
+
+    assert!(output.status.success(), "resume should succeed");
+
+    let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
+    let correct = registry
+        .find_by_id(correct_id)
+        .expect("correct entry should exist");
+    let wrong = registry
+        .find_by_id(wrong_id)
+        .expect("wrong entry should exist");
+    assert_eq!(correct.status, MigrationStatus::Completed);
+    assert_eq!(wrong.status, MigrationStatus::AwaitingDeletion);
+}
+
+#[test]
+fn resume_without_deletion_approval_keeps_registry_at_awaiting_deletion() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("file1.txt"), "source contents").expect("write source");
+    fs::write(dest_dir.join("file1.txt"), "source contents").expect("write destination");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.upsert_planned_batch(caravan::models::state::PlannedBatch {
+        batch_id: "batch-000001".to_string(),
+        file_count: 1,
+        total_bytes: "source contents".len() as u64,
+        files: vec![caravan::models::state::PlannedFile {
+            relative_path: std::path::PathBuf::from("file1.txt"),
+            size_bytes: "source contents".len() as u64,
+        }],
+    });
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::VerifyCompleted,
+        verification_passed: true,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
+    persist_state(&state_path, &state).expect("persist resume state");
+
+    let registry_path = tmp.path().join(".caravan/migrations.json");
+    let mut registry = MigrationRegistry::new();
+    let migration_id = registry.add_migration(
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+        "staging",
+        state_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("state filename"),
+    );
+    registry
+        .update_status(migration_id, MigrationStatus::AwaitingDeletion)
+        .expect("set initial status");
+    registry.save(&registry_path).expect("save registry");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .write_stdin("n\n")
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan resume");
+
+    assert!(output.status.success(), "resume should succeed");
+    assert!(
+        source_dir.join("file1.txt").exists(),
+        "source file should remain when deletion is not approved"
+    );
+
+    let registry = MigrationRegistry::load(&registry_path).expect("load migration registry");
+    let entry = registry
+        .find_by_id(migration_id)
+        .expect("migration entry should exist");
+    assert_eq!(entry.status, MigrationStatus::AwaitingDeletion);
+}
+
+#[test]
 fn skip_conflicts_marks_batch_failed_instead_of_copy_completed() {
     let tmp = TempDir::new().expect("temp dir");
     let source_dir = tmp.path().join("source");
