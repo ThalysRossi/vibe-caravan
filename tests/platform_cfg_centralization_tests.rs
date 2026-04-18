@@ -16,6 +16,14 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+fn normalize_cfg_scan_text(source: &str) -> String {
+    source.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn has_runtime_cfg_macro(source: &str) -> bool {
+    normalize_cfg_scan_text(source).contains("cfg!(")
+}
+
 #[test]
 fn runtime_cfg_checks_are_centralized_in_platform_module() {
     let mut rust_files = Vec::new();
@@ -24,7 +32,7 @@ fn runtime_cfg_checks_are_centralized_in_platform_module() {
     let mut offenders = Vec::new();
     for file in rust_files {
         let content = fs::read_to_string(&file).expect("failed to read rust source file");
-        if content.contains("cfg!(") && file != Path::new("src/platform.rs") {
+        if has_runtime_cfg_macro(&content) && file != Path::new("src/platform.rs") {
             offenders.push(file.display().to_string());
         }
     }
@@ -34,4 +42,18 @@ fn runtime_cfg_checks_are_centralized_in_platform_module() {
         "found runtime cfg!(...) outside src/platform.rs: {}",
         offenders.join(", ")
     );
+}
+
+#[test]
+fn runtime_cfg_detection_handles_whitespace_variants() {
+    let cases = [
+        "cfg! ( target_os = \"windows\" )",
+        "cfg! ( target_os = \"linux\" )",
+    ];
+    for source in cases {
+        assert!(
+            has_runtime_cfg_macro(source),
+            "expected runtime cfg!(...) detection for variant: {source}"
+        );
+    }
 }

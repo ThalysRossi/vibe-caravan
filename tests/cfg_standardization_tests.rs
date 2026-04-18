@@ -16,6 +16,21 @@ fn collect_rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+fn normalize_cfg_scan_text(source: &str) -> String {
+    source.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn has_non_standard_cfg(source: &str) -> bool {
+    let normalized = normalize_cfg_scan_text(source);
+    normalized.contains("#[cfg(unix)]")
+        || normalized.contains("#[cfg(not(unix))]")
+        || normalized.contains("#[cfg(windows)]")
+        || normalized.contains("#[cfg(not(windows))]")
+        || normalized.contains("#[cfg(not(target_os=\"linux\"))]")
+        || normalized.contains("cfg!(windows)")
+        || normalized.contains("cfg!(not(windows))")
+}
+
 #[test]
 fn src_cfg_usage_is_standardized_to_linux_windows_target_os() {
     let mut rust_files = Vec::new();
@@ -24,14 +39,7 @@ fn src_cfg_usage_is_standardized_to_linux_windows_target_os() {
     let mut offenders = Vec::new();
     for file in rust_files {
         let content = fs::read_to_string(&file).expect("failed to read rust source file");
-        if content.contains("#[cfg(unix)]")
-            || content.contains("#[cfg(not(unix))]")
-            || content.contains("#[cfg(windows)]")
-            || content.contains("#[cfg(not(windows))]")
-            || content.contains("#[cfg(not(target_os = \"linux\"))]")
-            || content.contains("cfg!(windows)")
-            || content.contains("cfg!(not(windows))")
-        {
+        if has_non_standard_cfg(&content) {
             offenders.push(file.display().to_string());
         }
     }
@@ -41,4 +49,24 @@ fn src_cfg_usage_is_standardized_to_linux_windows_target_os() {
         "found non-standard cfg usage in src files: {}",
         offenders.join(", ")
     );
+}
+
+#[test]
+fn non_standard_cfg_detection_handles_whitespace_variants() {
+    let cases = [
+        "# [ cfg ( unix ) ]",
+        "#[ cfg( not ( unix ) ) ]",
+        "#[cfg( windows )]",
+        "#[cfg(not( windows ))]",
+        "# [ cfg ( not( target_os = \"linux\" ) ) ]",
+        "cfg! ( windows )",
+        "cfg! ( not ( windows ) )",
+    ];
+
+    for source in cases {
+        assert!(
+            has_non_standard_cfg(source),
+            "expected detection for non-standard cfg pattern variant: {source}"
+        );
+    }
 }
