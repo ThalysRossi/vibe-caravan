@@ -9,6 +9,7 @@ use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::MigrationState;
 use crate::plan::PlanningSnapshot;
+use crate::platform::is_windows_build;
 use crate::progress::ProgressReporter;
 
 /// Thread-local buffer pool for reusing allocation buffers between file copies.
@@ -119,7 +120,7 @@ pub fn resolve_copy_strategy(strategy: CopyStrategy, mode: &Mode) -> ResolvedCop
         CopyStrategy::Buffered => ResolvedCopyStrategy::Buffered,
         CopyStrategy::Native => ResolvedCopyStrategy::NativePreferred,
         CopyStrategy::Auto => {
-            if cfg!(target_os = "windows") && matches!(mode, Mode::Staging) {
+            if is_windows_build() && matches!(mode, Mode::Staging) {
                 ResolvedCopyStrategy::NativePreferred
             } else {
                 ResolvedCopyStrategy::Hybrid

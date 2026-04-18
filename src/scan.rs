@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
+use crate::platform::is_windows_build;
 
 #[cfg(target_os = "windows")]
 const WINDOWS_TO_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
@@ -64,7 +65,7 @@ pub enum ScanBackend {
 }
 
 pub const fn active_scan_backend() -> ScanBackend {
-    if cfg!(target_os = "windows") {
+    if is_windows_build() {
         ScanBackend::Win32FindFirstEx
     } else {
         ScanBackend::StdFs

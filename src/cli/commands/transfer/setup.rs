@@ -5,6 +5,7 @@ use crate::error::CaravanError;
 use crate::migration_registry;
 use crate::models::state::{BatchPhase, BatchState, MigrationState};
 use crate::plan::PlanningSnapshot;
+use crate::platform::is_windows_build;
 use crate::state_store;
 
 use super::super::shared::AppContext;
@@ -109,7 +110,7 @@ pub(super) fn warn_copy_backend_config(config: &TransferConfig) {
         eprintln!("  Consider using --buffered-copy-threshold 8MiB for better HDD performance.");
     }
 
-    if !cfg!(target_os = "windows") && config.copy_strategy == crate::config::CopyStrategy::Native {
+    if !is_windows_build() && config.copy_strategy == crate::config::CopyStrategy::Native {
         eprintln!(
             "[WARNING] Native copy strategy was requested on a non-Windows platform; caravan will fall back to hybrid copy."
         );

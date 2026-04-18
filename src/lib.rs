@@ -9,6 +9,7 @@ pub mod format;
 pub mod logging;
 pub mod migration_registry;
 pub mod plan;
+pub mod platform;
 pub mod preflight;
 pub mod progress;
 pub mod prompt;

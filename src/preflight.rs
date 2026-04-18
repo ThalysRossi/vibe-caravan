@@ -5,6 +5,7 @@ use crate::capacity::{SpaceProbe, SystemSpaceProbe};
 use crate::config::{Mode, TransferConfig};
 use crate::error::CaravanError;
 use crate::plan::PlanningSnapshot;
+use crate::platform::is_windows_build;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DestinationFlags {
@@ -404,8 +405,7 @@ pub fn analyze_staging_preflight_with_probe(
         });
     }
 
-    let windows_destination =
-        cfg!(target_os = "windows") || destination_looks_windows_style(&config.dest);
+    let windows_destination = is_windows_build() || destination_looks_windows_style(&config.dest);
     if windows_destination {
         if let Some(space) = probe.destination_space(&config.dest)? {
             if suspicious_space_divergence(space) {
@@ -470,7 +470,7 @@ pub fn analyze_staging_preflight_with_probe(
         });
     }
 
-    if (cfg!(target_os = "windows") || destination_looks_windows_style(&config.dest))
+    if (is_windows_build() || destination_looks_windows_style(&config.dest))
         && !destination_uses_extended_windows_prefix(&config.dest)
         && max_estimated_destination_path_len >= 240
     {

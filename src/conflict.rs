@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::file_entry::FileEntry;
+use crate::platform::is_windows_build;
 
 /// Report of naming conflicts detected for a batch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,7 +130,7 @@ struct IndexedDestinationEntry {
 
 fn filename_lookup_key(name: &OsStr) -> String {
     let rendered = name.to_string_lossy();
-    if cfg!(target_os = "windows") {
+    if is_windows_build() {
         rendered.to_lowercase()
     } else {
         rendered.into_owned()
