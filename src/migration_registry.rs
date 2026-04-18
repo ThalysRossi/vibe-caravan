@@ -212,11 +212,11 @@ pub fn generate_state_filename(source: &str, dest: &str) -> String {
 
 fn normalize_path_for_state_hash(path: &str) -> String {
     let normalized = path.replace('\\', "/");
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     {
         return normalized.to_ascii_lowercase();
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
         normalized
     }

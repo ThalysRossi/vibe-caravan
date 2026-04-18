@@ -65,7 +65,7 @@ pub fn snapshot_if_needed(
         Some(_) => {
             return Err(CaravanError::InvalidArguments(
                 "snapshot cadence must be greater than zero".to_string(),
-            ))
+            ));
         }
         None => return Ok(None),
     };
@@ -293,7 +293,7 @@ fn create_btrfs_snapshot(
     Ok(snapshot_name)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 fn create_btrfs_snapshot(
     _destination_root: &Path,
     _snapshot_root: Option<&Path>,

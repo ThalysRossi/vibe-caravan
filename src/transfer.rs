@@ -119,7 +119,7 @@ pub fn resolve_copy_strategy(strategy: CopyStrategy, mode: &Mode) -> ResolvedCop
         CopyStrategy::Buffered => ResolvedCopyStrategy::Buffered,
         CopyStrategy::Native => ResolvedCopyStrategy::NativePreferred,
         CopyStrategy::Auto => {
-            if cfg!(windows) && matches!(mode, Mode::Staging) {
+            if cfg!(target_os = "windows") && matches!(mode, Mode::Staging) {
                 ResolvedCopyStrategy::NativePreferred
             } else {
                 ResolvedCopyStrategy::Hybrid
@@ -172,7 +172,7 @@ impl FileCopier for OsFileCopier {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn system_native_copy_file(source: &Path, destination: &Path) -> io::Result<u64> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::CopyFileW;
@@ -196,7 +196,7 @@ fn system_native_copy_file(source: &Path, destination: &Path) -> io::Result<u64>
     std::fs::metadata(destination).map(|meta| meta.len())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn system_native_copy_file(_source: &Path, _destination: &Path) -> io::Result<u64> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -638,12 +638,12 @@ fn sync_parent_directories(parents: HashSet<PathBuf>) -> Result<(), CaravanError
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn sync_directory(path: &Path) -> io::Result<()> {
     std::fs::File::open(path)?.sync_all()
 }
 
-#[cfg(not(unix))]
+#[cfg(target_os = "windows")]
 fn sync_directory(_path: &Path) -> io::Result<()> {
     Ok(())
 }

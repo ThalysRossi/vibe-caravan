@@ -483,9 +483,10 @@ fn snapshot_dir_requires_snapshot_every() {
     ]);
 
     let err = result.expect_err("snapshot-dir without snapshot-every should fail");
-    assert!(err
-        .to_string()
-        .contains("snapshot-dir requires snapshot-every"));
+    assert!(
+        err.to_string()
+            .contains("snapshot-dir requires snapshot-every")
+    );
 }
 
 #[test]

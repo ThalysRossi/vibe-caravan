@@ -1,4 +1,4 @@
-use caravan::scan::{active_scan_backend, scan_source, scan_source_with_backend, ScanBackend};
+use caravan::scan::{ScanBackend, active_scan_backend, scan_source, scan_source_with_backend};
 use std::fs;
 use tempfile::TempDir;
 

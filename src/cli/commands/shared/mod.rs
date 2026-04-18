@@ -7,13 +7,13 @@ mod output;
 
 pub(super) use app_context::AppContext;
 pub(super) use batch_ops::{
-    copy_batch_with_state_updates, verify_batch_with_state_updates, CopyBatchOp,
+    CopyBatchOp, copy_batch_with_state_updates, verify_batch_with_state_updates,
 };
 pub(super) use capacity_guard::ensure_destination_capacity;
 pub(super) use deletion::approve_and_delete_verified_batches;
 pub(super) use operator_review::{
-    ensure_no_operator_review_blocks, ensure_no_operator_review_blocks_with_policy,
-    OperatorReviewPolicy,
+    OperatorReviewPolicy, ensure_no_operator_review_blocks,
+    ensure_no_operator_review_blocks_with_policy,
 };
 pub(super) use output::{
     print_all_verified_banner, print_copy_batch_banner, print_delete_source_batches_banner,

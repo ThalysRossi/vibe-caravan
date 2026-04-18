@@ -1,6 +1,6 @@
 use caravan::migration_registry::{
-    check_source_writable, generate_state_filename, persist_status_transition_with_intent,
-    state_dir_in_source, state_file_in_source, MigrationRegistry, MigrationStatus,
+    MigrationRegistry, MigrationStatus, check_source_writable, generate_state_filename,
+    persist_status_transition_with_intent, state_dir_in_source, state_file_in_source,
 };
 use tempfile::TempDir;
 

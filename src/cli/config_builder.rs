@@ -1,7 +1,7 @@
 use crate::config::{Config, Mode, TransferConfig};
 use crate::error::CaravanError;
 
-use super::{args, Cli, Command, TransferArgs};
+use super::{Cli, Command, TransferArgs, args};
 
 pub(super) fn to_config(cli: Cli) -> Result<Config, CaravanError> {
     let Cli { log_level, command } = cli;

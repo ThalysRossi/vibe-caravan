@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
-use crate::signal::{install_signal_handlers, ShutdownFlag};
+use crate::signal::{ShutdownFlag, install_signal_handlers};
 use crate::{migration_registry, snapshot, state_store, transfer};
 
 pub(super) struct TransferContext<'a> {

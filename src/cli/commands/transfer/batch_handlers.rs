@@ -7,9 +7,9 @@ use crate::prompt;
 use crate::prompt::PromptBackend;
 
 use super::super::shared::{
-    copy_batch_with_state_updates, ensure_destination_capacity, print_copy_batch_banner,
-    print_verification_failed, print_verification_passed, print_verify_batch_banner,
-    verify_batch_with_state_updates, CopyBatchOp,
+    CopyBatchOp, copy_batch_with_state_updates, ensure_destination_capacity,
+    print_copy_batch_banner, print_verification_failed, print_verification_passed,
+    print_verify_batch_banner, verify_batch_with_state_updates,
 };
 use super::context::TransferContext;
 use super::setup::planned_batch_state;

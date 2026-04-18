@@ -6,8 +6,8 @@ use caravan::config::Mode;
 use caravan::error::CaravanError;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::snapshot::{
-    process_pending_snapshots, snapshot_if_needed, validate_snapshot_configuration,
-    SnapshotBackend, SnapshotRequest,
+    SnapshotBackend, SnapshotRequest, process_pending_snapshots, snapshot_if_needed,
+    validate_snapshot_configuration,
 };
 use tempfile::TempDir;
 
@@ -115,9 +115,10 @@ fn snapshots_are_rejected_in_staging_mode() {
         &backend,
     )
     .expect_err("staging snapshots should be rejected");
-    assert!(err
-        .to_string()
-        .contains("snapshots are only supported in migrate mode"));
+    assert!(
+        err.to_string()
+            .contains("snapshots are only supported in migrate mode")
+    );
 }
 
 #[test]
@@ -319,14 +320,18 @@ fn process_pending_snapshots_continues_after_snapshot_failure() {
         vec!["batch-000001".to_string(), "batch-000002".to_string()]
     );
     assert_eq!(persist_count.get(), 2);
-    assert!(state
-        .journal
-        .iter()
-        .any(|entry| entry.event == "snapshot_failed"));
-    assert!(state
-        .journal
-        .iter()
-        .any(|entry| entry.event == "snapshot_completed"));
+    assert!(
+        state
+            .journal
+            .iter()
+            .any(|entry| entry.event == "snapshot_failed")
+    );
+    assert!(
+        state
+            .journal
+            .iter()
+            .any(|entry| entry.event == "snapshot_completed")
+    );
 }
 
 #[test]
@@ -418,9 +423,10 @@ fn validate_snapshot_configuration_rejects_snapshot_root_without_cadence() {
     )
     .expect_err("snapshot root without cadence should fail");
 
-    assert!(err
-        .to_string()
-        .contains("snapshot-dir requires snapshot-every"));
+    assert!(
+        err.to_string()
+            .contains("snapshot-dir requires snapshot-every")
+    );
 }
 
 #[test]
@@ -440,9 +446,10 @@ fn validate_snapshot_configuration_rejects_non_directory_snapshot_root() {
     )
     .expect_err("non-directory snapshot root should fail");
 
-    assert!(err
-        .to_string()
-        .contains("snapshot destination must be an existing directory"));
+    assert!(
+        err.to_string()
+            .contains("snapshot destination must be an existing directory")
+    );
 }
 
 #[test]
@@ -460,9 +467,10 @@ fn validate_snapshot_configuration_rejects_snapshot_root_inside_destination() {
     )
     .expect_err("snapshot root inside destination should fail");
 
-    assert!(err
-        .to_string()
-        .contains("snapshot destination must not be inside migration destination"));
+    assert!(
+        err.to_string()
+            .contains("snapshot destination must not be inside migration destination")
+    );
 }
 
 #[test]

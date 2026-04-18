@@ -1,8 +1,8 @@
 use std::fs;
 
-use caravan::cleanup::{cleanup_batch, cleanup_batch_with_remover, FileRemover};
+use caravan::cleanup::{FileRemover, cleanup_batch, cleanup_batch_with_remover};
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
-use caravan::plan::{build_plan, PlanOptions};
+use caravan::plan::{PlanOptions, build_plan};
 use tempfile::TempDir;
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
@@ -39,9 +39,10 @@ fn cleanup_is_blocked_when_verification_failed() {
 
     let err =
         cleanup_batch(&batch, src.path(), &mut state, "test").expect_err("cleanup should fail");
-    assert!(err
-        .to_string()
-        .contains("deletion blocked because verification did not pass"));
+    assert!(
+        err.to_string()
+            .contains("deletion blocked because verification did not pass")
+    );
 }
 
 #[test]
@@ -70,9 +71,10 @@ fn cleanup_is_blocked_without_approval() {
 
     let err =
         cleanup_batch(&batch, src.path(), &mut state, "test").expect_err("cleanup should fail");
-    assert!(err
-        .to_string()
-        .contains("deletion blocked because batch is not approved"));
+    assert!(
+        err.to_string()
+            .contains("deletion blocked because batch is not approved")
+    );
 }
 
 #[test]

@@ -1,5 +1,5 @@
 use caravan::cli::parse_cli_from;
-use caravan::size::{parse_size, SizeParseError};
+use caravan::size::{SizeParseError, parse_size};
 
 #[test]
 fn parse_size_supports_binary_units() {

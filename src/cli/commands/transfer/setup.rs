@@ -109,7 +109,7 @@ pub(super) fn warn_copy_backend_config(config: &TransferConfig) {
         eprintln!("  Consider using --buffered-copy-threshold 8MiB for better HDD performance.");
     }
 
-    if !cfg!(windows) && config.copy_strategy == crate::config::CopyStrategy::Native {
+    if !cfg!(target_os = "windows") && config.copy_strategy == crate::config::CopyStrategy::Native {
         eprintln!(
             "[WARNING] Native copy strategy was requested on a non-Windows platform; caravan will fall back to hybrid copy."
         );

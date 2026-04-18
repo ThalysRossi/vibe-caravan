@@ -65,11 +65,11 @@ impl FilesystemTypeProbe for SystemFilesystemTypeProbe {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn query_destination_flags(destination: &Path) -> Result<DestinationFlags, CaravanError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
-        GetFileAttributesW, FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_ATTRIBUTE_COMPRESSED, FILE_ATTRIBUTE_REPARSE_POINT, GetFileAttributesW,
         INVALID_FILE_ATTRIBUTES,
     };
 
@@ -104,7 +104,7 @@ fn query_destination_flags(destination: &Path) -> Result<DestinationFlags, Carav
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn query_destination_flags(_destination: &Path) -> Result<DestinationFlags, CaravanError> {
     Ok(DestinationFlags {
         is_compressed: false,
@@ -157,7 +157,7 @@ fn detect_filesystem_type(path: &Path) -> Result<Option<String>, CaravanError> {
     Ok(best_match.map(|(_, fs_type)| fs_type))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 fn detect_filesystem_type(_path: &Path) -> Result<Option<String>, CaravanError> {
     Ok(None)
 }
@@ -404,7 +404,8 @@ pub fn analyze_staging_preflight_with_probe(
         });
     }
 
-    let windows_destination = cfg!(windows) || destination_looks_windows_style(&config.dest);
+    let windows_destination =
+        cfg!(target_os = "windows") || destination_looks_windows_style(&config.dest);
     if windows_destination {
         if let Some(space) = probe.destination_space(&config.dest)? {
             if suspicious_space_divergence(space) {
@@ -469,7 +470,7 @@ pub fn analyze_staging_preflight_with_probe(
         });
     }
 
-    if (cfg!(windows) || destination_looks_windows_style(&config.dest))
+    if (cfg!(target_os = "windows") || destination_looks_windows_style(&config.dest))
         && !destination_uses_extended_windows_prefix(&config.dest)
         && max_estimated_destination_path_len >= 240
     {

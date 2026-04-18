@@ -4,10 +4,10 @@ use crate::models::state::MigrationState;
 use crate::resume as resume_ops;
 
 use super::super::shared::{
-    copy_batch_with_state_updates, ensure_destination_capacity, print_resume_continue_to_deletion,
-    print_resume_processing_batch_banner, print_resume_skip_already_completed,
-    print_resume_verification_passed, print_verification_failed, verify_batch_with_state_updates,
-    CopyBatchOp,
+    CopyBatchOp, copy_batch_with_state_updates, ensure_destination_capacity,
+    print_resume_continue_to_deletion, print_resume_processing_batch_banner,
+    print_resume_skip_already_completed, print_resume_verification_passed,
+    print_verification_failed, verify_batch_with_state_updates,
 };
 use super::context::ResumeContext;
 

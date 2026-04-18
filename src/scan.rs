@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 const WINDOWS_TO_UNIX_EPOCH_100NS: u64 = 116_444_736_000_000_000;
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 #[doc(hidden)]
 pub fn windows_filetime_ticks_to_system_time(ticks_100ns: u64) -> Option<std::time::SystemTime> {
     use std::time::{Duration, UNIX_EPOCH};
@@ -18,11 +18,11 @@ pub fn windows_filetime_ticks_to_system_time(ticks_100ns: u64) -> Option<std::ti
     Some(UNIX_EPOCH + Duration::new(secs, nanos))
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 #[derive(Debug)]
 struct WinFindHandle(windows_sys::Win32::Foundation::HANDLE);
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 impl WinFindHandle {
     fn try_new(raw: windows_sys::Win32::Foundation::HANDLE) -> Option<Self> {
         if raw == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
@@ -37,7 +37,7 @@ impl WinFindHandle {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 impl Drop for WinFindHandle {
     fn drop(&mut self) {
         // SAFETY: `self.0` originates from a successful `FindFirstFileExW` call and this
@@ -48,7 +48,7 @@ impl Drop for WinFindHandle {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 #[derive(Debug)]
 struct WinEnumeratedEntry {
     path: PathBuf,
@@ -64,7 +64,7 @@ pub enum ScanBackend {
 }
 
 pub const fn active_scan_backend() -> ScanBackend {
-    if cfg!(windows) {
+    if cfg!(target_os = "windows") {
         ScanBackend::Win32FindFirstEx
     } else {
         ScanBackend::StdFs
@@ -172,7 +172,7 @@ fn map_io(context: &'static str) -> impl Fn(std::io::Error) -> CaravanError {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn visit_dir_win32(
     source_root: &Path,
     start_dir: &Path,
@@ -219,7 +219,7 @@ fn visit_dir_win32(
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn push_win_children_in_reverse_sorted_order(
     dir: &Path,
     stack: &mut Vec<WinEnumeratedEntry>,
@@ -231,17 +231,17 @@ fn push_win_children_in_reverse_sorted_order(
     Ok(())
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn enumerate_children_win32(current_dir: &Path) -> Result<Vec<WinEnumeratedEntry>, CaravanError> {
     use std::ffi::OsString;
     use std::mem;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
     use std::ptr;
 
-    use windows_sys::Win32::Foundation::{GetLastError, ERROR_NO_MORE_FILES};
+    use windows_sys::Win32::Foundation::{ERROR_NO_MORE_FILES, GetLastError};
     use windows_sys::Win32::Storage::FileSystem::{
-        FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
-        FIND_FIRST_EX_LARGE_FETCH, WIN32_FIND_DATAW,
+        FIND_FIRST_EX_LARGE_FETCH, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
+        FindNextFileW, WIN32_FIND_DATAW,
     };
 
     fn wide_to_os_string(wide: &[u16]) -> OsString {
@@ -313,7 +313,7 @@ fn enumerate_children_win32(current_dir: &Path) -> Result<Vec<WinEnumeratedEntry
     Ok(children)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn visit_dir_win32(
     source_root: &Path,
     start_dir: &Path,

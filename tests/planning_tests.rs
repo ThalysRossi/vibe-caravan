@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use caravan::plan::{build_plan, load_batch_definition, plan_batches, PlanOptions};
+use caravan::plan::{PlanOptions, build_plan, load_batch_definition, plan_batches};
 use caravan::scan::scan_source;
 use tempfile::TempDir;
 

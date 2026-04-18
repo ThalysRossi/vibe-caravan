@@ -118,15 +118,15 @@ pub fn load_state_with_compat_reconciliation(
             );
             Ok(secondary.state)
         }
-        (Some(Err(primary_err)), Some(Err(secondary_err))) => Err(CaravanError::StateCorrupt(
-            format!(
+        (Some(Err(primary_err)), Some(Err(secondary_err))) => {
+            Err(CaravanError::StateCorrupt(format!(
                 "both canonical state {} and compatibility backup {} are invalid (canonical: {}; backup: {})",
                 primary_path.display(),
                 secondary_path.display(),
                 primary_err,
                 secondary_err
-            ),
-        )),
+            )))
+        }
         (Some(Ok(primary)), None) => Ok(primary.state),
         (None, Some(Ok(secondary))) => {
             eprintln!(

@@ -3,7 +3,7 @@ use std::io::Write;
 
 use caravan::error::CaravanError;
 use caravan::models::verification::VerificationStatus;
-use caravan::plan::{build_plan, PlanOptions};
+use caravan::plan::{PlanOptions, build_plan};
 use caravan::progress::NoopProgress;
 use caravan::transfer::LocalFsCopyBackend;
 use caravan::verify::{digest_file, verify_batch_with_progress};

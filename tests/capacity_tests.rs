@@ -1,8 +1,8 @@
 use std::path::Path;
 
 use caravan::capacity::{
-    check_capacity_with_probe, format_capacity_decision_trace, CapacityDecision, SpaceInfo,
-    SpaceProbe,
+    CapacityDecision, SpaceInfo, SpaceProbe, check_capacity_with_probe,
+    format_capacity_decision_trace,
 };
 use caravan::error::CaravanError;
 

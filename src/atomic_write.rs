@@ -81,7 +81,7 @@ fn unique_suffix() -> String {
     format!("{:x}.{:x}", std::process::id(), now_nanos)
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn sync_parent_directory(path: &Path, subject: &str) -> Result<(), CaravanError> {
     let Some(parent) = path.parent() else {
         return Ok(());
@@ -106,7 +106,7 @@ fn sync_parent_directory(path: &Path, subject: &str) -> Result<(), CaravanError>
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(target_os = "windows")]
 fn sync_parent_directory(_path: &Path, _subject: &str) -> Result<(), CaravanError> {
     Ok(())
 }

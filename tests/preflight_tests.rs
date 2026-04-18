@@ -5,9 +5,10 @@ use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::plan::PlanningSnapshot;
 use caravan::preflight::{
-    analyze_migrate_preflight_with_probe, analyze_staging_preflight_with_probe,
-    analyze_transfer_preflight_with_probes, enforce_transfer_preflight_policy, DestinationFlags,
-    DestinationProbe, DestinationSpaceSnapshot, FilesystemTypeProbe, PreflightWarningCode,
+    DestinationFlags, DestinationProbe, DestinationSpaceSnapshot, FilesystemTypeProbe,
+    PreflightWarningCode, analyze_migrate_preflight_with_probe,
+    analyze_staging_preflight_with_probe, analyze_transfer_preflight_with_probes,
+    enforce_transfer_preflight_policy,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -133,14 +134,18 @@ fn warns_when_destination_has_compression_or_reparse_flags() {
     let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
         .expect("preflight should succeed");
 
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::DestinationCompressed));
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::DestinationReparsePoint));
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::DestinationCompressed)
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::DestinationReparsePoint)
+    );
 }
 
 #[test]
@@ -161,10 +166,12 @@ fn warns_when_case_collisions_exist_in_planned_paths() {
     let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
         .expect("preflight should succeed");
 
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::CaseCollisionRisk));
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::CaseCollisionRisk)
+    );
 }
 
 #[test]
@@ -183,10 +190,12 @@ fn warns_when_estimated_destination_path_length_is_near_windows_limit() {
     let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
         .expect("preflight should succeed");
 
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::PathLengthPressure));
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::PathLengthPressure)
+    );
 }
 
 #[test]
@@ -208,10 +217,12 @@ fn warns_when_available_and_volume_free_space_diverge_on_windows_destination() {
     let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
         .expect("preflight should succeed");
 
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::SpaceAccountingDivergence));
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::SpaceAccountingDivergence)
+    );
 }
 
 #[test]
@@ -233,10 +244,12 @@ fn does_not_warn_when_available_and_volume_free_are_close() {
     let report = analyze_staging_preflight_with_probe(&config, &snapshot, &probe)
         .expect("preflight should succeed");
 
-    assert!(report
-        .warnings
-        .iter()
-        .all(|warning| warning.code != PreflightWarningCode::SpaceAccountingDivergence));
+    assert!(
+        report
+            .warnings
+            .iter()
+            .all(|warning| warning.code != PreflightWarningCode::SpaceAccountingDivergence)
+    );
 }
 
 #[cfg(windows)]
@@ -268,14 +281,18 @@ fn migrate_warns_when_source_is_not_ntfs_like() {
     let report = analyze_migrate_preflight_with_probe(&config, &probe)
         .expect("migrate preflight should succeed");
 
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::SourceFilesystemNotNtfsLike));
-    assert!(report
-        .warnings
-        .iter()
-        .all(|warning| warning.code != PreflightWarningCode::DestinationFilesystemNotBtrfs));
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::SourceFilesystemNotNtfsLike)
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .all(|warning| warning.code != PreflightWarningCode::DestinationFilesystemNotBtrfs)
+    );
 }
 
 #[test]
@@ -289,14 +306,18 @@ fn migrate_warns_when_destination_is_not_btrfs() {
     let report = analyze_migrate_preflight_with_probe(&config, &probe)
         .expect("migrate preflight should succeed");
 
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::DestinationFilesystemNotBtrfs));
-    assert!(report
-        .warnings
-        .iter()
-        .all(|warning| warning.code != PreflightWarningCode::SourceFilesystemNotNtfsLike));
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::DestinationFilesystemNotBtrfs)
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .all(|warning| warning.code != PreflightWarningCode::SourceFilesystemNotNtfsLike)
+    );
 }
 
 #[test]
@@ -356,14 +377,18 @@ fn transfer_preflight_includes_migrate_filesystem_warnings() {
     )
     .expect("combined preflight should succeed");
 
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::SourceFilesystemNotNtfsLike));
-    assert!(report
-        .warnings
-        .iter()
-        .any(|warning| warning.code == PreflightWarningCode::DestinationFilesystemNotBtrfs));
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::SourceFilesystemNotNtfsLike)
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.code == PreflightWarningCode::DestinationFilesystemNotBtrfs)
+    );
 }
 
 #[test]

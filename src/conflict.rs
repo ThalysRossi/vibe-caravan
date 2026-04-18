@@ -129,7 +129,7 @@ struct IndexedDestinationEntry {
 
 fn filename_lookup_key(name: &OsStr) -> String {
     let rendered = name.to_string_lossy();
-    if cfg!(windows) {
+    if cfg!(target_os = "windows") {
         rendered.to_lowercase()
     } else {
         rendered.into_owned()

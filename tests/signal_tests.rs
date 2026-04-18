@@ -1,5 +1,5 @@
 use caravan::error::CaravanError;
-use caravan::signal::{check_shutdown, install_signal_handlers, ShutdownFlag};
+use caravan::signal::{ShutdownFlag, check_shutdown, install_signal_handlers};
 use std::thread;
 
 // Test 1: Shutdown flag starts as false

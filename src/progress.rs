@@ -1,5 +1,5 @@
 use std::time::{Duration, Instant};
-use std::{io::stderr, io::Write};
+use std::{io::Write, io::stderr};
 
 /// Progress reporter trait for tracking long running operations
 pub trait ProgressReporter {

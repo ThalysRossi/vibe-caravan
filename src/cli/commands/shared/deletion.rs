@@ -4,7 +4,7 @@ use crate::cleanup;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
 use crate::prompt;
-use crate::signal::{check_shutdown, ShutdownFlag};
+use crate::signal::{ShutdownFlag, check_shutdown};
 
 use super::{
     print_all_verified_banner, print_delete_source_batches_banner, print_deletion_not_approved,

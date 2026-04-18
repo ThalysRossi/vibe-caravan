@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
-use crate::signal::{check_shutdown, ShutdownFlag};
+use crate::signal::{ShutdownFlag, check_shutdown};
 use crate::{snapshot, state_store, transfer};
 
 pub(super) struct ResumeContext<'a> {

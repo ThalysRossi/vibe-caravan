@@ -36,13 +36,13 @@ pub trait SpaceProbe {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemSpaceProbe;
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 const SYSTEM_SPACE_PROBE_BACKEND: &str = "win32_getdiskfreespaceexw";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 const SYSTEM_SPACE_PROBE_BACKEND: &str = "fs2";
 const CUSTOM_SPACE_PROBE_BACKEND: &str = "custom_probe";
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 fn query_space_info(destination: &Path) -> Result<SpaceInfo, CaravanError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
@@ -83,7 +83,7 @@ fn query_space_info(destination: &Path) -> Result<SpaceInfo, CaravanError> {
     })
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 fn query_space_info(destination: &Path) -> Result<SpaceInfo, CaravanError> {
     let total_bytes = fs2::total_space(destination).map_err(|source| CaravanError::IoContext {
         context: format!(
@@ -241,7 +241,7 @@ fn check_capacity_with_probe_and_backend(
 }
 
 fn destination_volume_root(destination: &Path) -> String {
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     {
         use std::path::{Component, Prefix};
 
@@ -258,7 +258,7 @@ fn destination_volume_root(destination: &Path) -> String {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     {
         if destination.is_absolute() {
             "/".to_string()

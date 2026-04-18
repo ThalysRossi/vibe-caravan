@@ -8,12 +8,12 @@ use caravan::config::{CopyStrategy, Mode};
 use caravan::error::CaravanError;
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
-use caravan::plan::{build_plan, PlanOptions};
+use caravan::plan::{PlanOptions, build_plan};
 use caravan::progress::NoopProgress;
 use caravan::transfer::{
+    DirectoryCreator, FileCopier, LocalFsCopyBackend, ResolvedCopyStrategy,
     copy_batch_with_components_and_durability, resolve_copy_strategy, summarize_transfer_execution,
-    summarize_transfer_plan, DirectoryCreator, FileCopier, LocalFsCopyBackend,
-    ResolvedCopyStrategy,
+    summarize_transfer_plan,
 };
 use tempfile::TempDir;
 

@@ -41,7 +41,7 @@ mod verify {
 #[path = "../src/cli/commands/shared/batch_ops.rs"]
 mod batch_ops;
 
-use batch_ops::{copy_batch_with_state_updates, verify_batch_with_state_updates, CopyBatchOp};
+use batch_ops::{CopyBatchOp, copy_batch_with_state_updates, verify_batch_with_state_updates};
 
 fn single_file_batch(batch_id: &str, rel_path: &str, size_bytes: u64) -> Batch {
     Batch {

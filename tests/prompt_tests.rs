@@ -1,5 +1,5 @@
 use caravan::error::CaravanError;
-use caravan::prompt::{request_approval, PromptBackend};
+use caravan::prompt::{PromptBackend, request_approval};
 
 #[derive(Debug, Clone, Copy)]
 struct StubPrompt {
@@ -36,18 +36,20 @@ fn interactive_prompt_path_uses_backend_answer() {
 fn interactive_mode_without_backend_fails_closed() {
     let err = request_approval(None, true, false, "batch-1")
         .expect_err("missing prompt backend should fail");
-    assert!(err
-        .to_string()
-        .contains("interactive approval requested but no prompt backend provided"));
+    assert!(
+        err.to_string()
+            .contains("interactive approval requested but no prompt backend provided")
+    );
 }
 
 #[test]
 fn non_interactive_without_explicit_approval_fails_closed() {
     let err = request_approval(None, false, false, "batch-1")
         .expect_err("destructive action should be blocked");
-    assert!(err
-        .to_string()
-        .contains("destructive operations are blocked"));
+    assert!(
+        err.to_string()
+            .contains("destructive operations are blocked")
+    );
 }
 
 // New tests for batch approval functionality
@@ -84,9 +86,10 @@ fn batch_approval_fails_closed_in_non_interactive_mode() {
     let batch_ids = vec!["batch-1".to_string()];
     let err = request_approval_for_batches(None, false, false, &batch_ids)
         .expect_err("destructive action should be blocked");
-    assert!(err
-        .to_string()
-        .contains("destructive operations are blocked"));
+    assert!(
+        err.to_string()
+            .contains("destructive operations are blocked")
+    );
 }
 
 #[test]
