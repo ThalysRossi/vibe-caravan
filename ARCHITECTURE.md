@@ -33,3 +33,26 @@ Examples:
 1. Keep persisted state format backward compatible by default.
 2. When moving types, prefer internal rewiring plus stable external behavior.
 3. Add tests before refactors that change module ownership or behavior.
+
+## Conditional Compilation Policy
+
+1. In `src`, allowed compile-time predicates are:
+- `#[cfg(target_os = "windows")]`
+- `#[cfg(target_os = "linux")]`
+
+2. Disallowed in `src`:
+- `#[cfg(unix)]`
+- `#[cfg(not(unix))]`
+- `#[cfg(windows)]`
+- `#[cfg(not(windows))]`
+- any `#[cfg(not(...))]` predicate for platform routing
+
+3. cfg!(...) runtime checks must be centralized in src/platform.rs.
+
+4. Keep platform specialization at module boundaries for hotspot modules:
+- `src/scan/{mod.rs,windows.rs,linux.rs}`
+- `src/preflight/{mod.rs,platform_windows.rs,platform_linux.rs}`
+- `src/capacity/{mod.rs,windows.rs,linux.rs}`
+
+5. Run policy checks with:
+- `bash scripts/check_cfg_policy.sh`
