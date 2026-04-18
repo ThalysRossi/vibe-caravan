@@ -256,29 +256,26 @@ pub fn plan_resume_step_with_recovery(
     allow_failed_recovery: bool,
 ) -> ResumeStepPlan {
     match batch_state.phase {
-        BatchPhase::Failed => {
-            if !allow_failed_recovery {
-                return ResumeStepPlan::ConflictOperatorReview {
-                    reason: format!(
-                        "batch is marked failed; operator review required ({})",
-                        reconciliation_summary(recon)
-                    ),
-                };
-            }
-
-            if recon.all_destination_files_ready {
-                ResumeStepPlan::VerifyBatch
-            } else if !recon.size_mismatches.is_empty() {
-                ResumeStepPlan::ConflictOperatorReview {
-                    reason: format!(
-                        "failed-batch recovery blocked due to destination size mismatches ({})",
-                        reconciliation_summary(recon)
-                    ),
-                }
-            } else {
-                ResumeStepPlan::CopyBatch
-            }
-        }
+        BatchPhase::Failed => match (
+            allow_failed_recovery,
+            recon.all_destination_files_ready,
+            recon.size_mismatches.is_empty(),
+        ) {
+            (false, _, _) => ResumeStepPlan::ConflictOperatorReview {
+                reason: format!(
+                    "batch is marked failed; operator review required ({})",
+                    reconciliation_summary(recon)
+                ),
+            },
+            (true, true, _) => ResumeStepPlan::VerifyBatch,
+            (true, false, false) => ResumeStepPlan::ConflictOperatorReview {
+                reason: format!(
+                    "failed-batch recovery blocked due to destination size mismatches ({})",
+                    reconciliation_summary(recon)
+                ),
+            },
+            (true, false, true) => ResumeStepPlan::CopyBatch,
+        },
         BatchPhase::Planned => ResumeStepPlan::CopyBatch,
         BatchPhase::CopyStarted => {
             if recon.all_destination_files_ready {
@@ -299,25 +296,20 @@ pub fn plan_resume_step_with_recovery(
                 }
             }
         }
-        BatchPhase::VerifyCompleted => {
-            if !batch_state.verification_passed {
-                return ResumeStepPlan::BlockedFailedVerification;
-            }
-            if batch_state.approved_for_delete {
-                if batch_state.deleted {
-                    ResumeStepPlan::PostDeleteSnapshot
-                } else {
-                    ResumeStepPlan::DeleteSource
-                }
-            } else {
-                ResumeStepPlan::PendingDeleteApproval
-            }
-        }
+        BatchPhase::VerifyCompleted => match (
+            batch_state.verification_passed,
+            batch_state.approved_for_delete,
+            batch_state.deleted,
+        ) {
+            (false, _, _) => ResumeStepPlan::BlockedFailedVerification,
+            (true, false, _) => ResumeStepPlan::PendingDeleteApproval,
+            (true, true, true) => ResumeStepPlan::PostDeleteSnapshot,
+            (true, true, false) => ResumeStepPlan::DeleteSource,
+        },
         BatchPhase::ApprovedForDelete => {
             if !batch_state.verification_passed {
-                return ResumeStepPlan::BlockedFailedVerification;
-            }
-            if batch_state.deleted {
+                ResumeStepPlan::BlockedFailedVerification
+            } else if batch_state.deleted {
                 ResumeStepPlan::PostDeleteSnapshot
             } else {
                 ResumeStepPlan::DeleteSource

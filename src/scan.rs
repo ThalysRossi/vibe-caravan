@@ -122,10 +122,8 @@ fn visit_dir_std(
             fs::symlink_metadata(&child).map_err(map_io("failed to read source file metadata"))?;
         if metadata.is_dir() {
             // Skip .caravan directories at any depth
-            if let Some(file_name) = child.file_name() {
-                if file_name == ".caravan" {
-                    continue;
-                }
+            if matches!(child.file_name(), Some(file_name) if file_name == ".caravan") {
+                continue;
             }
             push_children_in_reverse_sorted_order(&child, &mut stack)?;
             continue;
@@ -197,10 +195,8 @@ fn visit_dir_win32(
         }
 
         if is_dir {
-            if let Some(file_name) = child.path.file_name() {
-                if file_name == ".caravan" {
-                    continue;
-                }
+            if matches!(child.path.file_name(), Some(file_name) if file_name == ".caravan") {
+                continue;
             }
             push_win_children_in_reverse_sorted_order(&child.path, &mut stack)?;
             continue;

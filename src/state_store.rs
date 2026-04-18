@@ -66,35 +66,38 @@ pub fn load_state_with_compat_reconciliation(
 
     match (primary, secondary) {
         (Some(Ok(primary)), Some(Ok(secondary))) => {
-            if primary.revision > secondary.revision {
-                if primary.state_checksum != secondary.state_checksum {
-                    eprintln!(
-                        "[WARNING] state divergence detected between canonical {} (rev {}) and backup {} (rev {}); using canonical newer revision.",
-                        primary_path.display(),
-                        primary.revision,
-                        secondary_path.display(),
-                        secondary.revision
-                    );
+            match primary.revision.cmp(&secondary.revision) {
+                std::cmp::Ordering::Greater => {
+                    if primary.state_checksum != secondary.state_checksum {
+                        eprintln!(
+                            "[WARNING] state divergence detected between canonical {} (rev {}) and backup {} (rev {}); using canonical newer revision.",
+                            primary_path.display(),
+                            primary.revision,
+                            secondary_path.display(),
+                            secondary.revision
+                        );
+                    }
+                    Ok(primary.state)
                 }
-                Ok(primary.state)
-            } else if secondary.revision > primary.revision {
-                eprintln!(
-                    "[WARNING] compatibility backup {} is newer (rev {}) than canonical {} (rev {}); recovering from newer valid copy.",
-                    secondary_path.display(),
-                    secondary.revision,
-                    primary_path.display(),
-                    primary.revision
-                );
-                Ok(secondary.state)
-            } else if primary.state_checksum == secondary.state_checksum {
-                Ok(primary.state)
-            } else {
-                Err(CaravanError::StateCorrupt(format!(
+                std::cmp::Ordering::Less => {
+                    eprintln!(
+                        "[WARNING] compatibility backup {} is newer (rev {}) than canonical {} (rev {}); recovering from newer valid copy.",
+                        secondary_path.display(),
+                        secondary.revision,
+                        primary_path.display(),
+                        primary.revision
+                    );
+                    Ok(secondary.state)
+                }
+                std::cmp::Ordering::Equal if primary.state_checksum == secondary.state_checksum => {
+                    Ok(primary.state)
+                }
+                std::cmp::Ordering::Equal => Err(CaravanError::StateCorrupt(format!(
                     "state divergence detected: canonical {} and backup {} both have revision {} but different checksums",
                     primary_path.display(),
                     secondary_path.display(),
                     primary.revision
-                )))
+                ))),
             }
         }
         (Some(Ok(primary)), Some(Err(err))) => {
