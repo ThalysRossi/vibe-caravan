@@ -42,7 +42,7 @@ pub struct TransferArgs {
     pub interactive: bool,
     #[arg(long, default_value_t = false)]
     pub skip_conflicts: bool,
-    #[arg(long, value_enum, default_value_t = ConflictPolicyArg::SkipBatch)]
+    #[arg(long, value_enum, default_value_t = ConflictPolicyArg::SkipFile)]
     pub conflict_policy: ConflictPolicyArg,
     #[arg(long, default_value_t = false)]
     pub recover_failed: bool,

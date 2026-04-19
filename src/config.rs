@@ -19,8 +19,8 @@ pub enum CopyStrategy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ConflictPolicy {
     #[default]
-    SkipBatch,
     SkipFile,
+    SkipBatch,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -28,7 +28,7 @@ pub(super) fn transfer_config_from_state(
         interactive: true,
         log_level: "info".to_string(),
         skip_conflicts: false,
-        conflict_policy: ConflictPolicy::SkipBatch,
+        conflict_policy: ConflictPolicy::SkipFile,
         recover_failed,
         allow_unsafe_filesystems: false,
         copy_strategy: state.copy_strategy,

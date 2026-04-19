@@ -508,7 +508,7 @@ fn verification_flag_is_rejected_for_transfer_commands() {
 }
 
 #[test]
-fn conflict_policy_defaults_to_skip_batch_for_transfer_commands() {
+fn conflict_policy_defaults_to_skip_file_for_transfer_commands() {
     let staging = parse_cli_from([
         "caravan",
         "staging",
@@ -534,12 +534,12 @@ fn conflict_policy_defaults_to_skip_batch_for_transfer_commands() {
     .expect("migrate parse should pass");
 
     match staging {
-        Config::Staging(cfg) => assert_eq!(cfg.conflict_policy, ConflictPolicy::SkipBatch),
+        Config::Staging(cfg) => assert_eq!(cfg.conflict_policy, ConflictPolicy::SkipFile),
         _ => panic!("expected staging config"),
     }
 
     match migrate {
-        Config::Migrate(cfg) => assert_eq!(cfg.conflict_policy, ConflictPolicy::SkipBatch),
+        Config::Migrate(cfg) => assert_eq!(cfg.conflict_policy, ConflictPolicy::SkipFile),
         _ => panic!("expected migrate config"),
     }
 }
