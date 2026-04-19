@@ -35,8 +35,19 @@ pub(super) fn run_copy_phase(
                     | BatchPhase::DeleteCompleted
                     | BatchPhase::SnapshotCompleted
             ) {
-                print_skip_copy_already_completed(&batch.id, existing_batch.phase);
-                continue;
+                let reconciliation =
+                    crate::resume::reconcile_batch_destination(batch, &context.config.dest);
+                if reconciliation.all_destination_files_ready {
+                    print_skip_copy_already_completed(&batch.id, existing_batch.phase);
+                    continue;
+                }
+                eprintln!(
+                    "[WARNING] Batch '{}' marked {:?} but destination is incomplete (missing={}, mismatched={}); re-entering copy phase with current conflict policy.",
+                    batch.id,
+                    existing_batch.phase,
+                    reconciliation.missing_in_destination.len(),
+                    reconciliation.size_mismatches.len()
+                );
             }
         }
 
