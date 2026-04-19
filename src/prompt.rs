@@ -1,4 +1,3 @@
-use crate::conflict::ConflictReport;
 use crate::error::CaravanError;
 use crate::format::format_bytes;
 
@@ -58,63 +57,6 @@ pub trait PromptBackend {
             ))),
         }
     }
-
-    /// Ask user whether to skip a batch due to naming conflicts.
-    ///
-    /// Returns `true` if the user wants to skip the batch, `false` if they want to continue anyway
-    /// (which would overwrite files in future implementations).
-    fn confirm_conflict_skip(
-        &self,
-        batch_id: &str,
-        report: &ConflictReport,
-    ) -> Result<bool, CaravanError> {
-        use std::io::{self, Write};
-
-        println!("\n⚠️  Naming conflicts detected for batch '{}'!", batch_id);
-        println!("   Total conflicts: {}", report.total_conflicts);
-
-        if !report.existing_files.is_empty() {
-            println!("   Existing files: {}", report.existing_files.len());
-            // Show first few files as examples
-            for file in report.existing_files.iter().take(3) {
-                println!("     - {}", file.display());
-            }
-            if report.existing_files.len() > 3 {
-                println!("     ... and {} more", report.existing_files.len() - 3);
-            }
-        }
-
-        if !report.size_mismatches.is_empty() {
-            println!("   Size mismatches: {}", report.size_mismatches.len());
-            for (file, source_size, dest_size) in report.size_mismatches.iter().take(2) {
-                println!(
-                    "     - {} (source: {}, destination: {})",
-                    file.display(),
-                    format_bytes(*source_size),
-                    format_bytes(*dest_size)
-                );
-            }
-            if report.size_mismatches.len() > 2 {
-                println!("     ... and {} more", report.size_mismatches.len() - 2);
-            }
-        }
-
-        print!(
-            "\nSkip batch '{}' to avoid overwriting files? (y/n): ",
-            batch_id
-        );
-        io::stdout()
-            .flush()
-            .map_err(|e| CaravanError::Io(format!("failed to flush stdout: {}", e)))?;
-
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| CaravanError::Io(format!("failed to read user input: {}", e)))?;
-
-        let answer = input.trim().to_lowercase();
-        Ok(matches!(answer.as_str(), "y" | "yes"))
-    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -157,59 +99,6 @@ impl PromptBackend for InteractivePrompt {
             batch_ids.len()
         );
         print!("Approve deletion of source files for ALL batches? (y/n): ");
-        io::stdout()
-            .flush()
-            .map_err(|e| CaravanError::Io(format!("failed to flush stdout: {}", e)))?;
-
-        let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| CaravanError::Io(format!("failed to read user input: {}", e)))?;
-
-        let answer = input.trim().to_lowercase();
-        Ok(matches!(answer.as_str(), "y" | "yes"))
-    }
-
-    fn confirm_conflict_skip(
-        &self,
-        batch_id: &str,
-        report: &ConflictReport,
-    ) -> Result<bool, CaravanError> {
-        use std::io::{self, Write};
-
-        println!("\n⚠️  Naming conflicts detected for batch '{}'!", batch_id);
-        println!("   Total conflicts: {}", report.total_conflicts);
-
-        if !report.existing_files.is_empty() {
-            println!("   Existing files: {}", report.existing_files.len());
-            // Show first few files as examples
-            for file in report.existing_files.iter().take(3) {
-                println!("     - {}", file.display());
-            }
-            if report.existing_files.len() > 3 {
-                println!("     ... and {} more", report.existing_files.len() - 3);
-            }
-        }
-
-        if !report.size_mismatches.is_empty() {
-            println!("   Size mismatches: {}", report.size_mismatches.len());
-            for (file, source_size, dest_size) in report.size_mismatches.iter().take(2) {
-                println!(
-                    "     - {} (source: {}, destination: {})",
-                    file.display(),
-                    format_bytes(*source_size),
-                    format_bytes(*dest_size)
-                );
-            }
-            if report.size_mismatches.len() > 2 {
-                println!("     ... and {} more", report.size_mismatches.len() - 2);
-            }
-        }
-
-        print!(
-            "\nSkip batch '{}' to avoid overwriting files? (y/n): ",
-            batch_id
-        );
         io::stdout()
             .flush()
             .map_err(|e| CaravanError::Io(format!("failed to flush stdout: {}", e)))?;

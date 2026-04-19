@@ -1,13 +1,6 @@
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::ConflictPolicy;
-use crate::error::CaravanError;
-use crate::models::batch::Batch;
-use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
-use crate::prompt;
-use crate::prompt::PromptBackend;
-
 use super::super::shared::{
     CopyBatchOp, copy_batch_with_state_updates, ensure_destination_capacity,
     print_copy_batch_banner, print_verification_failed, print_verification_passed,
@@ -15,6 +8,10 @@ use super::super::shared::{
 };
 use super::context::TransferContext;
 use super::setup::planned_batch_state;
+use crate::config::ConflictPolicy;
+use crate::error::CaravanError;
+use crate::models::batch::Batch;
+use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
 
 fn effective_conflict_policy(context: &TransferContext<'_>) -> ConflictPolicy {
     if context.config.skip_conflicts {
@@ -111,28 +108,12 @@ pub(super) fn copy_single_batch(
         if conflict_report.has_conflicts {
             match effective_conflict_policy(context) {
                 ConflictPolicy::SkipBatch => {
-                    let should_skip =
-                        if !context.config.interactive || context.config.skip_conflicts {
-                            true
-                        } else {
-                            let prompt_backend = prompt::InteractivePrompt;
-                            prompt_backend.confirm_conflict_skip(&batch.id, &conflict_report)?
-                        };
-
-                    if should_skip {
-                        println!(
-                            "⚠️  Skipping batch '{}' due to {} naming conflict(s)",
-                            batch.id, conflict_report.total_conflicts
-                        );
-                        mark_batch_failed_for_conflicts(
-                            batch,
-                            state,
-                            context,
-                            &conflict_report,
-                            0,
-                        )?;
-                        return Ok(());
-                    }
+                    println!(
+                        "⚠️  Skipping batch '{}' due to {} naming conflict(s)",
+                        batch.id, conflict_report.total_conflicts
+                    );
+                    mark_batch_failed_for_conflicts(batch, state, context, &conflict_report, 0)?;
+                    return Ok(());
                 }
                 ConflictPolicy::SkipFile => {
                     let copy_subset =

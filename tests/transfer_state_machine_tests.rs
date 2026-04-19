@@ -650,6 +650,59 @@ fn default_conflict_policy_copies_non_conflicting_files_and_keeps_conflicts_for_
 }
 
 #[test]
+fn conflict_policy_skip_batch_never_overwrites_in_interactive_mode() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("conflict.txt"), "source-version").expect("write source conflict");
+    fs::write(source_dir.join("missing.txt"), "needs-copy").expect("write source missing");
+    fs::write(dest_dir.join("conflict.txt"), "dest-version").expect("write destination conflict");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("utf8 source"),
+            "--dest",
+            dest_dir.to_str().expect("utf8 dest"),
+            "--batch-size",
+            "1MiB",
+            "--interactive",
+            "--conflict-policy",
+            "skip-batch",
+        ])
+        .write_stdin("n\n")
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
+
+    assert!(
+        !output.status.success(),
+        "run should stop for operator review with skip-batch policy"
+    );
+    assert_eq!(
+        fs::read_to_string(dest_dir.join("conflict.txt"))
+            .expect("conflicting destination file should remain"),
+        "dest-version"
+    );
+    assert!(
+        !dest_dir.join("missing.txt").exists(),
+        "skip-batch must not copy non-conflicting files"
+    );
+
+    let state_path = first_state_file_in(&source_dir.join(".caravan"));
+    let state_json = load_state_document(&state_path);
+    assert_eq!(
+        state_json["batches"][0]["phase"],
+        serde_json::Value::String("Failed".to_string())
+    );
+}
+
+#[test]
 fn existing_corrupted_state_is_not_replaced_by_new_state() {
     let tmp = TempDir::new().expect("temp dir");
     let source_dir = tmp.path().join("source");
