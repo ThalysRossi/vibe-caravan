@@ -332,3 +332,67 @@ fn resume_without_recover_failed_shows_destination_diff_for_failed_batch() {
         "stderr should include missing destination file diff for operator review: {stderr}"
     );
 }
+
+#[test]
+fn resume_recover_failed_copies_non_conflicting_files_and_blocks_on_conflicts() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    fs::write(source_dir.join("conflict.txt"), "AAAAA").expect("create source conflict file");
+    fs::write(source_dir.join("missing.txt"), "needs-copy").expect("create source missing file");
+    fs::write(dest_dir.join("conflict.txt"), "BBBBB")
+        .expect("create destination conflict file with same size");
+
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024 * 1024;
+    state.batches.push(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::Failed,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+
+    let state_path = tmp.path().join("resume-state.json");
+    persist_state(&state_path, &state).expect("persist state");
+
+    let binary_path = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(&binary_path)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+            "--recover-failed",
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute caravan");
+
+    assert!(
+        !output.status.success(),
+        "resume should still fail closed when unresolved conflicts remain"
+    );
+
+    assert_eq!(
+        fs::read_to_string(dest_dir.join("missing.txt")).expect("missing file should be copied"),
+        "needs-copy"
+    );
+    assert_eq!(
+        fs::read_to_string(dest_dir.join("conflict.txt"))
+            .expect("conflicting file should remain untouched"),
+        "BBBBB"
+    );
+
+    let state_after = load_state(&state_path).expect("load state");
+    let batch = state_after
+        .batch("batch-000001")
+        .expect("batch should remain present");
+    assert_eq!(batch.phase, BatchPhase::Failed);
+    assert!(!batch.verification_passed);
+}
