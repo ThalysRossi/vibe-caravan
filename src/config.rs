@@ -16,6 +16,13 @@ pub enum CopyStrategy {
     Buffered,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ConflictPolicy {
+    #[default]
+    SkipBatch,
+    SkipFile,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransferConfig {
     pub mode: Mode,
@@ -28,6 +35,8 @@ pub struct TransferConfig {
     pub interactive: bool,
     pub log_level: String,
     pub skip_conflicts: bool,
+    #[serde(default)]
+    pub conflict_policy: ConflictPolicy,
     #[serde(default)]
     pub recover_failed: bool,
     #[serde(default)]

@@ -1,5 +1,5 @@
 use caravan::cli::parse_cli_from;
-use caravan::config::{Config, CopyStrategy, OutputFormat};
+use caravan::config::{Config, ConflictPolicy, CopyStrategy, OutputFormat};
 
 #[test]
 fn missing_required_arguments_are_rejected() {
@@ -502,6 +502,83 @@ fn verification_flag_is_rejected_for_transfer_commands() {
         "1GiB",
         "--verification",
         "strict",
+    ]);
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn conflict_policy_defaults_to_skip_batch_for_transfer_commands() {
+    let staging = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+    ])
+    .expect("staging parse should pass");
+
+    let migrate = parse_cli_from([
+        "caravan",
+        "migrate",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+    ])
+    .expect("migrate parse should pass");
+
+    match staging {
+        Config::Staging(cfg) => assert_eq!(cfg.conflict_policy, ConflictPolicy::SkipBatch),
+        _ => panic!("expected staging config"),
+    }
+
+    match migrate {
+        Config::Migrate(cfg) => assert_eq!(cfg.conflict_policy, ConflictPolicy::SkipBatch),
+        _ => panic!("expected migrate config"),
+    }
+}
+
+#[test]
+fn conflict_policy_is_parsed_for_transfer_commands() {
+    let parsed = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--conflict-policy",
+        "skip-file",
+    ])
+    .expect("staging parse should accept conflict-policy");
+
+    match parsed {
+        Config::Staging(cfg) => assert_eq!(cfg.conflict_policy, ConflictPolicy::SkipFile),
+        _ => panic!("expected staging config"),
+    }
+}
+
+#[test]
+fn invalid_conflict_policy_is_rejected() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--conflict-policy",
+        "invalid-policy",
     ]);
 
     assert!(result.is_err());

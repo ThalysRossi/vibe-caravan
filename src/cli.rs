@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::config::{Config, CopyStrategy, OutputFormat};
+use crate::config::{Config, ConflictPolicy, CopyStrategy, OutputFormat};
 use crate::error::CaravanError;
 use crate::logging;
 
@@ -42,6 +42,8 @@ pub struct TransferArgs {
     pub interactive: bool,
     #[arg(long, default_value_t = false)]
     pub skip_conflicts: bool,
+    #[arg(long, value_enum, default_value_t = ConflictPolicyArg::SkipBatch)]
+    pub conflict_policy: ConflictPolicyArg,
     #[arg(long, default_value_t = false)]
     pub recover_failed: bool,
     #[arg(long, default_value_t = false)]
@@ -97,6 +99,12 @@ pub enum OutputFormatArg {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ConflictPolicyArg {
+    SkipBatch,
+    SkipFile,
+}
+
 impl From<CopyStrategyArg> for CopyStrategy {
     fn from(value: CopyStrategyArg) -> Self {
         match value {
@@ -112,6 +120,15 @@ impl From<OutputFormatArg> for OutputFormat {
         match value {
             OutputFormatArg::Human => OutputFormat::Human,
             OutputFormatArg::Json => OutputFormat::Json,
+        }
+    }
+}
+
+impl From<ConflictPolicyArg> for ConflictPolicy {
+    fn from(value: ConflictPolicyArg) -> Self {
+        match value {
+            ConflictPolicyArg::SkipBatch => ConflictPolicy::SkipBatch,
+            ConflictPolicyArg::SkipFile => ConflictPolicy::SkipFile,
         }
     }
 }

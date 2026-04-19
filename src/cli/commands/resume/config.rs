@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::config::{Mode, TransferConfig};
+use crate::config::{ConflictPolicy, Mode, TransferConfig};
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
 
@@ -28,6 +28,7 @@ pub(super) fn transfer_config_from_state(
         interactive: true,
         log_level: "info".to_string(),
         skip_conflicts: false,
+        conflict_policy: ConflictPolicy::SkipBatch,
         recover_failed,
         allow_unsafe_filesystems: false,
         copy_strategy: state.copy_strategy,

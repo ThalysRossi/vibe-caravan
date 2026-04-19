@@ -86,6 +86,7 @@ fn build_transfer_config(
         interactive: args.interactive,
         log_level,
         skip_conflicts: args.skip_conflicts,
+        conflict_policy: args.conflict_policy.into(),
         recover_failed: args.recover_failed,
         allow_unsafe_filesystems: args.allow_unsafe_filesystems,
         copy_strategy: args.copy_strategy.into(),
