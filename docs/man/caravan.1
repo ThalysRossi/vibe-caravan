@@ -1,0 +1,76 @@
+.TH CARAVAN 1 "April 2026" "caravan 0.1.0" "User Commands"
+.SH NAME
+caravan \- safe staged data migration tool
+.SH SYNOPSIS
+.B caravan
+.RI [ --log-level " LEVEL ] " COMMAND " [OPTIONS]
+.PP
+.B caravan
+.B status
+.RI [ --state " PATH ] " [ --output " {human|json} ]"
+.PP
+.B caravan
+.B resume
+.RI [ --state " PATH ] " [ --recover-failed ] " [ --inspect-failed ]
+.SH DESCRIPTION
+\fBcaravan\fR performs conservative staged migration with explicit safety gates.
+It is designed for Windows staging (Storage Spaces to NTFS) and Linux migration
+(NTFS to Btrfs).
+.SH COMMANDS
+.TP
+.B staging
+Run transfer in staging mode.
+Requires \fB--source\fR, \fB--dest\fR, and \fB--batch-size\fR.
+.TP
+.B migrate
+Run transfer in migrate mode.
+Supports snapshot cadence with \fB--snapshot-every\fR.
+.TP
+.B status
+Show migration state summary.
+.TP
+.B resume
+Continue from an existing state file.
+.SH SAFETY GATES
+.IP "1." 3
+Verification gate: failed verification blocks destructive actions.
+.IP "2." 3
+Deletion gate: verified batches still require approval before delete.
+.IP "3." 3
+Conflict gate: default policy (\fBskip-file\fR) avoids overwriting conflicts.
+.IP "4." 3
+Capacity gate: copy is blocked when free space is less than or equal to planned batch size.
+.SH OPTIONS
+.TP
+.B --interactive
+Enable interactive approval for destructive operations.
+.TP
+.B --conflict-policy " {skip-file|skip-batch}"
+Conflict behavior for transfer copy.
+Default: \fBskip-file\fR.
+.TP
+.B --skip-conflicts
+Legacy compatibility flag mapped to \fBskip-file\fR behavior.
+.TP
+.B --copy-buffer-size " SIZE"
+Buffered-copy chunk size (default: 16 MiB).
+.TP
+.B --buffered-copy-threshold " SIZE"
+Files at or above this size use buffered copy (default: 8 MiB).
+.SH EXAMPLES
+.PP
+Staging:
+.PP
+.EX
+caravan staging --source D:\\Data --dest E:\\staging --batch-size 100GiB --interactive
+.EE
+.PP
+Migration:
+.PP
+.EX
+caravan migrate --source /mnt/staging/Data --dest /mnt/data/@media --batch-size 100GiB --snapshot-every 1 --interactive
+.EE
+.SH FILES
+.TP
+.B .caravan/
+State directory containing migration state and registry metadata.

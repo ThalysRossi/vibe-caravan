@@ -56,7 +56,7 @@ When you re-run the same `staging` or `migrate` command with identical source an
 
 1. The tool automatically detects if an incomplete migration exists for those paths
 2. It loads the existing state file from the `.caravan` directory in the source
-3. Batches that are already `CopyCompleted` or `VerifyCompleted` are skipped
+3. Batches already marked completed are reconciled against destination state and only skipped when destination files are still consistent
 4. The migration continues from where it left off
 
 This means you can simply re-run the same command after an interruption, without needing the `resume` subcommand.
@@ -81,13 +81,48 @@ This feature ensures that long-running migrations can be safely interrupted with
 
 ## Installation
 
-Build from source with Cargo:
+### Linux (user-local install)
 
 ```bash
 cargo build --release
+install -Dm755 ./target/release/caravan ~/.local/bin/caravan
 ```
 
-Then run the resulting binary from `target/release/caravan`.
+Ensure `~/.local/bin` is on your `PATH`:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Windows (PowerShell, user-local install)
+
+```powershell
+cargo build --release
+$BinDir = "$HOME\bin"
+New-Item -ItemType Directory -Force $BinDir | Out-Null
+Copy-Item .\target\release\caravan.exe "$BinDir\caravan.exe" -Force
+```
+
+Add the install directory to your user `Path` (one-time setup):
+
+```powershell
+$CurrentUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if (-not ($CurrentUserPath -split ';' | Where-Object { $_ -eq $BinDir })) {
+    [Environment]::SetEnvironmentVariable("Path", "$BinDir;$CurrentUserPath", "User")
+}
+$env:Path = "$BinDir;$env:Path"
+```
+
+After opening a new terminal session, you can run `caravan` directly.
+
+### Cargo install alternative (Linux and Windows)
+
+```bash
+cargo install --path . --force
+```
+
+This installs to Cargo's user bin directory (typically `$HOME/.cargo/bin` on Linux, `%USERPROFILE%\.cargo\bin` on Windows), which must be on your `PATH`.
 
 ## Build and run
 
@@ -121,6 +156,21 @@ Run all tests:
 
 ```bash
 cargo test
+```
+
+## Linux man page
+
+View the bundled man page directly:
+
+```bash
+man -l docs/man/caravan.1
+```
+
+Install it into your user manpath:
+
+```bash
+bash scripts/install_manpage.sh
+MANPATH="$HOME/.local/share/man${MANPATH:+:$MANPATH}" man caravan
 ```
 
 ## Commands
@@ -216,13 +266,13 @@ If the destination has **less than or equal to** the batch size available, the b
 
 `caravan` uses a hybrid copy strategy to optimize file transfer performance for disk-to-disk transfers:
 
-- **Small files** (< 1 MiB by default): Use operating system's native copy (`std::fs::copy`)
-- **Large files** (≥ 1 MiB by default): Use buffered copy with 8 MiB chunks
+- **Small files** (< 8 MiB by default): Use operating system's native copy (`std::fs::copy`)
+- **Large files** (≥ 8 MiB by default): Use buffered copy with 16 MiB chunks
 
 You can customize this behavior with two new flags:
 
-- `--copy-buffer-size <SIZE>`: Set buffer size for chunked copying (default: 8 MiB)
-- `--buffered-copy-threshold <SIZE>`: Files larger than this threshold use buffered copy (default: 1 MiB)
+- `--copy-buffer-size <SIZE>`: Set buffer size for chunked copying (default: 16 MiB)
+- `--buffered-copy-threshold <SIZE>`: Files larger than this threshold use buffered copy (default: 8 MiB)
 
 Both flags accept the same size units as `--batch-size`: B, KiB, MiB, GiB, or TiB.
 
@@ -252,7 +302,7 @@ caravan migrate \
 
 - **Larger buffer sizes** (64-256 MiB) can improve throughput for sequential transfers between fast storage (SSD to SSD)
 - **Smaller buffers** (1-4 MiB) may reduce memory pressure when copying many small files
-- The default 1 MiB threshold is optimal for most local disk scenarios
+- The default 8 MiB threshold is tuned for HDD-heavy local disk scenarios
 - Cross-filesystem copies (NTFS to BTRFS) benefit from buffered copying for large files
 
 ## Naming Conflict Safety Guardrail
@@ -270,26 +320,27 @@ To prevent accidental overwrites, `caravan` includes a safety guardrail that det
 
 ### Conflict Resolution Options
 
-- **Interactive mode (default)**: User is prompted to skip the batch or continue (which would overwrite files)
-- **Non-interactive mode with `--skip-conflicts`**: Automatically skip batches with conflicts
-- **Resume operations**: Conflicts are re-checked during resume to maintain safety
+- **Default policy (`--conflict-policy skip-file`)**: Copy non-conflicting files, keep conflicting files untouched, then require operator review.
+- **Explicit batch-skip policy (`--conflict-policy skip-batch`)**: Skip the whole batch when any conflicts are present.
+- **Resume operations**: Conflicts are re-checked during resume; unresolved conflicts keep the batch in failed/operator-review state.
 
 ### CLI Options
 
-- `--skip-conflicts`: Automatically skip batches with naming conflicts (default: false)
-  - In non-interactive mode, conflicts are automatically skipped
-  - In interactive mode, user is prompted unless `--skip-conflicts` is specified
+- `--conflict-policy <POLICY>`: Select conflict behavior (default: skip-file)
+  - `skip-file`: copy only non-conflicting files in a batch
+  - `skip-batch`: skip whole batch when conflicts are found
+- `--skip-conflicts`: legacy compatibility flag that maps to the safe per-file behavior (`skip-file`)
 
 ### Example Usage
 
-Skip batches with conflicts automatically:
+Use the default per-file behavior explicitly:
 ```bash
-caravan staging --source /src --dest /dst --batch-size 100GiB --skip-conflicts
+caravan staging --source /src --dest /dst --batch-size 100GiB --conflict-policy skip-file
 ```
 
-Interactive prompt for conflicts (default behavior):
+Force whole-batch skip behavior:
 ```bash
-caravan migrate --source /src --dest /dst --batch-size 100GiB --interactive
+caravan migrate --source /src --dest /dst --batch-size 100GiB --conflict-policy skip-batch
 ```
 
-This safety feature ensures that existing data is not accidentally overwritten during migration operations.
+This guardrail ensures conflicting destination files are never overwritten automatically.
