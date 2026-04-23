@@ -3,6 +3,9 @@ use std::{io::Write, io::stderr};
 
 /// Progress reporter trait for tracking long running operations
 pub trait ProgressReporter {
+    /// Optional total-byte hint for throughput reporting.
+    fn set_total_bytes(&mut self, _total_bytes: u64) {}
+
     /// Called when operation starts with total number of items
     fn start(&mut self, total_items: usize, operation: &str);
 
@@ -18,6 +21,7 @@ pub trait ProgressReporter {
 pub struct NoopProgress;
 
 impl ProgressReporter for NoopProgress {
+    fn set_total_bytes(&mut self, _total_bytes: u64) {}
     fn start(&mut self, _total_items: usize, _operation: &str) {}
     fn advance(&mut self, _current: usize, _item_name: Option<&str>) {}
     fn finish(&mut self) {}
@@ -124,6 +128,10 @@ impl Default for TerminalProgress {
 }
 
 impl ProgressReporter for TerminalProgress {
+    fn set_total_bytes(&mut self, total_bytes: u64) {
+        self.total_bytes = Some(total_bytes);
+    }
+
     fn start(&mut self, total_items: usize, operation: &str) {
         self.total = total_items;
         self.start_time = Instant::now();

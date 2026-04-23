@@ -45,13 +45,13 @@ pub struct TransferConfig {
     pub copy_strategy: CopyStrategy,
 
     /// Buffer size for file copying (in bytes).
-    /// Default: 8 MiB (8 * 1024 * 1024)
+    /// Default: 16 MiB (16 * 1024 * 1024)
     #[serde(default = "TransferConfig::default_copy_buffer_size")]
     pub copy_buffer_size: usize,
 
     /// File size threshold (in bytes) to use buffered copy instead of OS copy.
     /// Files smaller than this threshold use OS copy, larger files use buffered copy.
-    /// Default: 1 MiB (1 * 1024 * 1024)
+    /// Default: 8 MiB (8 * 1024 * 1024)
     #[serde(default = "TransferConfig::default_buffered_copy_threshold")]
     pub buffered_copy_threshold: u64,
 }

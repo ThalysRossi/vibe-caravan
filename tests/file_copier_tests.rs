@@ -4,6 +4,9 @@ use std::path::Path;
 use caravan::transfer::{BufferedFileCopier, FileCopier, OsFileCopier};
 use tempfile::TempDir;
 
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::PermissionsExt;
+
 // Helper function to create a test file with specific content
 fn create_test_file(path: &Path, content: &[u8]) {
     if let Some(parent) = path.parent() {
@@ -193,4 +196,34 @@ fn buffered_copy_returns_error_for_nonexistent_source() {
 
     assert!(result.is_err());
     assert!(!destination.exists());
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn buffered_copy_preserves_unix_permissions() {
+    let temp_dir = TempDir::new().expect("should create temp dir");
+    let source = temp_dir.path().join("source.sh");
+    let destination = temp_dir.path().join("dest.sh");
+
+    create_test_file(&source, b"#!/bin/sh\necho test\n");
+    fs::set_permissions(&source, fs::Permissions::from_mode(0o751))
+        .expect("should set source permissions");
+
+    let copier = BufferedFileCopier::default();
+    copier
+        .copy_file(&source, &destination)
+        .expect("buffered copy should succeed");
+
+    let source_mode = fs::metadata(&source)
+        .expect("source metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    let dest_mode = fs::metadata(&destination)
+        .expect("destination metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+
+    assert_eq!(dest_mode, source_mode);
 }

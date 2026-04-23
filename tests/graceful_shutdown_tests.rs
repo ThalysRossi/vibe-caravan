@@ -2,18 +2,18 @@
 
 use std::fs;
 use std::process::Command;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::process::{Child, Stdio};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::thread;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use caravan::migration_registry;
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use caravan::models::state::{BatchPhase, MigrationState};
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 use caravan::state_store::load_state;
 use tempfile::TempDir;
 
@@ -31,7 +31,7 @@ fn create_test_files(root: &std::path::Path, file_count: usize, file_size: usize
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn spawn_long_running_staging(
     binary_path: &std::path::Path,
     source_dir: &std::path::Path,
@@ -63,7 +63,7 @@ fn spawn_long_running_staging(
         .expect("spawn caravan staging")
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn wait_for_copy_activity(state_path: &std::path::Path) -> MigrationState {
     let start = Instant::now();
     let timeout = Duration::from_secs(15);
@@ -98,7 +98,7 @@ fn wait_for_copy_activity(state_path: &std::path::Path) -> MigrationState {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn send_sigint(pid: u32) {
     let status = Command::new("kill")
         .args(["-INT", &pid.to_string()])
@@ -107,7 +107,7 @@ fn send_sigint(pid: u32) {
     assert!(status.success(), "failed to deliver SIGINT to pid {pid}");
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn progressed_batches(state: &MigrationState) -> usize {
     state
         .batches
@@ -184,7 +184,7 @@ fn state_file_is_created_during_migration() {
     assert!(stderr.contains("max-files must be greater than zero"));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn staging_receives_sigint_and_exits_with_resume_checkpoint() {
     let temp_dir = TempDir::new().expect("temp dir");
@@ -233,7 +233,7 @@ fn staging_receives_sigint_and_exits_with_resume_checkpoint() {
     );
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn resume_continues_after_sigint_checkpoint() {
     let temp_dir = TempDir::new().expect("temp dir");

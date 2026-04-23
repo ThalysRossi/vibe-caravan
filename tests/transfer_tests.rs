@@ -9,7 +9,7 @@ use caravan::error::CaravanError;
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
 use caravan::plan::{PlanOptions, build_plan};
-use caravan::progress::NoopProgress;
+use caravan::progress::{NoopProgress, ProgressReporter};
 use caravan::transfer::{
     DirectoryCreator, FileCopier, LocalFsCopyBackend, ResolvedCopyStrategy,
     copy_batch_with_components_and_durability, resolve_copy_strategy, summarize_transfer_execution,
@@ -182,7 +182,7 @@ fn copy_strategy_resolution_is_mode_aware() {
     );
     assert_eq!(
         resolve_copy_strategy(CopyStrategy::Auto, &Mode::Migrate),
-        ResolvedCopyStrategy::Hybrid
+        ResolvedCopyStrategy::Os
     );
 
     #[cfg(windows)]
@@ -194,7 +194,7 @@ fn copy_strategy_resolution_is_mode_aware() {
     #[cfg(not(windows))]
     assert_eq!(
         resolve_copy_strategy(CopyStrategy::Auto, &Mode::Staging),
-        ResolvedCopyStrategy::Hybrid
+        ResolvedCopyStrategy::Os
     );
 }
 
@@ -462,6 +462,42 @@ impl FileCopier for HintTrackingCopier {
 }
 
 #[derive(Debug, Default)]
+struct ByteAwareProgress {
+    events: Mutex<Vec<&'static str>>,
+    total_bytes: Mutex<Option<u64>>,
+}
+
+impl ByteAwareProgress {
+    fn events(&self) -> Vec<&'static str> {
+        self.events.lock().expect("read events").clone()
+    }
+
+    fn total_bytes(&self) -> Option<u64> {
+        *self.total_bytes.lock().expect("read total bytes")
+    }
+}
+
+impl ProgressReporter for ByteAwareProgress {
+    fn set_total_bytes(&mut self, total_bytes: u64) {
+        self.events
+            .lock()
+            .expect("record set_total_bytes")
+            .push("set_total_bytes");
+        *self.total_bytes.lock().expect("record total bytes") = Some(total_bytes);
+    }
+
+    fn start(&mut self, _total_items: usize, _operation: &str) {
+        self.events.lock().expect("record start").push("start");
+    }
+
+    fn advance(&mut self, _current: usize, _item_name: Option<&str>) {}
+
+    fn finish(&mut self) {
+        self.events.lock().expect("record finish").push("finish");
+    }
+}
+
+#[derive(Debug, Default)]
 struct PartialWriteThenFailCopier;
 
 impl FileCopier for PartialWriteThenFailCopier {
@@ -603,6 +639,46 @@ fn copy_batch_with_components_passes_planned_size_hints_to_copier() {
     let hints = copier.observed_hints();
     let expected: Vec<Option<u64>> = batch.files.iter().map(|f| Some(f.size_bytes)).collect();
     assert_eq!(hints, expected);
+}
+
+#[test]
+fn copy_batch_with_components_sets_total_bytes_before_starting_progress() {
+    let src = TempDir::new().expect("source temp dir");
+    let dst = TempDir::new().expect("destination temp dir");
+    create_file(src.path(), "nested/movie.bin", &[1u8; 11]);
+
+    let plan = build_plan(
+        src.path(),
+        &PlanOptions {
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+        },
+    )
+    .expect("planning should succeed");
+    let batch = &plan.batches[0];
+
+    let copier = HintTrackingCopier::default();
+    let creator = TrackingDirectoryCreator::default();
+    let mut progress = ByteAwareProgress::default();
+
+    let mut no_interrupt = || Ok::<(), CaravanError>(());
+    copy_batch_with_components_and_durability(
+        batch,
+        src.path(),
+        dst.path(),
+        &copier,
+        &creator,
+        &mut progress,
+        false,
+        &mut no_interrupt,
+    )
+    .expect("copy should succeed");
+
+    assert_eq!(progress.total_bytes(), Some(batch.total_bytes));
+    assert_eq!(
+        progress.events(),
+        vec!["set_total_bytes", "start", "finish"]
+    );
 }
 
 #[test]

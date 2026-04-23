@@ -120,3 +120,83 @@ fn resume_command_blocks_copy_completed_batch_when_destination_is_missing() {
     assert!(!batch.verification_passed);
     assert!(!dest_dir.join("test.txt").exists());
 }
+
+#[test]
+fn resume_rejects_invalid_copy_buffer_size_loaded_from_state() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    let state_path = tmp.path().join("resume-state.json");
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024;
+    state.copy_buffer_size = 0;
+    persist_state(&state_path, &state).expect("persist state");
+
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
+
+    assert!(
+        !output.status.success(),
+        "resume should reject zero copy buffer size from persisted state"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("copy-buffer-size: size must be greater than zero"),
+        "resume should surface copy option validation error, got: {stderr}"
+    );
+}
+
+#[test]
+fn resume_rejects_invalid_buffered_copy_threshold_loaded_from_state() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    let state_path = tmp.path().join("resume-state.json");
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024;
+    state.buffered_copy_threshold = 0;
+    persist_state(&state_path, &state).expect("persist state");
+
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
+
+    assert!(
+        !output.status.success(),
+        "resume should reject zero buffered copy threshold from persisted state"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("buffered-copy-threshold: size must be greater than zero"),
+        "resume should surface buffered threshold validation error, got: {stderr}"
+    );
+}

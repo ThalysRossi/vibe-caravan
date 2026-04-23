@@ -30,6 +30,15 @@ pub(super) fn parse_copy_options(
         None => TransferConfig::default_buffered_copy_threshold(),
     };
 
+    validate_copy_option_values(copy_buffer_size, buffered_copy_threshold)?;
+
+    Ok((copy_buffer_size, buffered_copy_threshold))
+}
+
+pub(crate) fn validate_copy_option_values(
+    copy_buffer_size: usize,
+    buffered_copy_threshold: u64,
+) -> Result<(), CaravanError> {
     if copy_buffer_size == 0 {
         return Err(CaravanError::InvalidArguments(
             "copy-buffer-size: size must be greater than zero".to_string(),
@@ -42,7 +51,7 @@ pub(super) fn parse_copy_options(
         ));
     }
 
-    Ok((copy_buffer_size, buffered_copy_threshold))
+    Ok(())
 }
 
 pub(super) fn parse_batch_size(input: &str) -> Result<u64, String> {

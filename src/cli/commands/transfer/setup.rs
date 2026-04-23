@@ -173,8 +173,27 @@ pub(super) fn seed_state_batches(state: &mut MigrationState, plan: &PlanningSnap
 pub(super) fn warn_copy_backend_config(config: &TransferConfig) {
     let buffer_size_mb = config.copy_buffer_size as f64 / (1024.0 * 1024.0);
     let threshold_mb = config.buffered_copy_threshold as f64 / (1024.0 * 1024.0);
+    let resolved_strategy =
+        crate::transfer::resolve_copy_strategy(config.copy_strategy, &config.mode);
+    let can_use_buffered_path = matches!(
+        resolved_strategy,
+        crate::transfer::ResolvedCopyStrategy::Buffered
+            | crate::transfer::ResolvedCopyStrategy::Hybrid
+    ) || (!is_windows_build()
+        && matches!(
+            resolved_strategy,
+            crate::transfer::ResolvedCopyStrategy::NativePreferred
+        ));
+    let threshold_applies = matches!(
+        resolved_strategy,
+        crate::transfer::ResolvedCopyStrategy::Hybrid
+    ) || (!is_windows_build()
+        && matches!(
+            resolved_strategy,
+            crate::transfer::ResolvedCopyStrategy::NativePreferred
+        ));
 
-    if buffer_size_mb < 4.0 {
+    if can_use_buffered_path && buffer_size_mb < 4.0 {
         eprintln!(
             "[WARNING] Copy buffer size is small ({:.2} MiB). For HDD performance, consider using at least 16 MiB buffer size.",
             buffer_size_mb
@@ -182,7 +201,7 @@ pub(super) fn warn_copy_backend_config(config: &TransferConfig) {
         eprintln!("  Use --copy-buffer-size 16MiB to optimize for 5400-7200 RPM HDDs.");
     }
 
-    if threshold_mb < 1.0 {
+    if threshold_applies && threshold_mb < 1.0 {
         eprintln!(
             "[WARNING] Buffered copy threshold is very small ({:.2} MiB). OS copy is more efficient for files smaller than 8 MiB.",
             threshold_mb

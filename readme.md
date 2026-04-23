@@ -264,46 +264,48 @@ If the destination has **less than or equal to** the batch size available, the b
 
 ## Copy Performance Tuning
 
-`caravan` uses a hybrid copy strategy to optimize file transfer performance for disk-to-disk transfers:
+`caravan` supports three copy strategies:
 
-- **Small files** (< 8 MiB by default): Use operating system's native copy (`std::fs::copy`)
-- **Large files** (≥ 8 MiB by default): Use buffered copy with 16 MiB chunks
+- **`auto` (default)**:
+  - Windows + `staging`: prefer platform-native copy API
+  - All other platform/mode combinations: use operating system copy (`std::fs::copy`)
+- **`native`**: try platform-native API first; if unavailable, fall back to hybrid copy behavior
+- **`buffered`**: always use chunked buffered copy
 
 You can customize this behavior with two new flags:
 
 - `--copy-buffer-size <SIZE>`: Set buffer size for chunked copying (default: 16 MiB)
-- `--buffered-copy-threshold <SIZE>`: Files larger than this threshold use buffered copy (default: 8 MiB)
+- `--buffered-copy-threshold <SIZE>`: Threshold used only by hybrid fallback behavior
 
 Both flags accept the same size units as `--batch-size`: B, KiB, MiB, GiB, or TiB.
 
 ### Example Usage
 
-Optimizing for fast SSD-to-SSD transfers:
+Force buffered copy for large sequential transfers:
 ```bash
 caravan staging \
   --source /src \
   --dest /dst \
   --batch-size 100GiB \
+  --copy-strategy buffered \
   --copy-buffer-size 64MiB \
-  --buffered-copy-threshold 4MiB
 ```
 
-Reducing memory pressure when copying many small files:
+Use native-preferred mode:
 ```bash
 caravan migrate \
   --source /mnt/staging \
   --dest /mnt/btrfs/@data \
   --batch-size 50GiB \
-  --copy-buffer-size 4MiB \
-  --buffered-copy-threshold 2MiB
+  --copy-strategy native
 ```
 
 ### Performance Considerations
 
-- **Larger buffer sizes** (64-256 MiB) can improve throughput for sequential transfers between fast storage (SSD to SSD)
-- **Smaller buffers** (1-4 MiB) may reduce memory pressure when copying many small files
-- The default 8 MiB threshold is tuned for HDD-heavy local disk scenarios
-- Cross-filesystem copies (NTFS to BTRFS) benefit from buffered copying for large files
+- For most Linux runs, `auto` uses OS copy and avoids extra buffering overhead.
+- Use `buffered` only when profiling shows consistent gains on your specific filesystem and disk pair.
+- Larger buffers (32-128 MiB) can help sequential transfers when buffered mode is enabled.
+- Smaller buffers reduce memory footprint but can reduce throughput.
 
 ## Naming Conflict Safety Guardrail
 

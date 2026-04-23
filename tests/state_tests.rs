@@ -171,7 +171,7 @@ fn persist_state_creates_parent_directories() {
     assert_eq!(loaded, state);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn persist_state_replaces_file_atomically_for_existing_readers() {
     use std::io::{Read, Seek, SeekFrom};

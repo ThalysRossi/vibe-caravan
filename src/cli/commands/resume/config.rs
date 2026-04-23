@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::cli::args::validate_copy_option_values;
 use crate::config::{ConflictPolicy, Mode, TransferConfig};
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
@@ -8,6 +9,8 @@ pub(super) fn transfer_config_from_state(
     state: &MigrationState,
     recover_failed: bool,
 ) -> Result<TransferConfig, CaravanError> {
+    validate_copy_option_values(state.copy_buffer_size, state.buffered_copy_threshold)?;
+
     Ok(TransferConfig {
         mode: match state.mode.as_str() {
             "staging" => Mode::Staging,

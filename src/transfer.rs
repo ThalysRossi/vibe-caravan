@@ -71,6 +71,7 @@ thread_local! {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedCopyStrategy {
+    Os,
     Hybrid,
     NativePreferred,
     Buffered,
@@ -123,7 +124,7 @@ pub fn resolve_copy_strategy(strategy: CopyStrategy, mode: &Mode) -> ResolvedCop
             if is_windows_build() && matches!(mode, Mode::Staging) {
                 ResolvedCopyStrategy::NativePreferred
             } else {
-                ResolvedCopyStrategy::Hybrid
+                ResolvedCopyStrategy::Os
             }
         }
     }
@@ -276,8 +277,25 @@ impl FileCopier for BufferedFileCopier {
         // Return buffer to pool for reuse
         BUFFER_POOL.with(|pool| pool.return_buffer(buffer));
 
+        preserve_source_permissions(source, destination)?;
+
         Ok(total_copied)
     }
+}
+
+#[cfg(target_os = "linux")]
+fn preserve_source_permissions(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let source_mode = std::fs::metadata(source)?.permissions().mode();
+    let mut destination_permissions = std::fs::metadata(destination)?.permissions();
+    destination_permissions.set_mode(source_mode);
+    std::fs::set_permissions(destination, destination_permissions)
+}
+
+#[cfg(target_os = "windows")]
+fn preserve_source_permissions(_source: &Path, _destination: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Hybrid file copier that chooses between OS copy and buffered copy based on file size.
@@ -353,6 +371,7 @@ impl FileCopier for HybridFileCopier {
 
 #[derive(Debug, Clone)]
 enum LocalFileCopier {
+    Os(OsFileCopier),
     Hybrid(HybridFileCopier),
     NativePreferred(NativePreferredFileCopier),
     Buffered(BufferedFileCopier),
@@ -389,6 +408,7 @@ impl LocalFsCopyBackend {
     ) -> Self {
         let durable_writes = matches!(mode, Mode::Migrate);
         let file_copier = match resolve_copy_strategy(strategy, mode) {
+            ResolvedCopyStrategy::Os => LocalFileCopier::Os(OsFileCopier),
             ResolvedCopyStrategy::Hybrid => {
                 LocalFileCopier::Hybrid(HybridFileCopier::new(buffer_size, threshold))
             }
@@ -448,6 +468,7 @@ impl Default for LocalFsCopyBackend {
 impl LocalFileCopier {
     fn copy_file_inner(&self, source: &Path, destination: &Path) -> io::Result<u64> {
         match self {
+            LocalFileCopier::Os(copier) => copier.copy_file(source, destination),
             LocalFileCopier::Hybrid(copier) => copier.copy_file(source, destination),
             LocalFileCopier::NativePreferred(copier) => copier.copy_file(source, destination),
             LocalFileCopier::Buffered(copier) => copier.copy_file(source, destination),
@@ -467,6 +488,7 @@ impl FileCopier for LocalFileCopier {
         size_hint: Option<u64>,
     ) -> io::Result<u64> {
         match self {
+            LocalFileCopier::Os(copier) => copier.copy_file(source, destination),
             LocalFileCopier::Hybrid(copier) => {
                 copier.copy_file_with_size_hint(source, destination, size_hint)
             }
@@ -486,6 +508,7 @@ pub fn copy_batch_with_components_and_durability(
     durable_writes: bool,
     check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
+    progress.set_total_bytes(batch.total_bytes);
     progress.start(batch.files.len(), "Copying");
 
     let mut created_dirs = HashSet::new();
