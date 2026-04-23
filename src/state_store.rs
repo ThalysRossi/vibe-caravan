@@ -24,6 +24,18 @@ struct LoadedStateCandidate {
     state_checksum: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReconciledStateSource {
+    Primary,
+    Secondary,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReconciledState {
+    pub state: MigrationState,
+    pub source: ReconciledStateSource,
+}
+
 pub fn persist_state(path: &Path, state: &MigrationState) -> Result<(), CaravanError> {
     let revision = next_revision(path);
     persist_state_with_revision(path, state, revision)
@@ -61,6 +73,13 @@ pub fn load_state_with_compat_reconciliation(
     primary_path: &Path,
     secondary_path: &Path,
 ) -> Result<MigrationState, CaravanError> {
+    load_state_with_compat_reconciliation_detailed(primary_path, secondary_path).map(|v| v.state)
+}
+
+pub fn load_state_with_compat_reconciliation_detailed(
+    primary_path: &Path,
+    secondary_path: &Path,
+) -> Result<ReconciledState, CaravanError> {
     let primary = load_candidate_if_present(primary_path);
     let secondary = load_candidate_if_present(secondary_path);
 
@@ -77,7 +96,10 @@ pub fn load_state_with_compat_reconciliation(
                             secondary.revision
                         );
                     }
-                    Ok(primary.state)
+                    Ok(ReconciledState {
+                        state: primary.state,
+                        source: ReconciledStateSource::Primary,
+                    })
                 }
                 std::cmp::Ordering::Less => {
                     eprintln!(
@@ -87,10 +109,16 @@ pub fn load_state_with_compat_reconciliation(
                         primary_path.display(),
                         primary.revision
                     );
-                    Ok(secondary.state)
+                    Ok(ReconciledState {
+                        state: secondary.state,
+                        source: ReconciledStateSource::Secondary,
+                    })
                 }
                 std::cmp::Ordering::Equal if primary.state_checksum == secondary.state_checksum => {
-                    Ok(primary.state)
+                    Ok(ReconciledState {
+                        state: primary.state,
+                        source: ReconciledStateSource::Primary,
+                    })
                 }
                 std::cmp::Ordering::Equal => Err(CaravanError::StateCorrupt(format!(
                     "state divergence detected: canonical {} and backup {} both have revision {} but different checksums",
@@ -107,7 +135,10 @@ pub fn load_state_with_compat_reconciliation(
                 err,
                 primary_path.display()
             );
-            Ok(primary.state)
+            Ok(ReconciledState {
+                state: primary.state,
+                source: ReconciledStateSource::Primary,
+            })
         }
         (Some(Err(err)), Some(Ok(secondary))) => {
             eprintln!(
@@ -116,7 +147,10 @@ pub fn load_state_with_compat_reconciliation(
                 err,
                 secondary_path.display()
             );
-            Ok(secondary.state)
+            Ok(ReconciledState {
+                state: secondary.state,
+                source: ReconciledStateSource::Secondary,
+            })
         }
         (Some(Err(primary_err)), Some(Err(secondary_err))) => {
             Err(CaravanError::StateCorrupt(format!(
@@ -127,14 +161,20 @@ pub fn load_state_with_compat_reconciliation(
                 secondary_err
             )))
         }
-        (Some(Ok(primary)), None) => Ok(primary.state),
+        (Some(Ok(primary)), None) => Ok(ReconciledState {
+            state: primary.state,
+            source: ReconciledStateSource::Primary,
+        }),
         (None, Some(Ok(secondary))) => {
             eprintln!(
                 "[WARNING] canonical state {} is missing; recovering from compatibility backup {}.",
                 primary_path.display(),
                 secondary_path.display()
             );
-            Ok(secondary.state)
+            Ok(ReconciledState {
+                state: secondary.state,
+                source: ReconciledStateSource::Secondary,
+            })
         }
         (Some(Err(err)), None) => Err(err),
         (None, Some(Err(err))) => Err(err),

@@ -45,14 +45,94 @@ pub(super) fn load_or_create_state(
     dest: &str,
 ) -> Result<MigrationState, CaravanError> {
     if state_path.exists() || secondary_state_path.exists() {
-        let loaded_state =
-            state_store::load_state_with_compat_reconciliation(state_path, secondary_state_path)?;
-        println!("Loaded existing state from: {}", state_path.display());
-        return Ok(loaded_state);
+        let loaded = state_store::load_state_with_compat_reconciliation_detailed(
+            state_path,
+            secondary_state_path,
+        )?;
+        if !state_identity_matches(&loaded.state, mode, source, dest) {
+            return handle_state_identity_mismatch(
+                config,
+                mode,
+                source,
+                dest,
+                state_path,
+                secondary_state_path,
+                loaded.source,
+                &loaded.state,
+            );
+        }
+
+        let loaded_path = match loaded.source {
+            state_store::ReconciledStateSource::Primary => state_path,
+            state_store::ReconciledStateSource::Secondary => secondary_state_path,
+        };
+        println!("Loaded existing state from: {}", loaded_path.display());
+        return Ok(loaded.state);
     }
 
     migration_registry::check_source_writable(&config.source)?;
     Ok(MigrationState::new(mode, source, dest))
+}
+
+fn normalize_identity_path(path: &str) -> String {
+    let as_path = std::path::Path::new(path);
+    let normalized_path = std::fs::canonicalize(as_path).unwrap_or_else(|_| as_path.to_path_buf());
+    let normalized = normalized_path.to_string_lossy().replace('\\', "/");
+    #[cfg(target_os = "windows")]
+    {
+        return normalized.to_ascii_lowercase();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        normalized
+    }
+}
+
+fn state_identity_matches(state: &MigrationState, mode: &str, source: &str, dest: &str) -> bool {
+    state.mode.eq_ignore_ascii_case(mode)
+        && normalize_identity_path(&state.source) == normalize_identity_path(source)
+        && normalize_identity_path(&state.destination) == normalize_identity_path(dest)
+}
+
+fn identity_mismatch_error(
+    loaded_state: &MigrationState,
+    mode: &str,
+    source: &str,
+    dest: &str,
+) -> CaravanError {
+    CaravanError::InvalidArguments(format!(
+        "state identity mismatch: loaded state references mode='{}' source='{}' destination='{}' but current command is mode='{}' source='{}' destination='{}'",
+        loaded_state.mode, loaded_state.source, loaded_state.destination, mode, source, dest
+    ))
+}
+
+fn handle_state_identity_mismatch(
+    config: &TransferConfig,
+    mode: &str,
+    source: &str,
+    dest: &str,
+    state_path: &Path,
+    secondary_state_path: &Path,
+    loaded_from: state_store::ReconciledStateSource,
+    loaded_state: &MigrationState,
+) -> Result<MigrationState, CaravanError> {
+    match loaded_from {
+        state_store::ReconciledStateSource::Primary => {
+            eprintln!(
+                "[ERROR] canonical state {} does not match current migration identity.",
+                state_path.display()
+            );
+            Err(identity_mismatch_error(loaded_state, mode, source, dest))
+        }
+        state_store::ReconciledStateSource::Secondary => {
+            eprintln!(
+                "[WARNING] compatibility backup state {} does not match current migration identity; ignoring backup and creating a new state.",
+                secondary_state_path.display()
+            );
+            migration_registry::check_source_writable(&config.source)?;
+            Ok(MigrationState::new(mode, source, dest))
+        }
+    }
 }
 
 pub(super) fn apply_transfer_config(state: &mut MigrationState, config: &TransferConfig) {
