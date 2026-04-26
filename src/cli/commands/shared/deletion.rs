@@ -96,3 +96,32 @@ fn delete_batches_by_id(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_batches_by_id_noops_for_empty_batch_list() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let mut state = MigrationState::new("staging", "/src", "/dst");
+        let shutdown = ShutdownFlag::new();
+        let mut persist_calls = 0usize;
+        let mut persist_state = |_state: &MigrationState| {
+            persist_calls += 1;
+            Ok::<(), CaravanError>(())
+        };
+
+        delete_batches_by_id(
+            &mut state,
+            tmp.path(),
+            &[],
+            &shutdown,
+            &mut persist_state,
+            "unit-test",
+        )
+        .expect("empty delete list should be a no-op");
+
+        assert_eq!(persist_calls, 0);
+    }
+}

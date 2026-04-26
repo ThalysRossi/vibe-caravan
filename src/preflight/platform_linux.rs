@@ -22,10 +22,20 @@ pub(super) fn detect_filesystem_type(path: &Path) -> Result<Option<String>, Cara
         }
     })?;
 
-    let mut best_match: Option<(usize, String)> = None;
     let probe_rendered = probe_path.to_string_lossy().to_string();
+    Ok(detect_filesystem_type_from_mountinfo(
+        &probe_rendered,
+        &content,
+    ))
+}
 
-    for line in content.lines() {
+fn detect_filesystem_type_from_mountinfo(
+    probe_path: &str,
+    mountinfo_content: &str,
+) -> Option<String> {
+    let mut best_match: Option<(usize, String)> = None;
+
+    for line in mountinfo_content.lines() {
         let Some((left, right)) = line.split_once(" - ") else {
             continue;
         };
@@ -35,7 +45,7 @@ pub(super) fn detect_filesystem_type(path: &Path) -> Result<Option<String>, Cara
         }
 
         let mount_point = decode_mountinfo_path(left_fields[4]);
-        if !path_is_within_mount(&probe_rendered, &mount_point) {
+        if !path_is_within_mount(probe_path, &mount_point) {
             continue;
         }
 
@@ -54,7 +64,7 @@ pub(super) fn detect_filesystem_type(path: &Path) -> Result<Option<String>, Cara
         }
     }
 
-    Ok(best_match.map(|(_, fs_type)| fs_type))
+    best_match.map(|(_, fs_type)| fs_type)
 }
 
 fn resolve_probe_path(path: &Path) -> PathBuf {
@@ -133,4 +143,89 @@ fn path_is_within_mount(path: &str, mount_point: &str) -> bool {
             .strip_prefix(mount_point)
             .map(|tail| tail.starts_with('/'))
             .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_mountinfo_path_decodes_octal_escapes() {
+        let decoded = decode_mountinfo_path("/run/media/Game\\040SSD\\0403");
+        assert_eq!(decoded, "/run/media/Game SSD 3");
+    }
+
+    #[test]
+    fn decode_mountinfo_path_keeps_invalid_escape_literal() {
+        let decoded = decode_mountinfo_path("/mnt/data\\89x");
+        assert_eq!(decoded, "/mnt/data\\89x");
+    }
+
+    #[test]
+    fn path_is_within_mount_handles_root_and_nested_mounts() {
+        assert!(path_is_within_mount("/a/b", "/"));
+        assert!(path_is_within_mount(
+            "/run/media/disk/file.mkv",
+            "/run/media/disk"
+        ));
+        assert!(!path_is_within_mount(
+            "/run/media/disk2/file.mkv",
+            "/run/media/disk"
+        ));
+    }
+
+    #[test]
+    fn resolve_probe_path_falls_back_to_existing_parent() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let existing_parent = tmp.path().join("a").join("b");
+        std::fs::create_dir_all(&existing_parent).expect("create parent directories");
+
+        let missing_leaf = existing_parent.join("missing").join("child");
+        let resolved = resolve_probe_path(&missing_leaf);
+
+        assert_eq!(resolved, existing_parent);
+    }
+
+    #[test]
+    fn decode_octal_escape_handles_valid_and_invalid_digits() {
+        assert_eq!(decode_octal_escape('0', '4', '0'), Some(' '));
+        assert_eq!(decode_octal_escape('8', '4', '0'), None);
+    }
+
+    #[test]
+    fn detect_filesystem_type_from_mountinfo_selects_longest_match() {
+        let mountinfo = "\
+25 21 8:1 / / rw,relatime - ext4 /dev/sda1 rw
+44 25 8:2 / /run/media/Game\\040SSD\\0403 rw,relatime - ntfs3 /dev/sdb1 rw
+45 44 8:3 / /run/media/Game\\040SSD\\0403/Media rw,relatime - xfs /dev/sdc1 rw
+";
+        let fs_type =
+            detect_filesystem_type_from_mountinfo("/run/media/Game SSD 3/Media/Films", mountinfo);
+        assert_eq!(fs_type.as_deref(), Some("xfs"));
+    }
+
+    #[test]
+    fn detect_filesystem_type_from_mountinfo_ignores_malformed_lines() {
+        let mountinfo = "\
+this line has no separator
+1 2 3 - ext4 /dev/sda1 rw
+5 4 8:1 / /run/media rw,relatime - 
+";
+        let fs_type = detect_filesystem_type_from_mountinfo("/run/media/disk/file.mkv", mountinfo);
+        assert_eq!(fs_type, None);
+    }
+
+    #[test]
+    fn detect_filesystem_type_from_mountinfo_uses_root_mount_fallback() {
+        let mountinfo = "10 2 8:1 / / rw,relatime - btrfs /dev/nvme0n1p2 rw";
+        let fs_type = detect_filesystem_type_from_mountinfo("/home/thalys/file.txt", mountinfo);
+        assert_eq!(fs_type.as_deref(), Some("btrfs"));
+    }
+
+    #[test]
+    fn resolve_probe_path_returns_input_for_parentless_relative_path() {
+        let input = Path::new("no-parent-segment");
+        let resolved = resolve_probe_path(input);
+        assert_eq!(resolved, input);
+    }
 }

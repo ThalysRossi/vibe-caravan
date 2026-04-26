@@ -73,3 +73,53 @@ pub(super) fn run_resume_batches(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::state::{BatchPhase, PlannedBatch, PlannedFile};
+    use std::path::PathBuf;
+
+    #[test]
+    fn load_batch_for_resume_errors_when_manifest_is_missing() {
+        let state = MigrationState::new("staging", "/src", "/dst");
+        let batch_state = BatchState {
+            batch_id: "batch-000001".to_string(),
+            phase: BatchPhase::Planned,
+            verification_passed: false,
+            approved_for_delete: false,
+            deleted: false,
+        };
+
+        let err = load_batch_for_resume(&batch_state, &state)
+            .expect_err("missing planned batch must be treated as corrupt state");
+        assert!(err.to_string().contains("missing immutable batch manifest"));
+    }
+
+    #[test]
+    fn load_batch_for_resume_materializes_batch_from_manifest() {
+        let mut state = MigrationState::new("staging", "/src", "/dst");
+        state.upsert_planned_batch(PlannedBatch {
+            batch_id: "batch-000001".to_string(),
+            file_count: 1,
+            total_bytes: 7,
+            files: vec![PlannedFile {
+                relative_path: PathBuf::from("a.txt"),
+                size_bytes: 7,
+            }],
+        });
+        let batch_state = BatchState {
+            batch_id: "batch-000001".to_string(),
+            phase: BatchPhase::Planned,
+            verification_passed: false,
+            approved_for_delete: false,
+            deleted: false,
+        };
+
+        let batch = load_batch_for_resume(&batch_state, &state).expect("batch should load");
+        assert_eq!(batch.id, "batch-000001");
+        assert_eq!(batch.file_count, 1);
+        assert_eq!(batch.total_bytes, 7);
+        assert_eq!(batch.files[0].relative_path, PathBuf::from("a.txt"));
+    }
+}

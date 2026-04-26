@@ -31,6 +31,26 @@ fn state_has_manifest(state: &MigrationState) -> bool {
     !state.planned_batches.is_empty()
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::state::PlannedBatch;
+
+    #[test]
+    fn state_has_manifest_detects_presence_of_planned_batches() {
+        let mut state = MigrationState::new("staging", "/src", "/dst");
+        assert!(!state_has_manifest(&state));
+
+        state.planned_batches.push(PlannedBatch {
+            batch_id: "batch-000001".to_string(),
+            file_count: 0,
+            total_bytes: 0,
+            files: Vec::new(),
+        });
+        assert!(state_has_manifest(&state));
+    }
+}
+
 pub(in crate::cli) fn execute_transfer(config: TransferConfig) -> Result<(), CaravanError> {
     let app_context = AppContext::new();
     let context = TransferContext::new(&config)?;

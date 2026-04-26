@@ -252,3 +252,118 @@ pub(in crate::cli) fn execute_resume(
 
     resume_result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::state::{PlannedBatch, PlannedFile};
+    use std::path::PathBuf;
+
+    fn staging_config(source: &std::path::Path, dest: &std::path::Path) -> TransferConfig {
+        TransferConfig {
+            mode: crate::config::Mode::Staging,
+            source: source.to_path_buf(),
+            dest: dest.to_path_buf(),
+            batch_size_bytes: 1024,
+            max_files: None,
+            snapshot_every: None,
+            snapshot_dir: None,
+            interactive: true,
+            log_level: "info".to_string(),
+            skip_conflicts: false,
+            conflict_policy: crate::config::ConflictPolicy::SkipFile,
+            recover_failed: false,
+            allow_unsafe_filesystems: false,
+            copy_strategy: crate::config::CopyStrategy::Auto,
+        }
+    }
+
+    #[test]
+    fn ensure_resume_manifest_seeds_when_missing() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let source = tmp.path().join("source");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::create_dir_all(&dest).expect("create dest");
+        std::fs::write(source.join("movie.mkv"), b"12345").expect("write source file");
+        let state_path = tmp.path().join("resume-state.json");
+
+        let config = staging_config(&source, &dest);
+        let mut state = MigrationState::new(
+            "staging",
+            &source.to_string_lossy(),
+            &dest.to_string_lossy(),
+        );
+        state.batch_size_bytes = 1024;
+
+        ensure_resume_manifest_is_consistent(&mut state, &config, &state_path)
+            .expect("missing manifest should be seeded");
+
+        assert!(
+            !state.planned_batches.is_empty(),
+            "planned manifest should be seeded from current plan"
+        );
+        assert!(state_path.exists(), "seeded manifest should be persisted");
+    }
+
+    #[test]
+    fn ensure_resume_manifest_detects_source_drift() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let source = tmp.path().join("source");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::create_dir_all(&dest).expect("create dest");
+        std::fs::write(source.join("movie.mkv"), b"12345").expect("write source file");
+        let state_path = tmp.path().join("resume-state.json");
+
+        let config = staging_config(&source, &dest);
+        let mut state = MigrationState::new(
+            "staging",
+            &source.to_string_lossy(),
+            &dest.to_string_lossy(),
+        );
+        state.batch_size_bytes = 1024;
+        state.planned_batches = vec![
+            PlannedBatch {
+                batch_id: "batch-000001".to_string(),
+                file_count: 1,
+                total_bytes: 5,
+                files: vec![PlannedFile {
+                    relative_path: PathBuf::from("movie.mkv"),
+                    size_bytes: 5,
+                }],
+            },
+            PlannedBatch {
+                batch_id: "stale-batch".to_string(),
+                file_count: 1,
+                total_bytes: 1,
+                files: vec![PlannedFile {
+                    relative_path: PathBuf::from("stale.txt"),
+                    size_bytes: 1,
+                }],
+            },
+        ];
+
+        let err = ensure_resume_manifest_is_consistent(&mut state, &config, &state_path)
+            .expect_err("drifted manifest must fail");
+        assert!(
+            err.to_string()
+                .contains("planned manifest batch count changed")
+        );
+    }
+
+    #[test]
+    fn print_failed_batch_inspection_json_serializes_report() {
+        let report = resume_ops::FailedBatchInspectionReport {
+            failed_batch_count: 1,
+            failed_batches: vec![resume_ops::FailedBatchInspection {
+                batch_id: "batch-000001".to_string(),
+                all_destination_files_ready: false,
+                missing_in_destination: vec!["a.txt".to_string()],
+                size_mismatches: vec![],
+            }],
+        };
+
+        print_failed_batch_inspection_json(&report).expect("json rendering should succeed");
+    }
+}

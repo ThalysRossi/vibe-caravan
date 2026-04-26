@@ -39,3 +39,42 @@ fn parse_level(raw: &str) -> Result<tracing::Level, CaravanError> {
         ))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_level_accepts_trimmed_case_insensitive_values() {
+        assert_eq!(
+            parse_level("  TRACE ").expect("trace should parse"),
+            tracing::Level::TRACE
+        );
+        assert_eq!(
+            parse_level("Debug").expect("debug should parse"),
+            tracing::Level::DEBUG
+        );
+        assert_eq!(
+            parse_level("info").expect("info should parse"),
+            tracing::Level::INFO
+        );
+        assert_eq!(
+            parse_level("WARN").expect("warn should parse"),
+            tracing::Level::WARN
+        );
+        assert_eq!(
+            parse_level("error").expect("error should parse"),
+            tracing::Level::ERROR
+        );
+    }
+
+    #[test]
+    fn parse_level_rejects_unknown_levels() {
+        let err = parse_level("verbose").expect_err("unknown level must fail");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("unsupported log-level 'verbose'"),
+            "unexpected message: {rendered}"
+        );
+    }
+}

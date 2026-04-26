@@ -77,3 +77,100 @@ pub(crate) fn ensure_no_operator_review_blocks_with_policy(
     ensure_no_failed_verification_batches(state)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state_with_batches(batches: Vec<crate::models::state::BatchState>) -> MigrationState {
+        let mut state = MigrationState::new("staging", "/src", "/dst");
+        state.batches = batches;
+        state
+    }
+
+    #[test]
+    fn failed_batches_requiring_review_ignores_deleted_entries() {
+        let state = state_with_batches(vec![
+            crate::models::state::BatchState {
+                batch_id: "failed-active".to_string(),
+                phase: BatchPhase::Failed,
+                verification_passed: false,
+                approved_for_delete: false,
+                deleted: false,
+            },
+            crate::models::state::BatchState {
+                batch_id: "failed-deleted".to_string(),
+                phase: BatchPhase::Failed,
+                verification_passed: false,
+                approved_for_delete: false,
+                deleted: true,
+            },
+        ]);
+
+        let failed = failed_batches_requiring_review(&state);
+        assert_eq!(failed, vec!["failed-active".to_string()]);
+    }
+
+    #[test]
+    fn failed_verification_batches_requiring_review_filters_by_phase() {
+        let state = state_with_batches(vec![
+            crate::models::state::BatchState {
+                batch_id: "verify-failed".to_string(),
+                phase: BatchPhase::VerifyCompleted,
+                verification_passed: false,
+                approved_for_delete: false,
+                deleted: false,
+            },
+            crate::models::state::BatchState {
+                batch_id: "copy-phase".to_string(),
+                phase: BatchPhase::CopyCompleted,
+                verification_passed: false,
+                approved_for_delete: false,
+                deleted: false,
+            },
+        ]);
+
+        let failed = failed_verification_batches_requiring_review(&state);
+        assert_eq!(failed, vec!["verify-failed".to_string()]);
+    }
+
+    #[test]
+    fn operator_review_policy_can_allow_failed_batches_only() {
+        let state = state_with_batches(vec![crate::models::state::BatchState {
+            batch_id: "failed-active".to_string(),
+            phase: BatchPhase::Failed,
+            verification_passed: false,
+            approved_for_delete: false,
+            deleted: false,
+        }]);
+
+        ensure_no_operator_review_blocks_with_policy(
+            &state,
+            OperatorReviewPolicy {
+                allow_failed_batches: true,
+            },
+        )
+        .expect("policy should allow failed batches");
+    }
+
+    #[test]
+    fn failed_verification_blocks_even_when_failed_batches_are_allowed() {
+        let state = state_with_batches(vec![crate::models::state::BatchState {
+            batch_id: "verify-failed".to_string(),
+            phase: BatchPhase::VerifyCompleted,
+            verification_passed: false,
+            approved_for_delete: false,
+            deleted: false,
+        }]);
+
+        let err = ensure_no_operator_review_blocks_with_policy(
+            &state,
+            OperatorReviewPolicy {
+                allow_failed_batches: true,
+            },
+        )
+        .expect_err("failed verification must still block");
+
+        assert!(err.to_string().contains("failed verification"));
+    }
+}

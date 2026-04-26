@@ -43,3 +43,34 @@ pub(super) fn destination_volume_root(destination: &Path) -> String {
         ".".to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use tempfile::tempdir;
+
+    #[test]
+    fn system_space_probe_backend_reports_fs2() {
+        assert_eq!(system_space_probe_backend(), "fs2");
+    }
+
+    #[test]
+    fn destination_volume_root_maps_absolute_and_relative_paths() {
+        assert_eq!(destination_volume_root(Path::new("/tmp")), "/");
+        assert_eq!(destination_volume_root(Path::new("relative/path")), ".");
+    }
+
+    #[test]
+    fn query_space_info_returns_contextual_error_for_missing_destination() {
+        let temp = tempdir().expect("tempdir");
+        let missing = temp.path().join("does-not-exist");
+
+        let err = query_space_info(&missing).expect_err("missing path must fail");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("failed to read destination total capacity"),
+            "unexpected error: {rendered}"
+        );
+    }
+}

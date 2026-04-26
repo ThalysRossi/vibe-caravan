@@ -194,3 +194,101 @@ impl ProgressReporter for TerminalProgress {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_duration_handles_seconds_minutes_and_hours() {
+        assert_eq!(
+            TerminalProgress::format_duration(Duration::from_secs(7)),
+            "7s"
+        );
+        assert_eq!(
+            TerminalProgress::format_duration(Duration::from_secs(125)),
+            "2m 05s"
+        );
+        assert_eq!(
+            TerminalProgress::format_duration(Duration::from_secs(3723)),
+            "1h 02m 03s"
+        );
+    }
+
+    #[test]
+    fn progress_bar_respects_width_and_rounding_bounds() {
+        assert_eq!(TerminalProgress::progress_bar(0.0, 5), "[     ]");
+        assert_eq!(TerminalProgress::progress_bar(100.0, 5), "[=====]");
+        assert_eq!(TerminalProgress::progress_bar(49.0, 10), "[=====     ]");
+        assert_eq!(TerminalProgress::progress_bar(200.0, 3), "[===]");
+    }
+
+    #[test]
+    fn calculate_eta_returns_unknown_without_progress_or_when_complete() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 10;
+        assert_eq!(
+            progress.calculate_eta(0, Duration::from_secs(10)),
+            "ETA --".to_string()
+        );
+        assert_eq!(
+            progress.calculate_eta(10, Duration::from_secs(10)),
+            "ETA --".to_string()
+        );
+    }
+
+    #[test]
+    fn calculate_eta_estimates_remaining_time() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 10;
+
+        let eta = progress.calculate_eta(5, Duration::from_secs(10));
+        assert_eq!(eta, "ETA 10s");
+    }
+
+    #[test]
+    fn calculate_throughput_reports_files_and_optional_mb_rate() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 10;
+        progress.total_bytes = Some(10 * 1024 * 1024);
+
+        let throughput = progress.calculate_throughput(5, Duration::from_secs(2));
+        assert_eq!(throughput, "2.5 files/s, 2.5 MB/s");
+
+        progress.total_bytes = None;
+        let throughput_no_bytes = progress.calculate_throughput(5, Duration::from_secs(2));
+        assert_eq!(throughput_no_bytes, "2.5 files/s");
+    }
+
+    #[test]
+    fn calculate_throughput_reports_placeholders_before_one_second() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 10;
+        progress.total_bytes = Some(10 * 1024 * 1024);
+        assert_eq!(
+            progress.calculate_throughput(1, Duration::from_millis(100)),
+            "-- files/s, -- MB/s"
+        );
+
+        progress.total_bytes = None;
+        assert_eq!(
+            progress.calculate_throughput(1, Duration::from_millis(100)),
+            "-- files/s"
+        );
+    }
+
+    #[test]
+    fn should_update_display_triggers_for_completion_percentage_delta_or_time() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 10;
+        progress.last_printed_percent = 10.0;
+        progress.last_printed_time = Instant::now();
+
+        assert!(!progress.should_update_display(2, 10.1));
+        assert!(progress.should_update_display(10, 10.1));
+        assert!(progress.should_update_display(2, 10.6));
+
+        progress.last_printed_time = Instant::now() - Duration::from_millis(150);
+        assert!(progress.should_update_display(2, 10.1));
+    }
+}

@@ -195,3 +195,160 @@ pub(super) fn warn_copy_backend_config(config: &TransferConfig) {
         "Using copy backend configuration"
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::CopyStrategy;
+    use crate::models::batch::Batch;
+    use crate::models::file_entry::FileEntry;
+    use crate::models::state::MigrationPhase;
+    use crate::state_store::ReconciledStateSource;
+    use std::path::PathBuf;
+
+    fn sample_transfer_config(source: &std::path::Path) -> TransferConfig {
+        TransferConfig {
+            mode: Mode::Staging,
+            source: source.to_path_buf(),
+            dest: PathBuf::from("/dest"),
+            batch_size_bytes: 1024,
+            max_files: Some(10),
+            snapshot_every: Some(2),
+            snapshot_dir: Some(PathBuf::from("/snapshots")),
+            interactive: true,
+            log_level: "info".to_string(),
+            skip_conflicts: false,
+            conflict_policy: crate::config::ConflictPolicy::SkipFile,
+            recover_failed: false,
+            allow_unsafe_filesystems: false,
+            copy_strategy: CopyStrategy::Auto,
+        }
+    }
+
+    fn sample_plan() -> PlanningSnapshot {
+        PlanningSnapshot {
+            source_file_count: 1,
+            source_total_bytes: 5,
+            batches: vec![Batch {
+                id: "batch-000001".to_string(),
+                file_count: 1,
+                total_bytes: 5,
+                files: vec![FileEntry {
+                    relative_path: PathBuf::from("a.txt"),
+                    size_bytes: 5,
+                    modified_time: None,
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn mode_name_renders_expected_values() {
+        assert_eq!(mode_name(&Mode::Staging), "staging");
+        assert_eq!(mode_name(&Mode::Migrate), "migrate");
+    }
+
+    #[test]
+    fn normalize_legacy_state_copy_strategy_handles_buffered() {
+        let mut state = MigrationState::new("staging", "/src", "/dst");
+        state.copy_strategy = CopyStrategy::Buffered;
+        normalize_legacy_state_copy_strategy(&mut state);
+        assert_eq!(state.copy_strategy, CopyStrategy::Auto);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn normalize_legacy_state_copy_strategy_handles_linux_native() {
+        let mut state = MigrationState::new("staging", "/src", "/dst");
+        state.copy_strategy = CopyStrategy::Native;
+        normalize_legacy_state_copy_strategy(&mut state);
+        assert_eq!(state.copy_strategy, CopyStrategy::Auto);
+    }
+
+    #[test]
+    fn apply_transfer_config_updates_runtime_fields() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let config = sample_transfer_config(tmp.path());
+
+        let mut state = MigrationState::new("staging", "/old-src", "/old-dst");
+        apply_transfer_config(&mut state, &config);
+
+        assert_eq!(state.batch_size_bytes, 1024);
+        assert_eq!(state.max_files, Some(10));
+        assert_eq!(state.snapshot_every, Some(2));
+        assert_eq!(state.snapshot_dir.as_deref(), Some("/snapshots"));
+        assert_eq!(state.copy_strategy, CopyStrategy::Auto);
+    }
+
+    #[test]
+    fn planned_batch_state_sets_safe_defaults() {
+        let batch = planned_batch_state("batch-42");
+        assert_eq!(batch.batch_id, "batch-42");
+        assert_eq!(batch.phase, BatchPhase::Planned);
+        assert!(!batch.verification_passed);
+        assert!(!batch.approved_for_delete);
+        assert!(!batch.deleted);
+    }
+
+    #[test]
+    fn seed_state_batches_is_idempotent() {
+        let mut state = MigrationState::new("staging", "/src", "/dst");
+        let plan = sample_plan();
+
+        seed_state_batches(&mut state, &plan);
+        seed_state_batches(&mut state, &plan);
+
+        assert_eq!(state.planned_batches.len(), 1);
+        assert_eq!(state.batches.len(), 1);
+        assert_eq!(state.batches[0].batch_id, "batch-000001");
+    }
+
+    #[test]
+    fn handle_state_identity_mismatch_secondary_creates_fresh_state() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let config = sample_transfer_config(tmp.path());
+        let loaded = MigrationState::new("staging", "/wrong-src", "/wrong-dst");
+        let primary = tmp.path().join("primary.json");
+        let secondary = tmp.path().join("secondary.json");
+
+        let recovered = handle_state_identity_mismatch(
+            &config,
+            "staging",
+            "/src",
+            "/dst",
+            &primary,
+            &secondary,
+            ReconciledStateSource::Secondary,
+            &loaded,
+        )
+        .expect("secondary mismatch should recover with fresh state");
+
+        assert_eq!(recovered.mode, "staging");
+        assert_eq!(recovered.source, "/src");
+        assert_eq!(recovered.destination, "/dst");
+        assert_eq!(recovered.migration_phase, MigrationPhase::NotStarted);
+    }
+
+    #[test]
+    fn handle_state_identity_mismatch_primary_returns_error() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let config = sample_transfer_config(tmp.path());
+        let loaded = MigrationState::new("staging", "/wrong-src", "/wrong-dst");
+        let primary = tmp.path().join("primary.json");
+        let secondary = tmp.path().join("secondary.json");
+
+        let err = handle_state_identity_mismatch(
+            &config,
+            "staging",
+            "/src",
+            "/dst",
+            &primary,
+            &secondary,
+            ReconciledStateSource::Primary,
+            &loaded,
+        )
+        .expect_err("primary mismatch must fail closed");
+
+        assert!(err.to_string().contains("state identity mismatch"));
+    }
+}

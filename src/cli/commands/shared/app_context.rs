@@ -81,3 +81,50 @@ impl AppContext {
             .map(|entry| entry.id))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::migration_registry::MigrationRegistry;
+
+    #[test]
+    fn register_or_reuse_migration_reuses_active_entry() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let registry_path = tmp.path().join("migrations.json");
+        let app = AppContext {
+            registry_path: registry_path.clone(),
+        };
+
+        let first = app
+            .register_or_reuse_migration("/src", "/dst", "staging", "state-a.json")
+            .expect("first registration should succeed");
+        let second = app
+            .register_or_reuse_migration("/src", "/dst", "staging", "state-b.json")
+            .expect("second registration should reuse");
+
+        assert_eq!(first.0, second.0);
+        assert!(first.1, "first call should create");
+        assert!(!second.1, "second call should reuse");
+    }
+
+    #[test]
+    fn find_active_migration_prefers_exact_state_file_match() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let registry_path = tmp.path().join("migrations.json");
+        let mut registry = MigrationRegistry::new();
+        let first_id = registry.add_migration("/src", "/dst", "staging", "state-old.json");
+        let second_id = registry.add_migration("/src", "/dst", "staging", "state-new.json");
+        assert_ne!(first_id, second_id);
+        registry.save(&registry_path).expect("save registry");
+
+        let app = AppContext {
+            registry_path: registry_path.clone(),
+        };
+        let state_path = tmp.path().join("state-old.json");
+        let match_id = app
+            .find_active_migration_id_for_state("/src", "/dst", "staging", &state_path)
+            .expect("query should succeed");
+
+        assert_eq!(match_id, Some(first_id));
+    }
+}

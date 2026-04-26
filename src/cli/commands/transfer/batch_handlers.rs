@@ -232,3 +232,111 @@ pub(super) fn verify_single_batch(
     print_verification_passed();
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ConflictPolicy, CopyStrategy, Mode, TransferConfig};
+    use crate::models::file_entry::FileEntry;
+    use crate::signal::ShutdownFlag;
+    use crate::transfer::LocalFsCopyBackend;
+    use std::path::PathBuf;
+
+    fn sample_config(
+        source: &std::path::Path,
+        dest: &std::path::Path,
+        skip_conflicts: bool,
+        conflict_policy: ConflictPolicy,
+    ) -> TransferConfig {
+        TransferConfig {
+            mode: Mode::Staging,
+            source: source.to_path_buf(),
+            dest: dest.to_path_buf(),
+            batch_size_bytes: 1024,
+            max_files: None,
+            snapshot_every: None,
+            snapshot_dir: None,
+            interactive: false,
+            log_level: "info".to_string(),
+            skip_conflicts,
+            conflict_policy,
+            recover_failed: false,
+            allow_unsafe_filesystems: false,
+            copy_strategy: CopyStrategy::Auto,
+        }
+    }
+
+    fn sample_context<'a>(
+        config: &'a TransferConfig,
+        tmp: &tempfile::TempDir,
+    ) -> TransferContext<'a> {
+        TransferContext {
+            config,
+            state_path: tmp.path().join("state.json"),
+            secondary_state_path: tmp.path().join("state_compat.json"),
+            shutdown_flag: ShutdownFlag::new(),
+            copy_backend: LocalFsCopyBackend::with_transfer_config(config),
+            snapshot_backend: crate::snapshot::SystemSnapshotBackend,
+        }
+    }
+
+    #[test]
+    fn effective_conflict_policy_respects_skip_conflicts_flag() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let source = tmp.path().join("source");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::create_dir_all(&dest).expect("create dest");
+
+        let config = sample_config(&source, &dest, true, ConflictPolicy::SkipBatch);
+        let context = sample_context(&config, &tmp);
+        assert_eq!(
+            effective_conflict_policy(&context),
+            ConflictPolicy::SkipFile
+        );
+
+        let config = sample_config(&source, &dest, false, ConflictPolicy::SkipBatch);
+        let context = sample_context(&config, &tmp);
+        assert_eq!(
+            effective_conflict_policy(&context),
+            ConflictPolicy::SkipBatch
+        );
+    }
+
+    #[test]
+    fn non_conflicting_subset_batch_filters_conflicting_destination_paths() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let destination_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&destination_root).expect("create destination");
+
+        let batch = Batch {
+            id: "batch-000001".to_string(),
+            files: vec![
+                FileEntry {
+                    relative_path: PathBuf::from("a.txt"),
+                    size_bytes: 11,
+                    modified_time: None,
+                },
+                FileEntry {
+                    relative_path: PathBuf::from("b.txt"),
+                    size_bytes: 22,
+                    modified_time: None,
+                },
+            ],
+            total_bytes: 33,
+            file_count: 2,
+        };
+        let report = crate::conflict::ConflictReport {
+            existing_files: vec![destination_root.join("b.txt")],
+            size_mismatches: Vec::new(),
+            total_conflicts: 1,
+            has_conflicts: true,
+            scanned_parent_directories: 1,
+        };
+
+        let subset = non_conflicting_subset_batch(&batch, &destination_root, &report);
+        assert_eq!(subset.file_count, 1);
+        assert_eq!(subset.total_bytes, 11);
+        assert_eq!(subset.files[0].relative_path, PathBuf::from("a.txt"));
+    }
+}

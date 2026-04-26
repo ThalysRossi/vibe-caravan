@@ -247,3 +247,138 @@ pub(super) fn execute_resume_step(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ConflictPolicy, CopyStrategy, Mode, TransferConfig};
+    use crate::models::file_entry::FileEntry;
+    use crate::signal::ShutdownFlag;
+    use crate::transfer::LocalFsCopyBackend;
+    use std::path::PathBuf;
+
+    fn sample_config(source: &std::path::Path, dest: &std::path::Path) -> TransferConfig {
+        TransferConfig {
+            mode: Mode::Staging,
+            source: source.to_path_buf(),
+            dest: dest.to_path_buf(),
+            batch_size_bytes: 1024,
+            max_files: None,
+            snapshot_every: None,
+            snapshot_dir: None,
+            interactive: false,
+            log_level: "info".to_string(),
+            skip_conflicts: false,
+            conflict_policy: ConflictPolicy::SkipBatch,
+            recover_failed: false,
+            allow_unsafe_filesystems: false,
+            copy_strategy: CopyStrategy::Auto,
+        }
+    }
+
+    fn sample_batch() -> Batch {
+        Batch {
+            id: "batch-000001".to_string(),
+            files: vec![FileEntry {
+                relative_path: PathBuf::from("a.txt"),
+                size_bytes: 10,
+                modified_time: None,
+            }],
+            total_bytes: 10,
+            file_count: 1,
+        }
+    }
+
+    fn sample_context<'a>(
+        config: &'a TransferConfig,
+        tmp: &tempfile::TempDir,
+    ) -> ResumeContext<'a> {
+        ResumeContext {
+            config,
+            state_path: tmp.path().join("state.json"),
+            shutdown_flag: ShutdownFlag::new(),
+            copy_backend: LocalFsCopyBackend::with_transfer_config(config),
+            snapshot_backend: crate::snapshot::SystemSnapshotBackend,
+        }
+    }
+
+    #[test]
+    fn effective_conflict_policy_for_resume_recovery_forces_skip_file() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let source = tmp.path().join("source");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::create_dir_all(&dest).expect("create dest");
+
+        let mut config = sample_config(&source, &dest);
+        config.recover_failed = true;
+        let context = sample_context(&config, &tmp);
+
+        assert_eq!(
+            effective_conflict_policy(&context),
+            ConflictPolicy::SkipFile
+        );
+    }
+
+    #[test]
+    fn non_conflicting_subset_batch_excludes_conflicting_paths() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let destination_root = tmp.path().join("dest");
+        std::fs::create_dir_all(&destination_root).expect("create destination");
+
+        let batch = Batch {
+            id: "batch-000001".to_string(),
+            files: vec![
+                FileEntry {
+                    relative_path: PathBuf::from("a.txt"),
+                    size_bytes: 10,
+                    modified_time: None,
+                },
+                FileEntry {
+                    relative_path: PathBuf::from("b.txt"),
+                    size_bytes: 20,
+                    modified_time: None,
+                },
+            ],
+            total_bytes: 30,
+            file_count: 2,
+        };
+        let report = crate::conflict::ConflictReport {
+            existing_files: vec![destination_root.join("b.txt")],
+            size_mismatches: Vec::new(),
+            total_conflicts: 1,
+            has_conflicts: true,
+            scanned_parent_directories: 1,
+        };
+
+        let subset = non_conflicting_subset_batch(&batch, &destination_root, &report);
+        assert_eq!(subset.file_count, 1);
+        assert_eq!(subset.total_bytes, 10);
+        assert_eq!(subset.files[0].relative_path, PathBuf::from("a.txt"));
+    }
+
+    #[test]
+    fn execute_resume_step_returns_policy_blocked_for_conflict_review() {
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let source = tmp.path().join("source");
+        let dest = tmp.path().join("dest");
+        std::fs::create_dir_all(&source).expect("create source");
+        std::fs::create_dir_all(&dest).expect("create dest");
+        let config = sample_config(&source, &dest);
+        let context = sample_context(&config, &tmp);
+        let batch = sample_batch();
+        let mut state = MigrationState::new("staging", "/src", "/dst");
+
+        let err = execute_resume_step(
+            resume_ops::ResumeStepPlan::ConflictOperatorReview {
+                reason: "conflict".to_string(),
+            },
+            &batch,
+            &context,
+            &mut state,
+        )
+        .expect_err("conflict step should block");
+
+        assert!(err.to_string().contains("requires operator review"));
+    }
+}
