@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
 
 use crate::config::{CopyStrategy, Mode, TransferConfig};
 use crate::error::CaravanError;
@@ -12,69 +11,10 @@ use crate::plan::PlanningSnapshot;
 use crate::platform::is_windows_build;
 use crate::progress::ProgressReporter;
 
-/// Thread-local buffer pool for reusing allocation buffers between file copies.
-/// This eliminates the overhead of allocating large buffers (e.g., 64MiB) for each file.
-struct BufferPool {
-    /// Buffers of various sizes, keyed by their capacity
-    buffers: Mutex<Vec<Vec<u8>>>,
-}
-
-impl BufferPool {
-    /// Create a new empty buffer pool
-    fn new() -> Self {
-        Self {
-            buffers: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// Get a buffer of at least the requested size.
-    /// Returns a buffer from the pool if available, otherwise allocates a new one.
-    fn get_buffer(&self, min_size: usize) -> Vec<u8> {
-        let mut buffers = self.lock_buffers();
-
-        // Try to find a buffer with sufficient capacity
-        if let Some(index) = buffers.iter().position(|buf| buf.capacity() >= min_size) {
-            let mut buffer = buffers.remove(index);
-            buffer.clear(); // Clear any existing data
-            buffer.resize(min_size, 0); // Ensure it has the right size
-            buffer
-        } else {
-            // Allocate new buffer with exact requested size
-            vec![0u8; min_size]
-        }
-    }
-
-    /// Return a buffer to the pool for reuse.
-    /// The pool keeps at most 4 buffers to avoid excessive memory usage.
-    fn return_buffer(&self, buffer: Vec<u8>) {
-        let mut buffers = self.lock_buffers();
-
-        // Keep at most 4 buffers in the pool (optimized for Ryzen 5 5600X + 16GB RAM)
-        if buffers.len() < 4 {
-            buffers.push(buffer);
-        }
-        // If pool is full, buffer is dropped (freed)
-    }
-
-    fn lock_buffers(&self) -> MutexGuard<'_, Vec<Vec<u8>>> {
-        match self.buffers.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        }
-    }
-}
-
-// Thread-local buffer pool instance
-thread_local! {
-    static BUFFER_POOL: BufferPool = BufferPool::new();
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolvedCopyStrategy {
     Os,
-    Hybrid,
     NativePreferred,
-    Buffered,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,8 +58,14 @@ pub fn summarize_transfer_execution(
 
 pub fn resolve_copy_strategy(strategy: CopyStrategy, mode: &Mode) -> ResolvedCopyStrategy {
     match strategy {
-        CopyStrategy::Buffered => ResolvedCopyStrategy::Buffered,
-        CopyStrategy::Native => ResolvedCopyStrategy::NativePreferred,
+        CopyStrategy::Buffered => ResolvedCopyStrategy::Os,
+        CopyStrategy::Native => {
+            if is_windows_build() {
+                ResolvedCopyStrategy::NativePreferred
+            } else {
+                ResolvedCopyStrategy::Os
+            }
+        }
         CopyStrategy::Auto => {
             if is_windows_build() && matches!(mode, Mode::Staging) {
                 ResolvedCopyStrategy::NativePreferred
@@ -206,16 +152,16 @@ fn system_native_copy_file(_source: &Path, _destination: &Path) -> io::Result<u6
     ))
 }
 
-/// Native-first copier: tries OS-native copy API and falls back to hybrid copy on failure.
+/// Native-first copier: tries OS-native copy API and falls back to OS copy on failure.
 #[derive(Debug, Clone)]
 pub struct NativePreferredFileCopier {
-    fallback: HybridFileCopier,
+    fallback: OsFileCopier,
 }
 
 impl NativePreferredFileCopier {
-    pub fn new(buffer_size: usize, threshold: u64) -> Self {
+    pub fn new() -> Self {
         Self {
-            fallback: HybridFileCopier::new(buffer_size, threshold),
+            fallback: OsFileCopier,
         }
     }
 }
@@ -229,152 +175,10 @@ impl FileCopier for NativePreferredFileCopier {
     }
 }
 
-/// Buffered file copier that reads and writes files in chunks.
-/// This can be more efficient for large files or cross-filesystem copies.
-#[derive(Debug, Clone)]
-pub struct BufferedFileCopier {
-    /// Size of the buffer used for copying (in bytes)
-    buffer_size: usize,
-}
-
-impl BufferedFileCopier {
-    /// Creates a new buffered file copier with the specified buffer size.
-    pub fn new(buffer_size: usize) -> Self {
-        Self { buffer_size }
-    }
-
-    /// Default buffer size (16 MiB) - optimized for HDD performance
-    pub const DEFAULT_BUFFER_SIZE: usize = 16 * 1024 * 1024;
-}
-
-impl Default for BufferedFileCopier {
-    fn default() -> Self {
-        Self::new(Self::DEFAULT_BUFFER_SIZE)
-    }
-}
-
-impl FileCopier for BufferedFileCopier {
-    fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
-        use std::io::{Read, Write};
-
-        let mut source_file = std::fs::File::open(source)?;
-        let mut dest_file = std::fs::File::create(destination)?;
-
-        // Get buffer from pool instead of allocating new one
-        let mut buffer = BUFFER_POOL.with(|pool| pool.get_buffer(self.buffer_size));
-        let mut total_copied = 0u64;
-
-        loop {
-            let bytes_read = source_file.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break; // EOF
-            }
-
-            dest_file.write_all(&buffer[..bytes_read])?;
-            total_copied += bytes_read as u64;
-        }
-
-        // Return buffer to pool for reuse
-        BUFFER_POOL.with(|pool| pool.return_buffer(buffer));
-
-        preserve_source_permissions(source, destination)?;
-
-        Ok(total_copied)
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn preserve_source_permissions(source: &Path, destination: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let source_mode = std::fs::metadata(source)?.permissions().mode();
-    let mut destination_permissions = std::fs::metadata(destination)?.permissions();
-    destination_permissions.set_mode(source_mode);
-    std::fs::set_permissions(destination, destination_permissions)
-}
-
-#[cfg(target_os = "windows")]
-fn preserve_source_permissions(_source: &Path, _destination: &Path) -> io::Result<()> {
-    Ok(())
-}
-
-/// Hybrid file copier that chooses between OS copy and buffered copy based on file size.
-/// Files smaller than the threshold use OS copy, larger files use buffered copy.
-#[derive(Debug, Clone)]
-pub struct HybridFileCopier {
-    /// Buffer size for buffered copy (in bytes)
-    buffer_size: usize,
-    /// File size threshold (in bytes) to use buffered copy instead of OS copy
-    threshold: u64,
-}
-
-impl HybridFileCopier {
-    /// Creates a new hybrid file copier with the specified buffer size and threshold.
-    pub fn new(buffer_size: usize, threshold: u64) -> Self {
-        Self {
-            buffer_size,
-            threshold,
-        }
-    }
-
-    /// Creates a new hybrid file copier with default values.
-    /// - Buffer size: 16 MiB (16 * 1024 * 1024) - optimized for HDD performance
-    /// - Threshold: 8 MiB (8 * 1024 * 1024) - files smaller use OS copy
-    pub fn with_defaults() -> Self {
-        Self::new(
-            BufferedFileCopier::DEFAULT_BUFFER_SIZE,
-            8 * 1024 * 1024, // 8 MiB
-        )
-    }
-
-    /// Get the buffer size in bytes
-    pub fn buffer_size(&self) -> usize {
-        self.buffer_size
-    }
-
-    /// Get the threshold in bytes
-    pub fn threshold(&self) -> u64 {
-        self.threshold
-    }
-}
-
-impl Default for HybridFileCopier {
-    fn default() -> Self {
-        Self::with_defaults()
-    }
-}
-
-impl FileCopier for HybridFileCopier {
-    fn copy_file(&self, source: &Path, destination: &Path) -> std::io::Result<u64> {
-        self.copy_file_with_size_hint(source, destination, None)
-    }
-
-    fn copy_file_with_size_hint(
-        &self,
-        source: &Path,
-        destination: &Path,
-        size_hint: Option<u64>,
-    ) -> std::io::Result<u64> {
-        // Prefer caller-provided planned size to avoid extra metadata syscalls.
-        let file_size = match size_hint {
-            Some(size) => size,
-            None => std::fs::metadata(source)?.len(),
-        };
-        if file_size < self.threshold {
-            OsFileCopier.copy_file(source, destination)
-        } else {
-            let buffered_copier = BufferedFileCopier::new(self.buffer_size);
-            buffered_copier.copy_file(source, destination)
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 enum LocalFileCopier {
     Os(OsFileCopier),
-    Hybrid(HybridFileCopier),
     NativePreferred(NativePreferredFileCopier),
-    Buffered(BufferedFileCopier),
 }
 
 #[derive(Debug, Clone)]
@@ -386,37 +190,18 @@ pub struct LocalFsCopyBackend {
 impl LocalFsCopyBackend {
     /// Creates a new LocalFsCopyBackend with default file copier settings.
     pub fn new() -> Self {
-        Self::with_config(
-            BufferedFileCopier::DEFAULT_BUFFER_SIZE,
-            HybridFileCopier::with_defaults().threshold(),
-        )
-    }
-
-    /// Creates a new LocalFsCopyBackend with custom buffer size and threshold.
-    pub fn with_config(buffer_size: usize, threshold: u64) -> Self {
         Self {
-            file_copier: LocalFileCopier::Hybrid(HybridFileCopier::new(buffer_size, threshold)),
+            file_copier: LocalFileCopier::Os(OsFileCopier),
             durable_writes: false,
         }
     }
 
-    pub fn with_strategy(
-        buffer_size: usize,
-        threshold: u64,
-        strategy: CopyStrategy,
-        mode: &Mode,
-    ) -> Self {
+    pub fn with_strategy(strategy: CopyStrategy, mode: &Mode) -> Self {
         let durable_writes = matches!(mode, Mode::Migrate);
         let file_copier = match resolve_copy_strategy(strategy, mode) {
             ResolvedCopyStrategy::Os => LocalFileCopier::Os(OsFileCopier),
-            ResolvedCopyStrategy::Hybrid => {
-                LocalFileCopier::Hybrid(HybridFileCopier::new(buffer_size, threshold))
-            }
-            ResolvedCopyStrategy::NativePreferred => LocalFileCopier::NativePreferred(
-                NativePreferredFileCopier::new(buffer_size, threshold),
-            ),
-            ResolvedCopyStrategy::Buffered => {
-                LocalFileCopier::Buffered(BufferedFileCopier::new(buffer_size))
+            ResolvedCopyStrategy::NativePreferred => {
+                LocalFileCopier::NativePreferred(NativePreferredFileCopier::new())
             }
         };
         Self {
@@ -426,12 +211,7 @@ impl LocalFsCopyBackend {
     }
 
     pub fn with_transfer_config(config: &TransferConfig) -> Self {
-        Self::with_strategy(
-            config.copy_buffer_size,
-            config.buffered_copy_threshold,
-            config.copy_strategy,
-            &config.mode,
-        )
+        Self::with_strategy(config.copy_strategy, &config.mode)
     }
 
     pub fn durable_writes_enabled(&self) -> bool {
@@ -469,9 +249,7 @@ impl LocalFileCopier {
     fn copy_file_inner(&self, source: &Path, destination: &Path) -> io::Result<u64> {
         match self {
             LocalFileCopier::Os(copier) => copier.copy_file(source, destination),
-            LocalFileCopier::Hybrid(copier) => copier.copy_file(source, destination),
             LocalFileCopier::NativePreferred(copier) => copier.copy_file(source, destination),
-            LocalFileCopier::Buffered(copier) => copier.copy_file(source, destination),
         }
     }
 }
@@ -485,16 +263,9 @@ impl FileCopier for LocalFileCopier {
         &self,
         source: &Path,
         destination: &Path,
-        size_hint: Option<u64>,
+        _size_hint: Option<u64>,
     ) -> io::Result<u64> {
-        match self {
-            LocalFileCopier::Os(copier) => copier.copy_file(source, destination),
-            LocalFileCopier::Hybrid(copier) => {
-                copier.copy_file_with_size_hint(source, destination, size_hint)
-            }
-            LocalFileCopier::NativePreferred(copier) => copier.copy_file(source, destination),
-            LocalFileCopier::Buffered(copier) => copier.copy_file(source, destination),
-        }
+        self.copy_file_inner(source, destination)
     }
 }
 

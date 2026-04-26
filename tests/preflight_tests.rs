@@ -95,8 +95,6 @@ fn staging_config(dest: &str) -> TransferConfig {
         recover_failed: false,
         allow_unsafe_filesystems: false,
         copy_strategy: CopyStrategy::Auto,
-        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
-        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
     }
 }
 
@@ -116,8 +114,6 @@ fn migrate_config(source: &str, dest: &str) -> TransferConfig {
         recover_failed: false,
         allow_unsafe_filesystems: false,
         copy_strategy: CopyStrategy::Auto,
-        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
-        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
     }
 }
 
@@ -353,8 +349,6 @@ fn transfer_preflight_includes_migrate_filesystem_warnings() {
         recover_failed: false,
         allow_unsafe_filesystems: false,
         copy_strategy: CopyStrategy::Auto,
-        copy_buffer_size: TransferConfig::default_copy_buffer_size(),
-        buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
     };
     let snapshot = snapshot_with_files(vec![
         file("Movies/File.MKV", 100),

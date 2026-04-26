@@ -174,11 +174,7 @@ fn transfer_batch_returns_error_when_source_file_is_missing() {
 fn copy_strategy_resolution_is_mode_aware() {
     assert_eq!(
         resolve_copy_strategy(CopyStrategy::Buffered, &Mode::Staging),
-        ResolvedCopyStrategy::Buffered
-    );
-    assert_eq!(
-        resolve_copy_strategy(CopyStrategy::Native, &Mode::Migrate),
-        ResolvedCopyStrategy::NativePreferred
+        ResolvedCopyStrategy::Os
     );
     assert_eq!(
         resolve_copy_strategy(CopyStrategy::Auto, &Mode::Migrate),
@@ -187,8 +183,20 @@ fn copy_strategy_resolution_is_mode_aware() {
 
     #[cfg(windows)]
     assert_eq!(
+        resolve_copy_strategy(CopyStrategy::Native, &Mode::Migrate),
+        ResolvedCopyStrategy::NativePreferred
+    );
+
+    #[cfg(windows)]
+    assert_eq!(
         resolve_copy_strategy(CopyStrategy::Auto, &Mode::Staging),
         ResolvedCopyStrategy::NativePreferred
+    );
+
+    #[cfg(not(windows))]
+    assert_eq!(
+        resolve_copy_strategy(CopyStrategy::Native, &Mode::Staging),
+        ResolvedCopyStrategy::Os
     );
 
     #[cfg(not(windows))]
@@ -200,10 +208,8 @@ fn copy_strategy_resolution_is_mode_aware() {
 
 #[test]
 fn migrate_backend_enables_durable_writes_by_default() {
-    let staging_backend =
-        LocalFsCopyBackend::with_strategy(1024 * 1024, 1024, CopyStrategy::Auto, &Mode::Staging);
-    let migrate_backend =
-        LocalFsCopyBackend::with_strategy(1024 * 1024, 1024, CopyStrategy::Auto, &Mode::Migrate);
+    let staging_backend = LocalFsCopyBackend::with_strategy(CopyStrategy::Auto, &Mode::Staging);
+    let migrate_backend = LocalFsCopyBackend::with_strategy(CopyStrategy::Auto, &Mode::Migrate);
 
     assert!(
         !staging_backend.durable_writes_enabled(),
@@ -217,7 +223,7 @@ fn migrate_backend_enables_durable_writes_by_default() {
 
 #[cfg(not(windows))]
 #[test]
-fn native_strategy_falls_back_when_native_copy_is_unavailable() {
+fn legacy_native_strategy_uses_os_copy_on_linux() {
     let src = TempDir::new().expect("source temp dir");
     let dst = TempDir::new().expect("destination temp dir");
     create_file(src.path(), "media/clip.bin", b"123456");
@@ -232,8 +238,7 @@ fn native_strategy_falls_back_when_native_copy_is_unavailable() {
     .expect("planning should succeed");
     let batch = &plan.batches[0];
 
-    let backend =
-        LocalFsCopyBackend::with_strategy(1024 * 1024, 1024, CopyStrategy::Native, &Mode::Staging);
+    let backend = LocalFsCopyBackend::with_strategy(CopyStrategy::Native, &Mode::Staging);
     copy_batch_noop(batch, src.path(), dst.path(), &backend).expect("copy should succeed");
 
     assert_eq!(

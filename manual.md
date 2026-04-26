@@ -75,8 +75,8 @@ If destination free space is less than or equal to planned batch size, copy is b
 ## Safe Defaults
 
 - conflict policy default: `skip-file`
-- copy buffer size default: `16 MiB`
-- buffered-copy threshold default: `8 MiB`
+- copy strategy default: `auto`
+- `native` strategy: supported on Windows, rejected on Linux
 - non-interactive behavior: fail closed for destructive operations
 
 ## Minimal Command Examples

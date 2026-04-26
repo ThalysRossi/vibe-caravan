@@ -1,7 +1,8 @@
 use crate::config::{Config, Mode, TransferConfig};
 use crate::error::CaravanError;
+use crate::platform::is_windows_build;
 
-use super::{Cli, Command, TransferArgs, args};
+use super::{Cli, Command, TransferArgs};
 
 pub(super) fn to_config(cli: Cli) -> Result<Config, CaravanError> {
     let Cli { log_level, command } = cli;
@@ -70,10 +71,11 @@ fn build_transfer_config(
     snapshot_dir: Option<std::path::PathBuf>,
     log_level: String,
 ) -> Result<TransferConfig, CaravanError> {
-    let (copy_buffer_size, buffered_copy_threshold) = args::parse_copy_options(
-        args.copy_buffer_size.as_deref(),
-        args.buffered_copy_threshold.as_deref(),
-    )?;
+    if !is_windows_build() && matches!(args.copy_strategy, super::CopyStrategyArg::Native) {
+        return Err(CaravanError::InvalidArguments(
+            "copy-strategy native is no longer supported on Linux; use auto".to_string(),
+        ));
+    }
 
     Ok(TransferConfig {
         mode,
@@ -90,8 +92,6 @@ fn build_transfer_config(
         recover_failed: args.recover_failed,
         allow_unsafe_filesystems: args.allow_unsafe_filesystems,
         copy_strategy: args.copy_strategy.into(),
-        copy_buffer_size,
-        buffered_copy_threshold,
     })
 }
 

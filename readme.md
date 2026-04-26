@@ -262,50 +262,37 @@ Before any copy begins, `caravan` checks the destination's free space.
 
 If the destination has **less than or equal to** the batch size available, the batch is aborted and the tool reports that the destination must be expanded or the source layout must be reduced further before continuing.
 
-## Copy Performance Tuning
+## Copy Strategy
 
-`caravan` supports three copy strategies:
+`caravan` supports two user-facing copy strategies:
 
 - **`auto` (default)**:
   - Windows + `staging`: prefer platform-native copy API
-  - All other platform/mode combinations: use operating system copy (`std::fs::copy`)
-- **`native`**: try platform-native API first; if unavailable, fall back to hybrid copy behavior
-- **`buffered`**: always use chunked buffered copy
+  - Linux and other modes: use operating system copy (`std::fs::copy`)
+- **`native`**:
+  - Supported on Windows
+  - Rejected on Linux (use `auto`)
 
-You can customize this behavior with two new flags:
-
-- `--copy-buffer-size <SIZE>`: Set buffer size for chunked copying (default: 16 MiB)
-- `--buffered-copy-threshold <SIZE>`: Threshold used only by hybrid fallback behavior
-
-Both flags accept the same size units as `--batch-size`: B, KiB, MiB, GiB, or TiB.
+The old `buffered` strategy and copy-tuning flags (`--copy-buffer-size`, `--buffered-copy-threshold`) were removed.
 
 ### Example Usage
 
-Force buffered copy for large sequential transfers:
+Default behavior:
 ```bash
 caravan staging \
   --source /src \
   --dest /dst \
-  --batch-size 100GiB \
-  --copy-strategy buffered \
-  --copy-buffer-size 64MiB \
+  --batch-size 100GiB
 ```
 
-Use native-preferred mode:
+Windows native strategy:
 ```bash
-caravan migrate \
-  --source /mnt/staging \
-  --dest /mnt/btrfs/@data \
-  --batch-size 50GiB \
+caravan staging \
+  --source D:\\source \
+  --dest E:\\dest \
+  --batch-size 100GiB \
   --copy-strategy native
 ```
-
-### Performance Considerations
-
-- For most Linux runs, `auto` uses OS copy and avoids extra buffering overhead.
-- Use `buffered` only when profiling shows consistent gains on your specific filesystem and disk pair.
-- Larger buffers (32-128 MiB) can help sequential transfers when buffered mode is enabled.
-- Smaller buffers reduce memory footprint but can reduce throughput.
 
 ## Naming Conflict Safety Guardrail
 

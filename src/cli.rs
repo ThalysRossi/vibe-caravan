@@ -50,10 +50,6 @@ pub struct TransferArgs {
     pub allow_unsafe_filesystems: bool,
     #[arg(long, value_enum, default_value_t = CopyStrategyArg::Auto)]
     pub copy_strategy: CopyStrategyArg,
-    #[arg(long)]
-    pub copy_buffer_size: Option<String>,
-    #[arg(long)]
-    pub buffered_copy_threshold: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -90,7 +86,6 @@ pub struct ResumeArgs {
 pub enum CopyStrategyArg {
     Auto,
     Native,
-    Buffered,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -110,7 +105,6 @@ impl From<CopyStrategyArg> for CopyStrategy {
         match value {
             CopyStrategyArg::Auto => CopyStrategy::Auto,
             CopyStrategyArg::Native => CopyStrategy::Native,
-            CopyStrategyArg::Buffered => CopyStrategy::Buffered,
         }
     }
 }

@@ -122,7 +122,7 @@ fn resume_command_blocks_copy_completed_batch_when_destination_is_missing() {
 }
 
 #[test]
-fn resume_rejects_invalid_copy_buffer_size_loaded_from_state() {
+fn resume_tolerates_legacy_copy_tuning_values_loaded_from_state() {
     let tmp = TempDir::new().expect("temp dir");
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
@@ -130,14 +130,33 @@ fn resume_rejects_invalid_copy_buffer_size_loaded_from_state() {
     fs::create_dir_all(&dest_dir).expect("create dest");
 
     let state_path = tmp.path().join("resume-state.json");
-    let mut state = MigrationState::new(
-        "staging",
-        &source_dir.to_string_lossy(),
-        &dest_dir.to_string_lossy(),
-    );
-    state.batch_size_bytes = 1024;
-    state.copy_buffer_size = 0;
-    persist_state(&state_path, &state).expect("persist state");
+    fs::write(source_dir.join("test.txt"), "test").expect("write source file");
+    fs::write(dest_dir.join("test.txt"), "test").expect("write destination file");
+    let legacy_state = serde_json::json!({
+        "mode": "staging",
+        "source": source_dir.to_string_lossy(),
+        "destination": dest_dir.to_string_lossy(),
+        "batch_size_bytes": 1024,
+        "copy_strategy": "Auto",
+        "copy_buffer_size": 0,
+        "buffered_copy_threshold": 0,
+        "planned_batches": [],
+        "migration_phase": "Copying",
+        "last_successful_snapshot_name": null,
+        "batches": [{
+            "batch_id": "batch-000001",
+            "phase": "CopyCompleted",
+            "verification_passed": false,
+            "approved_for_delete": false,
+            "deleted": false
+        }],
+        "journal": []
+    });
+    fs::write(
+        &state_path,
+        serde_json::to_vec_pretty(&legacy_state).expect("serialize legacy state"),
+    )
+    .expect("persist legacy state");
 
     let binary = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(binary)
@@ -151,18 +170,13 @@ fn resume_rejects_invalid_copy_buffer_size_loaded_from_state() {
         .expect("execute resume");
 
     assert!(
-        !output.status.success(),
-        "resume should reject zero copy buffer size from persisted state"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("copy-buffer-size: size must be greater than zero"),
-        "resume should surface copy option validation error, got: {stderr}"
+        output.status.success(),
+        "resume should tolerate legacy copy tuning fields from persisted state"
     );
 }
 
 #[test]
-fn resume_rejects_invalid_buffered_copy_threshold_loaded_from_state() {
+fn resume_tolerates_legacy_buffered_strategy_loaded_from_state() {
     let tmp = TempDir::new().expect("temp dir");
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
@@ -176,7 +190,16 @@ fn resume_rejects_invalid_buffered_copy_threshold_loaded_from_state() {
         &dest_dir.to_string_lossy(),
     );
     state.batch_size_bytes = 1024;
-    state.buffered_copy_threshold = 0;
+    state.copy_strategy = caravan::config::CopyStrategy::Buffered;
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::CopyCompleted,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+    fs::write(source_dir.join("test.txt"), "test").expect("write source file");
+    fs::write(dest_dir.join("test.txt"), "test").expect("write destination file");
     persist_state(&state_path, &state).expect("persist state");
 
     let binary = assert_cmd::cargo::cargo_bin("caravan");
@@ -191,12 +214,52 @@ fn resume_rejects_invalid_buffered_copy_threshold_loaded_from_state() {
         .expect("execute resume");
 
     assert!(
-        !output.status.success(),
-        "resume should reject zero buffered copy threshold from persisted state"
+        output.status.success(),
+        "resume should normalize legacy buffered strategy and continue"
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn resume_tolerates_legacy_native_strategy_on_linux() {
+    let tmp = TempDir::new().expect("temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+
+    let state_path = tmp.path().join("resume-state.json");
+    let mut state = MigrationState::new(
+        "staging",
+        &source_dir.to_string_lossy(),
+        &dest_dir.to_string_lossy(),
+    );
+    state.batch_size_bytes = 1024;
+    state.copy_strategy = caravan::config::CopyStrategy::Native;
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::CopyCompleted,
+        verification_passed: false,
+        approved_for_delete: false,
+        deleted: false,
+    });
+    fs::write(source_dir.join("test.txt"), "test").expect("write source file");
+    fs::write(dest_dir.join("test.txt"), "test").expect("write destination file");
+    persist_state(&state_path, &state).expect("persist state");
+
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "resume",
+            "--state",
+            state_path.to_str().expect("utf8 state path"),
+        ])
+        .current_dir(tmp.path())
+        .output()
+        .expect("execute resume");
+
     assert!(
-        stderr.contains("buffered-copy-threshold: size must be greater than zero"),
-        "resume should surface buffered threshold validation error, got: {stderr}"
+        output.status.success(),
+        "resume should normalize legacy native strategy on linux and continue"
     );
 }

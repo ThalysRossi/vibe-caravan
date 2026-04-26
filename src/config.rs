@@ -13,6 +13,7 @@ pub enum CopyStrategy {
     #[default]
     Auto,
     Native,
+    /// Legacy state compatibility variant; treated the same as `Auto`.
     Buffered,
 }
 
@@ -43,32 +44,6 @@ pub struct TransferConfig {
     pub allow_unsafe_filesystems: bool,
     #[serde(default)]
     pub copy_strategy: CopyStrategy,
-
-    /// Buffer size for file copying (in bytes).
-    /// Default: 16 MiB (16 * 1024 * 1024)
-    #[serde(default = "TransferConfig::default_copy_buffer_size")]
-    pub copy_buffer_size: usize,
-
-    /// File size threshold (in bytes) to use buffered copy instead of OS copy.
-    /// Files smaller than this threshold use OS copy, larger files use buffered copy.
-    /// Default: 8 MiB (8 * 1024 * 1024)
-    #[serde(default = "TransferConfig::default_buffered_copy_threshold")]
-    pub buffered_copy_threshold: u64,
-}
-
-impl TransferConfig {
-    /// Default buffer size for file copying (16 MiB)
-    /// Optimized for HDD performance (5400-7200 RPM drives with 8-64MB cache)
-    pub const fn default_copy_buffer_size() -> usize {
-        16 * 1024 * 1024
-    }
-
-    /// Default threshold for using buffered copy (8 MiB)
-    /// Files smaller than this use OS copy (more efficient for small files)
-    /// Files larger than this use buffered copy (better for large sequential reads on HDD)
-    pub const fn default_buffered_copy_threshold() -> u64 {
-        8 * 1024 * 1024
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
-use crate::cli::args::validate_copy_option_values;
-use crate::config::{ConflictPolicy, Mode, TransferConfig};
+use crate::config::{ConflictPolicy, CopyStrategy, Mode, TransferConfig};
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
+use crate::platform::is_windows_build;
 
 pub(super) fn transfer_config_from_state(
     state: &MigrationState,
     recover_failed: bool,
 ) -> Result<TransferConfig, CaravanError> {
-    validate_copy_option_values(state.copy_buffer_size, state.buffered_copy_threshold)?;
+    let copy_strategy = normalize_legacy_copy_strategy(state.copy_strategy);
 
     Ok(TransferConfig {
         mode: match state.mode.as_str() {
@@ -34,8 +34,25 @@ pub(super) fn transfer_config_from_state(
         conflict_policy: ConflictPolicy::SkipFile,
         recover_failed,
         allow_unsafe_filesystems: false,
-        copy_strategy: state.copy_strategy,
-        copy_buffer_size: state.copy_buffer_size,
-        buffered_copy_threshold: state.buffered_copy_threshold,
+        copy_strategy,
     })
+}
+
+fn normalize_legacy_copy_strategy(strategy: CopyStrategy) -> CopyStrategy {
+    match strategy {
+        CopyStrategy::Auto => CopyStrategy::Auto,
+        CopyStrategy::Buffered => {
+            eprintln!(
+                "[WARNING] state uses deprecated copy strategy 'buffered'; falling back to 'auto'."
+            );
+            CopyStrategy::Auto
+        }
+        CopyStrategy::Native if !is_windows_build() => {
+            eprintln!(
+                "[WARNING] state uses deprecated Linux copy strategy 'native'; falling back to 'auto'."
+            );
+            CopyStrategy::Auto
+        }
+        CopyStrategy::Native => CopyStrategy::Native,
+    }
 }

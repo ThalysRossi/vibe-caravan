@@ -62,16 +62,37 @@ pub(super) fn load_or_create_state(
             );
         }
 
+        let mut loaded_state = loaded.state;
+        normalize_legacy_state_copy_strategy(&mut loaded_state);
+
         let loaded_path = match loaded.source {
             state_store::ReconciledStateSource::Primary => state_path,
             state_store::ReconciledStateSource::Secondary => secondary_state_path,
         };
         println!("Loaded existing state from: {}", loaded_path.display());
-        return Ok(loaded.state);
+        return Ok(loaded_state);
     }
 
     migration_registry::check_source_writable(&config.source)?;
     Ok(MigrationState::new(mode, source, dest))
+}
+
+fn normalize_legacy_state_copy_strategy(state: &mut MigrationState) {
+    match state.copy_strategy {
+        crate::config::CopyStrategy::Buffered => {
+            eprintln!(
+                "[WARNING] loaded state uses deprecated copy strategy 'buffered'; falling back to 'auto'."
+            );
+            state.copy_strategy = crate::config::CopyStrategy::Auto;
+        }
+        crate::config::CopyStrategy::Native if !is_windows_build() => {
+            eprintln!(
+                "[WARNING] loaded state uses deprecated Linux copy strategy 'native'; falling back to 'auto'."
+            );
+            state.copy_strategy = crate::config::CopyStrategy::Auto;
+        }
+        _ => {}
+    }
 }
 
 fn normalize_identity_path(path: &str) -> String {
@@ -144,8 +165,6 @@ pub(super) fn apply_transfer_config(state: &mut MigrationState, config: &Transfe
         .as_ref()
         .map(|path| path.to_string_lossy().to_string());
     state.copy_strategy = config.copy_strategy;
-    state.copy_buffer_size = config.copy_buffer_size;
-    state.buffered_copy_threshold = config.buffered_copy_threshold;
 }
 
 pub(super) fn planned_batch_state(batch_id: &str) -> BatchState {
@@ -171,54 +190,8 @@ pub(super) fn seed_state_batches(state: &mut MigrationState, plan: &PlanningSnap
 }
 
 pub(super) fn warn_copy_backend_config(config: &TransferConfig) {
-    let buffer_size_mb = config.copy_buffer_size as f64 / (1024.0 * 1024.0);
-    let threshold_mb = config.buffered_copy_threshold as f64 / (1024.0 * 1024.0);
-    let resolved_strategy =
-        crate::transfer::resolve_copy_strategy(config.copy_strategy, &config.mode);
-    let can_use_buffered_path = matches!(
-        resolved_strategy,
-        crate::transfer::ResolvedCopyStrategy::Buffered
-            | crate::transfer::ResolvedCopyStrategy::Hybrid
-    ) || (!is_windows_build()
-        && matches!(
-            resolved_strategy,
-            crate::transfer::ResolvedCopyStrategy::NativePreferred
-        ));
-    let threshold_applies = matches!(
-        resolved_strategy,
-        crate::transfer::ResolvedCopyStrategy::Hybrid
-    ) || (!is_windows_build()
-        && matches!(
-            resolved_strategy,
-            crate::transfer::ResolvedCopyStrategy::NativePreferred
-        ));
-
-    if can_use_buffered_path && buffer_size_mb < 4.0 {
-        eprintln!(
-            "[WARNING] Copy buffer size is small ({:.2} MiB). For HDD performance, consider using at least 16 MiB buffer size.",
-            buffer_size_mb
-        );
-        eprintln!("  Use --copy-buffer-size 16MiB to optimize for 5400-7200 RPM HDDs.");
-    }
-
-    if threshold_applies && threshold_mb < 1.0 {
-        eprintln!(
-            "[WARNING] Buffered copy threshold is very small ({:.2} MiB). OS copy is more efficient for files smaller than 8 MiB.",
-            threshold_mb
-        );
-        eprintln!("  Consider using --buffered-copy-threshold 8MiB for better HDD performance.");
-    }
-
-    if !is_windows_build() && config.copy_strategy == crate::config::CopyStrategy::Native {
-        eprintln!(
-            "[WARNING] Native copy strategy was requested on a non-Windows platform; caravan will fall back to hybrid copy."
-        );
-    }
-
     tracing::debug!(
         copy_strategy = ?config.copy_strategy,
-        copy_buffer_size_mib = buffer_size_mb,
-        buffered_copy_threshold_mib = threshold_mb,
         "Using copy backend configuration"
     );
 }

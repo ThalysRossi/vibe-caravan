@@ -1,4 +1,4 @@
-use crate::config::{CopyStrategy, TransferConfig};
+use crate::config::CopyStrategy;
 use crate::models::batch::Batch;
 use crate::models::file_entry::FileEntry;
 use serde::{Deserialize, Serialize};
@@ -107,10 +107,6 @@ pub struct MigrationState {
     pub snapshot_dir: Option<String>,
     #[serde(default = "default_copy_strategy")]
     pub copy_strategy: CopyStrategy,
-    #[serde(default = "TransferConfig::default_copy_buffer_size")]
-    pub copy_buffer_size: usize,
-    #[serde(default = "TransferConfig::default_buffered_copy_threshold")]
-    pub buffered_copy_threshold: u64,
     #[serde(default)]
     pub planned_batches: Vec<PlannedBatch>,
     pub migration_phase: MigrationPhase,
@@ -132,8 +128,6 @@ impl MigrationState {
             snapshot_every: None,
             snapshot_dir: None,
             copy_strategy: default_copy_strategy(),
-            copy_buffer_size: TransferConfig::default_copy_buffer_size(),
-            buffered_copy_threshold: TransferConfig::default_buffered_copy_threshold(),
             planned_batches: Vec::new(),
             migration_phase: MigrationPhase::NotStarted,
             last_successful_snapshot_name: None,

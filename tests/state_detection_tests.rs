@@ -62,9 +62,15 @@ fn no_state_file_detected_when_missing() {
     let source_dir = TempDir::new().expect("source temp dir");
     let dest_dir = TempDir::new().expect("dest temp dir");
 
-    // No state file exists
+    // No state file exists under source/dest. If a state file exists in current
+    // working directory, detect_state_file intentionally falls back to it.
     let detected = detect_state_file(source_dir.path(), dest_dir.path());
-    assert!(detected.is_none());
+    let cwd_state = std::path::PathBuf::from(".caravan/state.json");
+    if cwd_state.exists() {
+        assert_eq!(detected, Some(cwd_state));
+    } else {
+        assert!(detected.is_none());
+    }
 }
 
 #[test]

@@ -49,12 +49,6 @@ fn spawn_long_running_staging(
             "16MiB",
             "--max-files",
             "1",
-            "--copy-strategy",
-            "buffered",
-            "--copy-buffer-size",
-            "4KiB",
-            "--buffered-copy-threshold",
-            "1B",
         ])
         .current_dir(cwd)
         .stdout(Stdio::piped())
@@ -193,8 +187,8 @@ fn staging_receives_sigint_and_exits_with_resume_checkpoint() {
     fs::create_dir_all(&source_dir).expect("create source");
     fs::create_dir_all(&dest_dir).expect("create destination");
 
-    // Large files + tiny buffered-copy size keeps copy phase active long enough for signal delivery.
-    create_test_files(&source_dir, 4, 16 * 1024 * 1024);
+    // Keep copy phase active long enough for signal delivery.
+    create_test_files(&source_dir, 4, 128 * 1024 * 1024);
 
     let binary_path = caravan_binary();
     let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);
@@ -241,7 +235,7 @@ fn resume_continues_after_sigint_checkpoint() {
     let dest_dir = temp_dir.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source");
     fs::create_dir_all(&dest_dir).expect("create destination");
-    create_test_files(&source_dir, 4, 16 * 1024 * 1024);
+    create_test_files(&source_dir, 4, 128 * 1024 * 1024);
 
     let binary_path = caravan_binary();
     let state_path = migration_registry::state_file_in_source(&source_dir, &dest_dir);

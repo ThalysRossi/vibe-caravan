@@ -1,5 +1,5 @@
 use caravan::cli::parse_cli_from;
-use caravan::config::{Config, ConflictPolicy, CopyStrategy, OutputFormat};
+use caravan::config::{Config, ConflictPolicy, OutputFormat};
 
 #[test]
 fn missing_required_arguments_are_rejected() {
@@ -224,7 +224,7 @@ fn resume_config_includes_correct_log_level() {
 }
 
 #[test]
-fn zero_copy_buffer_size_is_rejected() {
+fn copy_buffer_size_flag_is_rejected_as_removed() {
     let result = parse_cli_from([
         "caravan",
         "staging",
@@ -235,36 +235,18 @@ fn zero_copy_buffer_size_is_rejected() {
         "--batch-size",
         "1GiB",
         "--copy-buffer-size",
-        "0",
+        "16MiB",
     ]);
-
-    assert!(result.is_err());
-}
-
-#[test]
-fn invalid_copy_buffer_size_preserves_option_specific_error_wording() {
-    let result = parse_cli_from([
-        "caravan",
-        "staging",
-        "--source",
-        "/src",
-        "--dest",
-        "/dst",
-        "--batch-size",
-        "1GiB",
-        "--copy-buffer-size",
-        "abc",
-    ]);
-    let err = result.expect_err("invalid copy-buffer-size should fail");
+    let err = result.expect_err("removed copy-buffer-size flag should fail");
+    let err_text = err.to_string();
     assert!(
-        err.to_string()
-            .contains("copy-buffer-size: size must start with digits"),
-        "expected option-specific message, got: {err}"
+        err_text.contains("--copy-buffer-size"),
+        "error should mention removed flag, got: {err_text}"
     );
 }
 
 #[test]
-fn zero_buffered_copy_threshold_is_rejected() {
+fn buffered_copy_threshold_flag_is_rejected_as_removed() {
     let result = parse_cli_from([
         "caravan",
         "staging",
@@ -275,32 +257,13 @@ fn zero_buffered_copy_threshold_is_rejected() {
         "--batch-size",
         "1GiB",
         "--buffered-copy-threshold",
-        "0",
+        "8MiB",
     ]);
-
-    assert!(result.is_err());
-}
-
-#[test]
-fn invalid_buffered_copy_threshold_preserves_option_specific_error_wording() {
-    let result = parse_cli_from([
-        "caravan",
-        "staging",
-        "--source",
-        "/src",
-        "--dest",
-        "/dst",
-        "--batch-size",
-        "1GiB",
-        "--buffered-copy-threshold",
-        "1MB",
-    ]);
-    let err = result.expect_err("invalid buffered-copy-threshold should fail");
+    let err = result.expect_err("removed buffered-copy-threshold flag should fail");
+    let err_text = err.to_string();
     assert!(
-        err.to_string().contains(
-            "buffered-copy-threshold: unsupported size unit; use B, KiB, MiB, GiB, or TiB"
-        ),
-        "expected option-specific message, got: {err}"
+        err_text.contains("--buffered-copy-threshold"),
+        "error should mention removed flag, got: {err_text}"
     );
 }
 
@@ -359,6 +322,7 @@ fn resume_inspect_failed_flag_defaults_to_false_and_can_be_enabled() {
     }
 }
 
+#[cfg(target_os = "windows")]
 #[test]
 fn copy_strategy_is_parsed_for_transfer_commands() {
     let parsed = parse_cli_from([
@@ -376,9 +340,56 @@ fn copy_strategy_is_parsed_for_transfer_commands() {
     .expect("staging parse should accept copy-strategy");
 
     match parsed {
-        Config::Staging(cfg) => assert_eq!(cfg.copy_strategy, CopyStrategy::Native),
+        Config::Staging(cfg) => {
+            assert_eq!(cfg.copy_strategy, caravan::config::CopyStrategy::Native)
+        }
         _ => panic!("expected staging config"),
     }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn native_copy_strategy_is_rejected_on_linux() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--copy-strategy",
+        "native",
+    ]);
+    let err = result.expect_err("native strategy should be blocked on linux");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("copy-strategy native is no longer supported on Linux"),
+        "expected native-on-linux error, got: {err_text}"
+    );
+}
+
+#[test]
+fn buffered_copy_strategy_is_rejected_for_transfer_commands() {
+    let result = parse_cli_from([
+        "caravan",
+        "staging",
+        "--source",
+        "/src",
+        "--dest",
+        "/dst",
+        "--batch-size",
+        "1GiB",
+        "--copy-strategy",
+        "buffered",
+    ]);
+    let err = result.expect_err("buffered strategy must be removed");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("buffered"),
+        "expected buffered strategy parse failure, got: {err_text}"
+    );
 }
 
 #[test]
