@@ -8,6 +8,26 @@ pub enum BatchSizeMismatchChoice {
     StartFresh,
 }
 
+fn parse_batch_size_mismatch_choice(choice: &str) -> Result<BatchSizeMismatchChoice, CaravanError> {
+    match choice {
+        "1" => Ok(BatchSizeMismatchChoice::UseStateSize),
+        "2" => Ok(BatchSizeMismatchChoice::EnterNewSize),
+        "3" => Ok(BatchSizeMismatchChoice::StartFresh),
+        _ => Err(CaravanError::InvalidArguments(format!(
+            "Invalid choice '{}'. Please enter 1, 2, or 3.",
+            choice
+        ))),
+    }
+}
+
+fn parse_yes_no(answer: &str) -> bool {
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
+fn should_confirm_single_batch(batch_ids: &[String]) -> bool {
+    batch_ids.len() == 1
+}
+
 pub trait PromptBackend {
     fn confirm_deletion(&self, batch_id: &str) -> Result<bool, CaravanError>;
     fn confirm_batch_deletion(&self, batch_ids: &[String]) -> Result<bool, CaravanError> {
@@ -46,16 +66,7 @@ pub trait PromptBackend {
             .read_line(&mut input)
             .map_err(|e| CaravanError::Io(format!("failed to read user input: {}", e)))?;
 
-        let choice = input.trim();
-        match choice {
-            "1" => Ok(BatchSizeMismatchChoice::UseStateSize),
-            "2" => Ok(BatchSizeMismatchChoice::EnterNewSize),
-            "3" => Ok(BatchSizeMismatchChoice::StartFresh),
-            _ => Err(CaravanError::InvalidArguments(format!(
-                "Invalid choice '{}'. Please enter 1, 2, or 3.",
-                choice
-            ))),
-        }
+        parse_batch_size_mismatch_choice(input.trim())
     }
 }
 
@@ -79,8 +90,7 @@ impl PromptBackend for InteractivePrompt {
             .read_line(&mut input)
             .map_err(|e| CaravanError::Io(format!("failed to read user input: {}", e)))?;
 
-        let answer = input.trim().to_lowercase();
-        Ok(matches!(answer.as_str(), "y" | "yes"))
+        Ok(parse_yes_no(&input))
     }
 
     fn confirm_batch_deletion(&self, batch_ids: &[String]) -> Result<bool, CaravanError> {
@@ -90,7 +100,7 @@ impl PromptBackend for InteractivePrompt {
             return Ok(true);
         }
 
-        if batch_ids.len() == 1 {
+        if should_confirm_single_batch(batch_ids) {
             return self.confirm_deletion(&batch_ids[0]);
         }
 
@@ -108,8 +118,7 @@ impl PromptBackend for InteractivePrompt {
             .read_line(&mut input)
             .map_err(|e| CaravanError::Io(format!("failed to read user input: {}", e)))?;
 
-        let answer = input.trim().to_lowercase();
-        Ok(matches!(answer.as_str(), "y" | "yes"))
+        Ok(parse_yes_no(&input))
     }
 }
 
@@ -317,5 +326,47 @@ mod tests {
             .expect("interactive prompt should succeed");
         assert!(!approved);
         assert_eq!(prompt.calls.borrow().as_slice(), &["batch-a", "batch-b"]);
+    }
+
+    #[test]
+    fn parse_batch_size_mismatch_choice_accepts_all_supported_options() {
+        assert_eq!(
+            parse_batch_size_mismatch_choice("1").expect("option 1 should parse"),
+            BatchSizeMismatchChoice::UseStateSize
+        );
+        assert_eq!(
+            parse_batch_size_mismatch_choice("2").expect("option 2 should parse"),
+            BatchSizeMismatchChoice::EnterNewSize
+        );
+        assert_eq!(
+            parse_batch_size_mismatch_choice("3").expect("option 3 should parse"),
+            BatchSizeMismatchChoice::StartFresh
+        );
+    }
+
+    #[test]
+    fn parse_batch_size_mismatch_choice_rejects_invalid_options() {
+        let err = parse_batch_size_mismatch_choice("x").expect_err("invalid choice should fail");
+        assert!(err.to_string().contains("Please enter 1, 2, or 3"));
+    }
+
+    #[test]
+    fn parse_yes_no_only_accepts_yes_answers() {
+        assert!(parse_yes_no("y"));
+        assert!(parse_yes_no("YES"));
+        assert!(!parse_yes_no("n"));
+        assert!(!parse_yes_no("no"));
+        assert!(!parse_yes_no("maybe"));
+    }
+
+    #[test]
+    fn should_confirm_single_batch_requires_exactly_one_batch() {
+        let zero: Vec<String> = Vec::new();
+        let one = vec!["batch-a".to_string()];
+        let two = vec!["batch-a".to_string(), "batch-b".to_string()];
+
+        assert!(!should_confirm_single_batch(&zero));
+        assert!(should_confirm_single_batch(&one));
+        assert!(!should_confirm_single_batch(&two));
     }
 }

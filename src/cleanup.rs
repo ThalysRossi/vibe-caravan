@@ -253,6 +253,33 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_batch_entrypoint_uses_fs_remover_and_records_real_timestamps() {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path();
+        let file = source_root.join("dir/a.txt");
+        fs::create_dir_all(file.parent().expect("parent")).expect("create parent");
+        fs::write(&file, b"a").expect("seed file");
+
+        let batch = batch_with_files("batch-1", &["dir/a.txt"]);
+        let mut state = state_with_batch("batch-1", true, true, false);
+
+        cleanup_batch(&batch, source_root, &mut state, "unit-test")
+            .expect("cleanup entrypoint should succeed");
+
+        assert!(!file.exists(), "file should be removed by FsFileRemover");
+        assert_eq!(state.journal.len(), 2);
+        assert_eq!(state.journal[0].event, "delete_started");
+        assert_eq!(state.journal[1].event, "delete_completed");
+        assert!(
+            state
+                .journal
+                .iter()
+                .all(|entry| entry.timestamp_unix_secs > 1),
+            "journal timestamps must be based on wall clock time"
+        );
+    }
+
+    #[test]
     fn cleanup_marks_batch_failed_and_records_journal_on_delete_error() {
         let temp = tempdir().expect("tempdir");
         let source_root = temp.path();
@@ -275,6 +302,13 @@ mod tests {
         assert_eq!(state.journal.len(), 2);
         assert_eq!(state.journal[0].event, "delete_started");
         assert_eq!(state.journal[1].event, "delete_failed");
+        assert!(
+            state
+                .journal
+                .iter()
+                .all(|entry| entry.timestamp_unix_secs > 1),
+            "journal timestamps must be based on wall clock time"
+        );
         assert!(
             state.journal[1]
                 .context

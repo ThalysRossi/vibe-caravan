@@ -466,6 +466,29 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_if_needed_rejects_zero_cadence() {
+        let backend = RecordingSnapshotBackend::default();
+        let mut state = build_state(&[]);
+        let temp = tempdir().expect("tempdir");
+
+        let err = snapshot_if_needed(
+            SnapshotRequest {
+                mode: Mode::Migrate,
+                snapshot_every: Some(0),
+                completed_batch_count: 1,
+                batch_id: "batch-1",
+                destination_root: temp.path(),
+                snapshot_root: None,
+            },
+            &mut state,
+            &backend,
+        )
+        .expect_err("zero cadence should fail");
+
+        assert!(err.to_string().contains("must be greater than zero"));
+    }
+
+    #[test]
     fn snapshot_if_needed_updates_state_and_journal_on_success() {
         let backend = RecordingSnapshotBackend::default();
         let mut state = build_state(&[("batch-7", BatchPhase::DeleteCompleted, true)]);
@@ -498,6 +521,7 @@ mod tests {
         assert_eq!(journal.event, "snapshot_completed");
         assert_eq!(journal.batch_id, "batch-7");
         assert_eq!(journal.context, "snap-batch-7");
+        assert!(journal.timestamp_unix_secs > 1);
     }
 
     #[test]
@@ -529,6 +553,7 @@ mod tests {
         assert_eq!(journal.event, "snapshot_failed");
         assert_eq!(journal.batch_id, "batch-9");
         assert!(journal.context.contains("snapshot failed for batch-9"));
+        assert!(journal.timestamp_unix_secs > 1);
     }
 
     #[test]
@@ -541,6 +566,30 @@ mod tests {
             err.to_string()
                 .contains("snapshot-dir requires snapshot-every")
         );
+    }
+
+    #[test]
+    fn validate_snapshot_configuration_rejects_staging_snapshot_root_even_without_cadence() {
+        let temp = tempdir().expect("tempdir");
+
+        let err =
+            validate_snapshot_configuration(Mode::Staging, None, temp.path(), Some(temp.path()))
+                .expect_err("staging mode should reject snapshot options");
+
+        assert!(
+            err.to_string()
+                .contains("snapshot-dir requires snapshot-every")
+        );
+    }
+
+    #[test]
+    fn validate_snapshot_configuration_rejects_staging_snapshot_cadence() {
+        let temp = tempdir().expect("tempdir");
+
+        let err = validate_snapshot_configuration(Mode::Staging, Some(1), temp.path(), None)
+            .expect_err("staging mode should reject snapshot cadence");
+
+        assert!(err.to_string().contains("only supported in migrate mode"));
     }
 
     #[test]
@@ -568,6 +617,65 @@ mod tests {
 
         validate_snapshot_configuration(Mode::Migrate, Some(2), &destination, None)
             .expect("config should be valid");
+    }
+
+    #[test]
+    fn validate_snapshot_configuration_rejects_non_directory_snapshot_path() {
+        let temp = tempdir().expect("tempdir");
+        let destination = temp.path().join("dest");
+        let snapshot_file = temp.path().join("snapshot-file");
+        std::fs::create_dir_all(&destination).expect("create destination");
+        std::fs::write(&snapshot_file, b"not-a-directory").expect("create file");
+
+        let err = validate_snapshot_configuration(
+            Mode::Migrate,
+            Some(1),
+            &destination,
+            Some(&snapshot_file),
+        )
+        .expect_err("file path should be rejected");
+
+        assert!(err.to_string().contains("must be an existing directory"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn validate_snapshot_configuration_rejects_snapshot_root_on_different_filesystem() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempdir().expect("tempdir");
+        let snapshot_root = temp.path().join("snapshots");
+        std::fs::create_dir_all(&snapshot_root).expect("create snapshot root");
+        let snapshot_dev = std::fs::metadata(&snapshot_root)
+            .expect("snapshot metadata")
+            .dev();
+
+        let candidates = [
+            Path::new("/proc"),
+            Path::new("/sys"),
+            Path::new("/dev"),
+            Path::new("/tmp"),
+        ];
+        let destination_root = candidates
+            .iter()
+            .copied()
+            .find(|candidate| {
+                std::fs::metadata(candidate)
+                    .ok()
+                    .map(|meta| meta.dev() != snapshot_dev)
+                    .unwrap_or(false)
+            })
+            .expect("expected at least one filesystem with a different device id");
+
+        let err = validate_snapshot_configuration(
+            Mode::Migrate,
+            Some(1),
+            destination_root,
+            Some(&snapshot_root),
+        )
+        .expect_err("different-device snapshot root should fail");
+
+        assert!(err.to_string().contains("same filesystem"));
     }
 
     #[test]
@@ -694,5 +802,49 @@ mod tests {
             canonical_path_for_maybe_missing(Path::new("does-not-exist")).expect("resolve path");
         assert!(resolved.is_absolute());
         assert!(resolved.ends_with("does-not-exist"));
+    }
+
+    #[test]
+    fn canonical_path_rejects_missing_paths() {
+        let temp = tempdir().expect("tempdir");
+        let missing = temp.path().join("does-not-exist");
+        let err = canonical_path(&missing).expect_err("missing path should fail canonicalization");
+        assert!(err.to_string().contains("is not accessible"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn system_snapshot_backend_returns_error_when_snapshot_command_fails() {
+        let backend = SystemSnapshotBackend;
+        let temp = tempdir().expect("tempdir");
+        let destination = temp.path().join("dest");
+        std::fs::create_dir_all(&destination).expect("create destination");
+
+        let err = backend
+            .create_snapshot(&destination, None, "batch-1")
+            .expect_err("backend should surface btrfs snapshot errors");
+        let text = err.to_string();
+        assert!(
+            text.contains("failed to execute btrfs snapshot command")
+                || text.contains("btrfs snapshot command failed"),
+            "unexpected error: {text}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn create_btrfs_snapshot_returns_error_on_non_subvolume_destination() {
+        let temp = tempdir().expect("tempdir");
+        let destination = temp.path().join("dest");
+        std::fs::create_dir_all(&destination).expect("create destination");
+
+        let err = create_btrfs_snapshot(&destination, None, "batch-2")
+            .expect_err("snapshot command should fail on non-btrfs destination");
+        let text = err.to_string();
+        assert!(
+            text.contains("failed to execute btrfs snapshot command")
+                || text.contains("btrfs snapshot command failed"),
+            "unexpected error: {text}"
+        );
     }
 }

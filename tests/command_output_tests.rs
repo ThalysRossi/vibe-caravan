@@ -93,11 +93,107 @@ fn transfer_interactive_output_includes_deletion_and_completion_banners() {
         "interactive transfer should succeed"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(stdout.contains("Snapshot cadence: disabled"));
     assert!(stdout.contains("=== All 1 batches have been verified successfully ==="));
     assert!(stdout.contains("=== Deleting source files for 1 batch(es) ==="));
     assert!(stdout.contains("=== Migration complete! 1 batches processed, 1 total completed ==="));
+    assert!(
+        stderr.contains("Done in"),
+        "progress completion should be rendered to stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn transfer_interactive_multi_batch_decline_keeps_all_sources() {
+    let tmp = TempDir::new().expect("create temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create destination");
+    fs::write(source_dir.join("file1.txt"), "content-1").expect("write first source file");
+    fs::write(source_dir.join("file2.txt"), "content-2").expect("write second source file");
+
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("source path utf8"),
+            "--dest",
+            dest_dir.to_str().expect("dest path utf8"),
+            "--batch-size",
+            "1MiB",
+            "--max-files",
+            "1",
+            "--interactive",
+        ])
+        .write_stdin("n\n")
+        .current_dir(tmp.path())
+        .output()
+        .expect("run transfer command");
+
+    assert!(
+        output.status.success(),
+        "interactive transfer should remain successful when operator declines deletion"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("All 2 batches have been verified successfully."));
+    assert!(stdout.contains("Approve deletion of source files for ALL batches? (y/n):"));
+
+    assert!(
+        source_dir.join("file1.txt").exists() && source_dir.join("file2.txt").exists(),
+        "source files should remain when deletion is declined"
+    );
+}
+
+#[test]
+fn transfer_interactive_multi_batch_accept_deletes_all_sources() {
+    let tmp = TempDir::new().expect("create temp dir");
+    let source_dir = tmp.path().join("source");
+    let dest_dir = tmp.path().join("dest");
+
+    fs::create_dir_all(&source_dir).expect("create source");
+    fs::create_dir_all(&dest_dir).expect("create destination");
+    fs::write(source_dir.join("file1.txt"), "content-1").expect("write first source file");
+    fs::write(source_dir.join("file2.txt"), "content-2").expect("write second source file");
+
+    let binary = assert_cmd::cargo::cargo_bin("caravan");
+    let output = Command::new(binary)
+        .args([
+            "staging",
+            "--source",
+            source_dir.to_str().expect("source path utf8"),
+            "--dest",
+            dest_dir.to_str().expect("dest path utf8"),
+            "--batch-size",
+            "1MiB",
+            "--max-files",
+            "1",
+            "--interactive",
+        ])
+        .write_stdin("y\n")
+        .current_dir(tmp.path())
+        .output()
+        .expect("run transfer command");
+
+    assert!(
+        output.status.success(),
+        "interactive transfer should succeed when operator approves deletion"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("All 2 batches have been verified successfully."));
+    assert!(stdout.contains("Approve deletion of source files for ALL batches? (y/n):"));
+    assert!(stdout.contains("=== Deleting source files for 2 batch(es) ==="));
+
+    assert!(
+        !source_dir.join("file1.txt").exists() && !source_dir.join("file2.txt").exists(),
+        "source files should be deleted when approval is granted"
+    );
 }
 
 #[test]

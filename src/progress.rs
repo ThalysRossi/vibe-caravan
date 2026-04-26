@@ -291,4 +291,78 @@ mod tests {
         progress.last_printed_time = Instant::now() - Duration::from_millis(150);
         assert!(progress.should_update_display(2, 10.1));
     }
+
+    #[test]
+    fn set_total_bytes_updates_hint_for_inherent_and_trait_paths() {
+        let mut progress = TerminalProgress::new();
+        progress.set_total_bytes(128);
+        assert_eq!(progress.total_bytes, Some(128));
+
+        <TerminalProgress as ProgressReporter>::set_total_bytes(&mut progress, 256);
+        assert_eq!(progress.total_bytes, Some(256));
+    }
+
+    #[test]
+    fn trait_start_sets_initial_tracking_state() {
+        let mut progress = TerminalProgress::new();
+        progress.total_bytes = Some(1024);
+        progress.last_printed_percent = 42.0;
+
+        <TerminalProgress as ProgressReporter>::start(&mut progress, 4, "copying");
+
+        assert_eq!(progress.total, 4);
+        assert_eq!(progress.operation, "copying");
+        assert_eq!(progress.last_printed_percent, -1.0);
+        assert!(
+            progress.last_printed_time.elapsed() < Duration::from_secs(1),
+            "start should refresh last printed time"
+        );
+    }
+
+    #[test]
+    fn trait_advance_updates_percent_when_refresh_threshold_is_met() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 4;
+        progress.operation = "copying".to_string();
+        progress.start_time = Instant::now() - Duration::from_secs(2);
+        progress.last_printed_percent = -1.0;
+        progress.last_printed_time = Instant::now() - Duration::from_millis(200);
+
+        let before = progress.last_printed_time;
+        <TerminalProgress as ProgressReporter>::advance(&mut progress, 2, None);
+
+        assert_eq!(progress.last_printed_percent, 50.0);
+        assert!(progress.last_printed_time > before);
+    }
+
+    #[test]
+    fn trait_advance_keeps_state_when_refresh_threshold_is_not_met() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 10;
+        progress.operation = "copying".to_string();
+        progress.start_time = Instant::now() - Duration::from_secs(2);
+        progress.last_printed_percent = 50.0;
+        progress.last_printed_time = Instant::now();
+
+        let before_time = progress.last_printed_time;
+        let before_percent = progress.last_printed_percent;
+        <TerminalProgress as ProgressReporter>::advance(&mut progress, 5, None);
+
+        assert_eq!(progress.last_printed_percent, before_percent);
+        assert_eq!(progress.last_printed_time, before_time);
+    }
+
+    #[test]
+    fn trait_advance_with_zero_total_sets_percent_to_zero() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 0;
+        progress.operation = "copying".to_string();
+        progress.start_time = Instant::now() - Duration::from_secs(1);
+        progress.last_printed_percent = -1.0;
+        progress.last_printed_time = Instant::now() - Duration::from_millis(200);
+
+        <TerminalProgress as ProgressReporter>::advance(&mut progress, 0, None);
+
+        assert_eq!(progress.last_printed_percent, 0.0);
+    }
 }
