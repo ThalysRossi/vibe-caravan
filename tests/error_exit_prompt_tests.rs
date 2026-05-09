@@ -4,7 +4,7 @@ use assert_cmd::Command;
 use tempfile::TempDir;
 
 #[test]
-fn forced_pause_is_shown_for_cli_parse_errors() {
+fn forced_pause_env_does_not_pause_for_cli_parse_errors() {
     let binary = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(binary)
         .args([
@@ -18,7 +18,6 @@ fn forced_pause_is_shown_for_cli_parse_errors() {
             "unexpected",
         ])
         .env("CARAVAN_FORCE_PAUSE_ON_ERROR", "1")
-        .write_stdin("\n")
         .output()
         .expect("run caravan with invalid argument");
 
@@ -27,13 +26,13 @@ fn forced_pause_is_shown_for_cli_parse_errors() {
 
     assert!(stderr.contains("cli error:"), "stderr was: {stderr}");
     assert!(
-        stderr.contains("Press Enter to exit..."),
+        !stderr.contains("Press Enter to exit..."),
         "stderr was: {stderr}"
     );
 }
 
 #[test]
-fn forced_pause_is_shown_for_runtime_errors() {
+fn forced_pause_env_does_not_pause_for_runtime_errors() {
     let tmp = TempDir::new().expect("create temp dir");
     let source_dir = tmp.path().join("source");
     let dest_dir = tmp.path().join("dest");
@@ -58,7 +57,6 @@ fn forced_pause_is_shown_for_runtime_errors() {
             "1MiB",
         ])
         .env("CARAVAN_FORCE_PAUSE_ON_ERROR", "1")
-        .write_stdin("\n")
         .current_dir(tmp.path())
         .output()
         .expect("run caravan with runtime error");
@@ -71,7 +69,7 @@ fn forced_pause_is_shown_for_runtime_errors() {
         "stderr was: {stderr}"
     );
     assert!(
-        stderr.contains("Press Enter to exit..."),
+        !stderr.contains("Press Enter to exit..."),
         "stderr was: {stderr}"
     );
 }
@@ -104,7 +102,7 @@ fn pause_prompt_is_not_shown_by_default_in_non_tty_context() {
 }
 
 #[test]
-fn interactive_flag_enables_pause_prompt_in_non_tty_context() {
+fn interactive_flag_does_not_pause_for_cli_parse_errors() {
     let binary = assert_cmd::cargo::cargo_bin("caravan");
     let output = Command::new(binary)
         .args([
@@ -126,7 +124,7 @@ fn interactive_flag_enables_pause_prompt_in_non_tty_context() {
 
     assert!(stderr.contains("cli error:"), "stderr was: {stderr}");
     assert!(
-        stderr.contains("Press Enter to exit..."),
+        !stderr.contains("Press Enter to exit..."),
         "stderr was: {stderr}"
     );
 }
