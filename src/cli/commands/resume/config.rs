@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use crate::config::{ConflictPolicy, CopyStrategy, Mode, TransferConfig};
+use crate::config::{ConflictPolicy, Mode, TransferConfig};
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
-use crate::platform::is_windows_build;
+use crate::transfer::normalize_legacy_copy_strategy;
 
 pub(super) fn transfer_config_from_state(
     state: &MigrationState,
@@ -38,28 +38,10 @@ pub(super) fn transfer_config_from_state(
     })
 }
 
-fn normalize_legacy_copy_strategy(strategy: CopyStrategy) -> CopyStrategy {
-    match strategy {
-        CopyStrategy::Auto => CopyStrategy::Auto,
-        CopyStrategy::Buffered => {
-            eprintln!(
-                "[WARNING] state uses deprecated copy strategy 'buffered'; falling back to 'auto'."
-            );
-            CopyStrategy::Auto
-        }
-        CopyStrategy::Native if !is_windows_build() => {
-            eprintln!(
-                "[WARNING] state uses deprecated Linux copy strategy 'native'; falling back to 'auto'."
-            );
-            CopyStrategy::Auto
-        }
-        CopyStrategy::Native => CopyStrategy::Native,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::CopyStrategy;
 
     fn base_state(mode: &str) -> MigrationState {
         let mut state = MigrationState::new(mode, "/src", "/dst");

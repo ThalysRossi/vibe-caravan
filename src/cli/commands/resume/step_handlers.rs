@@ -1,17 +1,15 @@
-use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use crate::config::ConflictPolicy;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
-use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
+use crate::models::state::MigrationState;
 use crate::resume as resume_ops;
 
 use super::super::shared::{
     CopyBatchOp, copy_batch_with_state_updates, ensure_destination_capacity,
+    handle_verification_error, mark_batch_failed_for_conflicts, non_conflicting_subset_batch,
     print_resume_continue_to_deletion, print_resume_processing_batch_banner,
     print_resume_skip_already_completed, print_resume_verification_passed,
-    print_verification_failed, verify_batch_with_state_updates,
+    verify_batch_with_state_updates,
 };
 use super::context::ResumeContext;
 
@@ -23,64 +21,26 @@ fn effective_conflict_policy(context: &ResumeContext<'_>) -> ConflictPolicy {
     }
 }
 
-fn mark_batch_failed_for_conflicts(
+fn mark_resume_batch_failed_for_conflicts(
     batch: &Batch,
     state: &mut MigrationState,
     context: &ResumeContext<'_>,
     conflict_report: &crate::conflict::ConflictReport,
     copied_non_conflicting_files: usize,
 ) -> Result<(), CaravanError> {
-    let mut current_batch_state = state.batch(&batch.id).cloned().ok_or_else(|| {
-        CaravanError::StateCorrupt(format!(
-            "batch {} disappeared from state during conflict handling",
-            batch.id
-        ))
-    })?;
-    current_batch_state.phase = BatchPhase::Failed;
-    current_batch_state.verification_passed = false;
-    state.upsert_batch(current_batch_state);
-    state.journal.push(JournalEntry {
-        event: "copy_failed_conflict".to_string(),
-        batch_id: batch.id.clone(),
-        timestamp_unix_secs: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-        context: format!(
-            "naming_conflicts={} size_mismatches={} copied_non_conflicting_files={} skipped_conflicting_files={}",
-            conflict_report.total_conflicts,
-            conflict_report.size_mismatches.len(),
-            copied_non_conflicting_files,
-            conflict_report.total_conflicts
-        ),
-    });
+    mark_batch_failed_for_conflicts(
+        batch,
+        state,
+        conflict_report,
+        copied_non_conflicting_files,
+        &|batch_id| {
+            Err(CaravanError::StateCorrupt(format!(
+                "batch {} disappeared from state during conflict handling",
+                batch_id
+            )))
+        },
+    )?;
     context.persist_state(state)
-}
-
-fn non_conflicting_subset_batch(
-    batch: &Batch,
-    destination_root: &std::path::Path,
-    report: &crate::conflict::ConflictReport,
-) -> Batch {
-    let conflicting_paths: HashSet<std::path::PathBuf> =
-        report.existing_files.iter().cloned().collect();
-    let files = batch
-        .files
-        .iter()
-        .filter(|file_entry| {
-            let destination_path = destination_root.join(&file_entry.relative_path);
-            !conflicting_paths.contains(&destination_path)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let total_bytes = files.iter().map(|file_entry| file_entry.size_bytes).sum();
-
-    Batch {
-        id: batch.id.clone(),
-        file_count: files.len(),
-        total_bytes,
-        files,
-    }
 }
 
 fn verify_batch_for_resume(
@@ -105,20 +65,7 @@ fn verify_batch_for_resume(
             ))
         },
     ) {
-        if let CaravanError::VerificationFailed(failure) = &err {
-            print_verification_failed(failure);
-            crate::source_completion::remove_batch_completed(
-                &context.config.source,
-                &state.mode,
-                batch,
-            )
-            .map_err(|remove_err| {
-                CaravanError::StateCorrupt(format!(
-                    "verification failed for {} and completed-file ledger cleanup failed: {}",
-                    batch.id, remove_err
-                ))
-            })?;
-        }
+        handle_verification_error(batch, &context.config.source, &state.mode, &err)?;
         return Err(err);
     }
 
@@ -138,7 +85,7 @@ fn copy_batch_for_resume(
     if conflict_report.has_conflicts {
         match effective_conflict_policy(context) {
             ConflictPolicy::SkipBatch => {
-                mark_batch_failed_for_conflicts(batch, state, context, &conflict_report, 0)?;
+                mark_resume_batch_failed_for_conflicts(batch, state, context, &conflict_report, 0)?;
                 return Err(CaravanError::PolicyBlocked(format!(
                     "batch {} requires operator review before continuing: naming conflicts={} size_mismatches={}",
                     batch.id,
@@ -150,7 +97,13 @@ fn copy_batch_for_resume(
                 let copy_subset =
                     non_conflicting_subset_batch(batch, &context.config.dest, &conflict_report);
                 if copy_subset.files.is_empty() {
-                    mark_batch_failed_for_conflicts(batch, state, context, &conflict_report, 0)?;
+                    mark_resume_batch_failed_for_conflicts(
+                        batch,
+                        state,
+                        context,
+                        &conflict_report,
+                        0,
+                    )?;
                     return Err(CaravanError::PolicyBlocked(format!(
                         "batch {} requires operator review before continuing: naming conflicts={} size_mismatches={}",
                         batch.id,
@@ -181,7 +134,7 @@ fn copy_batch_for_resume(
                     },
                 )?;
 
-                mark_batch_failed_for_conflicts(
+                mark_resume_batch_failed_for_conflicts(
                     batch,
                     state,
                     context,

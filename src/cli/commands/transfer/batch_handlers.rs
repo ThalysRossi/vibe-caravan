@@ -1,17 +1,15 @@
-use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use super::super::shared::{
     CopyBatchOp, copy_batch_with_state_updates, ensure_destination_capacity,
-    print_copy_batch_banner, print_verification_failed, print_verification_passed,
-    print_verify_batch_banner, verify_batch_with_state_updates,
+    handle_verification_error, mark_batch_failed_for_conflicts, non_conflicting_subset_batch,
+    print_copy_batch_banner, print_verification_passed, print_verify_batch_banner,
+    verify_batch_with_state_updates,
 };
 use super::context::TransferContext;
 use super::setup::planned_batch_state;
 use crate::config::ConflictPolicy;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
-use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
+use crate::models::state::{BatchPhase, MigrationState};
 
 fn effective_conflict_policy(context: &TransferContext<'_>) -> ConflictPolicy {
     if context.config.skip_conflicts {
@@ -21,62 +19,21 @@ fn effective_conflict_policy(context: &TransferContext<'_>) -> ConflictPolicy {
     }
 }
 
-fn mark_batch_failed_for_conflicts(
+fn mark_transfer_batch_failed_for_conflicts(
     batch: &Batch,
     state: &mut MigrationState,
     context: &TransferContext<'_>,
     conflict_report: &crate::conflict::ConflictReport,
     copied_non_conflicting_files: usize,
 ) -> Result<(), CaravanError> {
-    let mut current_batch_state = state
-        .batch(&batch.id)
-        .cloned()
-        .unwrap_or_else(|| planned_batch_state(&batch.id));
-    current_batch_state.phase = BatchPhase::Failed;
-    current_batch_state.verification_passed = false;
-    state.upsert_batch(current_batch_state);
-    state.journal.push(JournalEntry {
-        event: "copy_failed_conflict".to_string(),
-        batch_id: batch.id.clone(),
-        timestamp_unix_secs: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs(),
-        context: format!(
-            "naming_conflicts={} size_mismatches={} copied_non_conflicting_files={} skipped_conflicting_files={}",
-            conflict_report.total_conflicts,
-            conflict_report.size_mismatches.len(),
-            copied_non_conflicting_files,
-            conflict_report.total_conflicts
-        ),
-    });
+    mark_batch_failed_for_conflicts(
+        batch,
+        state,
+        conflict_report,
+        copied_non_conflicting_files,
+        &|batch_id| Ok(planned_batch_state(batch_id)),
+    )?;
     context.persist_state(state)
-}
-
-fn non_conflicting_subset_batch(
-    batch: &Batch,
-    destination_root: &std::path::Path,
-    report: &crate::conflict::ConflictReport,
-) -> Batch {
-    let conflicting_paths: HashSet<std::path::PathBuf> =
-        report.existing_files.iter().cloned().collect();
-    let files: Vec<crate::models::file_entry::FileEntry> = batch
-        .files
-        .iter()
-        .filter(|file_entry| {
-            let destination_path = destination_root.join(&file_entry.relative_path);
-            !conflicting_paths.contains(&destination_path)
-        })
-        .cloned()
-        .collect();
-    let total_bytes = files.iter().map(|file_entry| file_entry.size_bytes).sum();
-
-    Batch {
-        id: batch.id.clone(),
-        file_count: files.len(),
-        total_bytes,
-        files,
-    }
 }
 
 pub(super) fn copy_single_batch(
@@ -112,7 +69,13 @@ pub(super) fn copy_single_batch(
                         "⚠️  Skipping batch '{}' due to {} naming conflict(s)",
                         batch.id, conflict_report.total_conflicts
                     );
-                    mark_batch_failed_for_conflicts(batch, state, context, &conflict_report, 0)?;
+                    mark_transfer_batch_failed_for_conflicts(
+                        batch,
+                        state,
+                        context,
+                        &conflict_report,
+                        0,
+                    )?;
                     return Ok(());
                 }
                 ConflictPolicy::SkipFile => {
@@ -123,7 +86,7 @@ pub(super) fn copy_single_batch(
                             "⚠️  Skipping batch '{}' due to {} naming conflict(s)",
                             batch.id, conflict_report.total_conflicts
                         );
-                        mark_batch_failed_for_conflicts(
+                        mark_transfer_batch_failed_for_conflicts(
                             batch,
                             state,
                             context,
@@ -162,7 +125,7 @@ pub(super) fn copy_single_batch(
                         },
                     )?;
 
-                    mark_batch_failed_for_conflicts(
+                    mark_transfer_batch_failed_for_conflicts(
                         batch,
                         state,
                         context,
@@ -224,20 +187,7 @@ pub(super) fn verify_single_batch(
             ))
         },
     ) {
-        if let CaravanError::VerificationFailed(failure) = &err {
-            print_verification_failed(failure);
-            crate::source_completion::remove_batch_completed(
-                &context.config.source,
-                &state.mode,
-                batch,
-            )
-            .map_err(|remove_err| {
-                CaravanError::StateCorrupt(format!(
-                    "verification failed for {} and completed-file ledger cleanup failed: {}",
-                    batch.id, remove_err
-                ))
-            })?;
-        }
+        handle_verification_error(batch, &context.config.source, &state.mode, &err)?;
         return Err(err);
     }
 

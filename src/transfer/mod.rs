@@ -15,7 +15,7 @@ pub use batch_copy::{
     DirectoryCreator, FsDirectoryCreator, copy_batch_with_components_and_durability,
 };
 pub use copier::{FileCopier, NativePreferredFileCopier, OsFileCopier};
-pub use strategy::{ResolvedCopyStrategy, resolve_copy_strategy};
+pub use strategy::{ResolvedCopyStrategy, normalize_legacy_copy_strategy, resolve_copy_strategy};
 pub use summary::{
     TransferExecutionSummary, TransferPlanningSummary, summarize_transfer_execution,
     summarize_transfer_plan,

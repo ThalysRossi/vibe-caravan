@@ -12,9 +12,17 @@ mod error {
     pub use caravan::error::*;
 }
 
+mod conflict {
+    pub use caravan::conflict::*;
+}
+
 mod models {
     pub mod batch {
         pub use caravan::models::batch::*;
+    }
+
+    pub mod file_entry {
+        pub use caravan::models::file_entry::*;
     }
 
     pub mod state {
@@ -30,6 +38,17 @@ mod progress {
     pub use caravan::progress::*;
 }
 
+#[allow(dead_code)]
+mod output {
+    use caravan::error::VerificationFailure;
+
+    pub fn print_verification_failed(_failure: &VerificationFailure) {}
+}
+
+mod source_completion {
+    pub use caravan::source_completion::*;
+}
+
 mod transfer {
     pub use caravan::transfer::*;
 }
@@ -38,6 +57,7 @@ mod verify {
     pub use caravan::verify::*;
 }
 
+#[allow(dead_code)]
 #[path = "../src/cli/commands/shared/batch_ops.rs"]
 mod batch_ops;
 

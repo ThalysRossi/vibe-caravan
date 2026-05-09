@@ -5,8 +5,8 @@ use crate::error::CaravanError;
 use crate::migration_registry;
 use crate::models::state::{BatchPhase, BatchState, MigrationState};
 use crate::plan::PlanningSnapshot;
-use crate::platform::is_windows_build;
 use crate::state_store;
+use crate::transfer::normalize_legacy_copy_strategy;
 
 use super::super::shared::AppContext;
 
@@ -78,21 +78,7 @@ pub(super) fn load_or_create_state(
 }
 
 fn normalize_legacy_state_copy_strategy(state: &mut MigrationState) {
-    match state.copy_strategy {
-        crate::config::CopyStrategy::Buffered => {
-            eprintln!(
-                "[WARNING] loaded state uses deprecated copy strategy 'buffered'; falling back to 'auto'."
-            );
-            state.copy_strategy = crate::config::CopyStrategy::Auto;
-        }
-        crate::config::CopyStrategy::Native if !is_windows_build() => {
-            eprintln!(
-                "[WARNING] loaded state uses deprecated Linux copy strategy 'native'; falling back to 'auto'."
-            );
-            state.copy_strategy = crate::config::CopyStrategy::Auto;
-        }
-        _ => {}
-    }
+    state.copy_strategy = normalize_legacy_copy_strategy(state.copy_strategy);
 }
 
 fn normalize_identity_path(path: &str) -> String {

@@ -7,6 +7,25 @@ pub enum ResolvedCopyStrategy {
     NativePreferred,
 }
 
+pub fn normalize_legacy_copy_strategy(strategy: CopyStrategy) -> CopyStrategy {
+    match strategy {
+        CopyStrategy::Auto => CopyStrategy::Auto,
+        CopyStrategy::Buffered => {
+            eprintln!(
+                "[WARNING] state uses deprecated copy strategy 'buffered'; falling back to 'auto'."
+            );
+            CopyStrategy::Auto
+        }
+        CopyStrategy::Native if !is_windows_build() => {
+            eprintln!(
+                "[WARNING] state uses deprecated Linux copy strategy 'native'; falling back to 'auto'."
+            );
+            CopyStrategy::Auto
+        }
+        CopyStrategy::Native => CopyStrategy::Native,
+    }
+}
+
 pub fn resolve_copy_strategy(strategy: CopyStrategy, mode: &Mode) -> ResolvedCopyStrategy {
     match strategy {
         CopyStrategy::Buffered => ResolvedCopyStrategy::Os,

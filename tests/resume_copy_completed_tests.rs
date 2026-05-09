@@ -1,58 +1,44 @@
 use std::fs;
 
-use assert_cmd::Command;
-use caravan::models::state::{BatchPhase, BatchState, MigrationPhase, MigrationState};
+use caravan::models::state::{BatchPhase, MigrationPhase};
 use caravan::state_store::{load_state, persist_state};
-use tempfile::TempDir;
+
+mod common;
+
+use common::{batch_state, migration_state_for_fixture, run_resume, source_dest_fixture};
 
 #[test]
 fn resume_with_copy_completed_batches_should_verify_not_copy() {
-    let tmp = TempDir::new().expect("temp dir");
-    let source_dir = tmp.path().join("source");
-    let dest_dir = tmp.path().join("dest");
-    fs::create_dir_all(&source_dir).expect("create source");
-    fs::create_dir_all(&dest_dir).expect("create dest");
+    let fixture = source_dest_fixture();
+    let source_dir = &fixture.source_dir;
+    let dest_dir = &fixture.dest_dir;
 
     fs::write(source_dir.join("file1.txt"), "aaaa").expect("create source file1");
     fs::write(source_dir.join("file2.txt"), "bbbb").expect("create source file2");
     fs::write(dest_dir.join("file1.txt"), "aaaa").expect("create dest file1");
     fs::write(dest_dir.join("file2.txt"), "bbbb").expect("create dest file2");
 
-    let mut state = MigrationState::new(
-        "staging",
-        &source_dir.to_string_lossy(),
-        &dest_dir.to_string_lossy(),
-    );
-    state.batch_size_bytes = 4;
-    state.migration_phase = MigrationPhase::Copying;
-    state.upsert_batch(BatchState {
-        batch_id: "batch-000001".to_string(),
-        phase: BatchPhase::CopyCompleted,
-        verification_passed: false,
-        approved_for_delete: false,
-        deleted: false,
-    });
-    state.upsert_batch(BatchState {
-        batch_id: "batch-000002".to_string(),
-        phase: BatchPhase::CopyCompleted,
-        verification_passed: false,
-        approved_for_delete: false,
-        deleted: false,
-    });
+    let mut state =
+        migration_state_for_fixture("staging", source_dir, dest_dir, 4, MigrationPhase::Copying);
+    state.upsert_batch(batch_state(
+        "batch-000001",
+        BatchPhase::CopyCompleted,
+        false,
+        false,
+        false,
+    ));
+    state.upsert_batch(batch_state(
+        "batch-000002",
+        BatchPhase::CopyCompleted,
+        false,
+        false,
+        false,
+    ));
 
-    let state_path = tmp.path().join("resume-state.json");
+    let state_path = fixture.tmp.path().join("resume-state.json");
     persist_state(&state_path, &state).expect("persist state");
 
-    let binary = assert_cmd::cargo::cargo_bin("caravan");
-    let output = Command::new(binary)
-        .args([
-            "resume",
-            "--state",
-            state_path.to_str().expect("utf8 state path"),
-        ])
-        .current_dir(tmp.path())
-        .output()
-        .expect("execute resume");
+    let output = run_resume(&state_path, fixture.tmp.path());
 
     assert!(
         output.status.success(),
@@ -94,42 +80,26 @@ fn resume_with_copy_completed_batches_should_verify_not_copy() {
 
 #[test]
 fn resume_with_copy_completed_but_missing_files_should_require_review() {
-    let tmp = TempDir::new().expect("temp dir");
-    let source_dir = tmp.path().join("source");
-    let dest_dir = tmp.path().join("dest");
-    fs::create_dir_all(&source_dir).expect("create source");
-    fs::create_dir_all(&dest_dir).expect("create dest");
+    let fixture = source_dest_fixture();
+    let source_dir = &fixture.source_dir;
+    let dest_dir = &fixture.dest_dir;
 
     fs::write(source_dir.join("file1.txt"), "aaaa").expect("create source file");
 
-    let mut state = MigrationState::new(
-        "staging",
-        &source_dir.to_string_lossy(),
-        &dest_dir.to_string_lossy(),
-    );
-    state.batch_size_bytes = 4;
-    state.migration_phase = MigrationPhase::Copying;
-    state.upsert_batch(BatchState {
-        batch_id: "batch-000001".to_string(),
-        phase: BatchPhase::CopyCompleted,
-        verification_passed: false,
-        approved_for_delete: false,
-        deleted: false,
-    });
+    let mut state =
+        migration_state_for_fixture("staging", source_dir, dest_dir, 4, MigrationPhase::Copying);
+    state.upsert_batch(batch_state(
+        "batch-000001",
+        BatchPhase::CopyCompleted,
+        false,
+        false,
+        false,
+    ));
 
-    let state_path = tmp.path().join("resume-state.json");
+    let state_path = fixture.tmp.path().join("resume-state.json");
     persist_state(&state_path, &state).expect("persist state");
 
-    let binary = assert_cmd::cargo::cargo_bin("caravan");
-    let output = Command::new(binary)
-        .args([
-            "resume",
-            "--state",
-            state_path.to_str().expect("utf8 state path"),
-        ])
-        .current_dir(tmp.path())
-        .output()
-        .expect("execute resume");
+    let output = run_resume(&state_path, fixture.tmp.path());
 
     assert!(
         !output.status.success(),

@@ -7,7 +7,8 @@ mod output;
 
 pub(super) use app_context::AppContext;
 pub(super) use batch_ops::{
-    CopyBatchOp, copy_batch_with_state_updates, verify_batch_with_state_updates,
+    CopyBatchOp, copy_batch_with_state_updates, handle_verification_error,
+    mark_batch_failed_for_conflicts, non_conflicting_subset_batch, verify_batch_with_state_updates,
 };
 pub(super) use capacity_guard::ensure_destination_capacity;
 pub(super) use deletion::approve_and_delete_verified_batches;
@@ -26,5 +27,5 @@ pub(super) use output::{
     print_skip_verification_already_completed, print_skip_verification_requires_operator_review,
     print_state_save_locations, print_status_batch, print_status_header,
     print_status_journal_entry, print_status_journal_header, print_status_snapshot_policy,
-    print_verification_failed, print_verification_passed, print_verify_batch_banner,
+    print_verification_passed, print_verify_batch_banner,
 };
