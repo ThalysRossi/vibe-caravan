@@ -36,11 +36,18 @@ pub fn build_plan(
     }
 
     let entries = scan_source(source_root)?;
-    let source_total_bytes = entries.iter().map(|f| f.size_bytes).sum::<u64>();
+    build_plan_from_entries(entries, options)
+}
+
+pub fn build_plan_from_entries(
+    entries: Vec<FileEntry>,
+    options: &PlanOptions,
+) -> Result<PlanningSnapshot, CaravanError> {
+    let source_total_bytes = entries.iter().map(|file| file.size_bytes).sum::<u64>();
     let batches = plan_batches(entries, options)?;
 
     Ok(PlanningSnapshot {
-        source_file_count: batches.iter().map(|b| b.file_count).sum(),
+        source_file_count: batches.iter().map(|batch| batch.file_count).sum(),
         source_total_bytes,
         batches,
     })

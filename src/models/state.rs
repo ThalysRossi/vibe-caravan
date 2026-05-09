@@ -44,6 +44,14 @@ pub struct JournalEntry {
     pub context: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CompletedFileIdentity {
+    pub mode: String,
+    pub relative_path: PathBuf,
+    pub size_bytes: u64,
+    pub blake3_hash: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannedFile {
     pub relative_path: PathBuf,
@@ -108,6 +116,8 @@ pub struct MigrationState {
     #[serde(default = "default_copy_strategy")]
     pub copy_strategy: CopyStrategy,
     #[serde(default)]
+    pub skipped_completed_files: Vec<CompletedFileIdentity>,
+    #[serde(default)]
     pub planned_batches: Vec<PlannedBatch>,
     pub migration_phase: MigrationPhase,
     pub last_successful_snapshot_name: Option<String>,
@@ -128,6 +138,7 @@ impl MigrationState {
             snapshot_every: None,
             snapshot_dir: None,
             copy_strategy: default_copy_strategy(),
+            skipped_completed_files: Vec::new(),
             planned_batches: Vec::new(),
             migration_phase: MigrationPhase::NotStarted,
             last_successful_snapshot_name: None,

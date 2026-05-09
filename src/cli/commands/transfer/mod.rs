@@ -3,7 +3,7 @@ use crate::error::CaravanError;
 use crate::models::state::{MigrationPhase, MigrationState};
 use crate::plan::PlanOptions;
 use crate::transfer as transfer_ops;
-use crate::{migration_registry, plan, preflight, snapshot};
+use crate::{migration_registry, plan, preflight, scan, snapshot, source_completion};
 
 use super::shared::{
     AppContext, OperatorReviewPolicy, ensure_no_operator_review_blocks_with_policy,
@@ -28,13 +28,61 @@ use setup::{
 use verify_phase::run_verify_phase;
 
 fn state_has_manifest(state: &MigrationState) -> bool {
-    !state.planned_batches.is_empty()
+    !state.planned_batches.is_empty() || !state.skipped_completed_files.is_empty()
+}
+
+fn state_is_empty_for_completed_file_filtering(state: &MigrationState) -> bool {
+    state.planned_batches.is_empty()
+        && state.batches.is_empty()
+        && state.skipped_completed_files.is_empty()
+}
+
+fn build_plan_for_transfer_state(
+    config: &TransferConfig,
+    state: &mut MigrationState,
+    mode: &str,
+    options: &PlanOptions,
+) -> Result<plan::PlanningSnapshot, CaravanError> {
+    if state_is_empty_for_completed_file_filtering(state) {
+        let entries = scan::scan_source(&config.source)?;
+        let hashed_entries = source_completion::hash_source_entries(&config.source, &entries)?;
+        source_completion::backfill_ledger_from_existing_states(
+            &config.source,
+            mode,
+            &hashed_entries,
+        )?;
+        let ledger = source_completion::load_ledger(&config.source)?;
+        let filtered = source_completion::filter_entries_for_new_migration(
+            mode,
+            entries,
+            &hashed_entries,
+            &ledger,
+        )?;
+        state.skipped_completed_files = filtered.skipped_completed_files;
+        return plan::build_plan_from_entries(filtered.entries_to_plan, options);
+    }
+
+    if !state.skipped_completed_files.is_empty() {
+        let entries = scan::scan_source(&config.source)?;
+        let hashed_entries = source_completion::hash_source_entries(&config.source, &entries)?;
+        let filtered_entries = source_completion::filter_entries_for_persisted_skips(
+            mode,
+            entries,
+            &hashed_entries,
+            &state.skipped_completed_files,
+        )?;
+        return plan::build_plan_from_entries(filtered_entries, options);
+    }
+
+    plan::build_plan(&config.source, options)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::state::CompletedFileIdentity;
     use crate::models::state::PlannedBatch;
+    use std::path::PathBuf;
 
     #[test]
     fn state_has_manifest_detects_presence_of_planned_batches() {
@@ -46,6 +94,15 @@ mod tests {
             file_count: 0,
             total_bytes: 0,
             files: Vec::new(),
+        });
+        assert!(state_has_manifest(&state));
+
+        state.planned_batches.clear();
+        state.skipped_completed_files.push(CompletedFileIdentity {
+            mode: "staging".to_string(),
+            relative_path: PathBuf::from("already-done.txt"),
+            size_bytes: 1,
+            blake3_hash: "hash".to_string(),
         });
         assert!(state_has_manifest(&state));
     }
@@ -88,9 +145,10 @@ pub(in crate::cli) fn execute_transfer(config: TransferConfig) -> Result<(), Car
             batch_size_bytes: config.batch_size_bytes,
             max_files: config.max_files.map(|v| v as usize),
         };
-        let plan = plan::build_plan(&config.source, &plan_opts)?;
+        let had_manifest = state_has_manifest(&state);
+        let plan = build_plan_for_transfer_state(&config, &mut state, mode, &plan_opts)?;
 
-        if state_has_manifest(&state) {
+        if had_manifest {
             plan::ensure_manifest_matches_snapshot(&state.planned_batches, &plan)?;
         } else {
             eprintln!(

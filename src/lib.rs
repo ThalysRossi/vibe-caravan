@@ -18,6 +18,7 @@ pub mod scan;
 pub mod signal;
 pub mod size;
 pub mod snapshot;
+pub mod source_completion;
 pub mod state_discovery;
 pub mod state_store;
 pub mod status;

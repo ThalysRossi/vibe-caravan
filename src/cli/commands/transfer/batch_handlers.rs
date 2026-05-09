@@ -196,6 +196,7 @@ pub(super) fn copy_single_batch(
             ))
         },
     )?;
+    crate::source_completion::mark_batch_completed(&context.config.source, &state.mode, batch)?;
 
     Ok(())
 }
@@ -225,6 +226,17 @@ pub(super) fn verify_single_batch(
     ) {
         if let CaravanError::VerificationFailed(failure) = &err {
             print_verification_failed(failure);
+            crate::source_completion::remove_batch_completed(
+                &context.config.source,
+                &state.mode,
+                batch,
+            )
+            .map_err(|remove_err| {
+                CaravanError::StateCorrupt(format!(
+                    "verification failed for {} and completed-file ledger cleanup failed: {}",
+                    batch.id, remove_err
+                ))
+            })?;
         }
         return Err(err);
     }
