@@ -381,8 +381,9 @@ fn error_message_includes_file_path_when_directory_creation_fails() {
     .expect_err("copy should fail when destination root is not a directory");
 
     let err_str = err.to_string();
+    let expected_relative = PathBuf::from("subdir").join("file.txt");
     assert!(
-        err_str.contains("subdir/file.txt"),
+        err_str.contains(&expected_relative.display().to_string()),
         "error should include failing relative file path, got: {err_str}"
     );
 }
@@ -603,7 +604,11 @@ fn copy_batch_with_components_surfaces_directory_creator_failures() {
     )
     .expect_err("directory creation should fail");
 
-    assert!(err.to_string().contains("nested/file.txt"));
+    let expected_relative = PathBuf::from("nested").join("file.txt");
+    assert!(
+        err.to_string()
+            .contains(&expected_relative.display().to_string())
+    );
     assert!(!dst.path().join("nested/file.txt").exists());
 }
 

@@ -6,7 +6,7 @@ use crate::migration_registry::MigrationStatus;
 use crate::models::state::{MigrationPhase, MigrationState};
 use crate::plan::PlanOptions;
 use crate::signal::{ShutdownFlag, install_signal_handlers};
-use crate::{plan, resume as resume_ops, scan, snapshot, source_completion, state_store};
+use crate::{plan, progress, resume as resume_ops, scan, snapshot, source_completion, state_store};
 
 use super::shared::{
     AppContext, OperatorReviewPolicy, approve_and_delete_verified_batches,
@@ -37,7 +37,12 @@ fn ensure_resume_manifest_is_consistent(
         plan::build_plan(&config.source, &plan_opts)?
     } else {
         let entries = scan::scan_source(&config.source)?;
-        let hashed_entries = source_completion::hash_source_entries(&config.source, &entries)?;
+        let mut hashing_progress = progress::TerminalProgress::new();
+        let hashed_entries = source_completion::hash_source_entries_with_progress(
+            &config.source,
+            &entries,
+            &mut hashing_progress,
+        )?;
         let filtered_entries = source_completion::filter_entries_for_persisted_skips(
             &state.mode,
             entries,

@@ -221,8 +221,15 @@ fn cleanup_failure_marks_batch_failed_and_journals_failure() {
     assert_eq!(state.journal.len(), 2);
     assert_eq!(state.journal[0].event, "delete_started");
     assert_eq!(state.journal[1].event, "delete_failed");
+    let calls = remover
+        .calls
+        .lock()
+        .expect("delete calls should be recorded");
+    let failed_path = calls.get(1).expect("second delete should fail");
     assert!(
-        state.journal[1].context.contains("x/b.txt"),
+        state.journal[1]
+            .context
+            .contains(&failed_path.display().to_string()),
         "failure journal should include the file path"
     );
 }

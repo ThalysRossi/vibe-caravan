@@ -3,7 +3,7 @@ use crate::error::CaravanError;
 use crate::models::state::{MigrationPhase, MigrationState};
 use crate::plan::PlanOptions;
 use crate::transfer as transfer_ops;
-use crate::{migration_registry, plan, preflight, scan, snapshot, source_completion};
+use crate::{migration_registry, plan, preflight, progress, scan, snapshot, source_completion};
 
 use super::shared::{
     AppContext, OperatorReviewPolicy, ensure_no_operator_review_blocks_with_policy,
@@ -45,7 +45,12 @@ fn build_plan_for_transfer_state(
 ) -> Result<plan::PlanningSnapshot, CaravanError> {
     if state_is_empty_for_completed_file_filtering(state) {
         let entries = scan::scan_source(&config.source)?;
-        let hashed_entries = source_completion::hash_source_entries(&config.source, &entries)?;
+        let mut hashing_progress = progress::TerminalProgress::new();
+        let hashed_entries = source_completion::hash_source_entries_with_progress(
+            &config.source,
+            &entries,
+            &mut hashing_progress,
+        )?;
         source_completion::backfill_ledger_from_existing_states(
             &config.source,
             mode,
@@ -64,7 +69,12 @@ fn build_plan_for_transfer_state(
 
     if !state.skipped_completed_files.is_empty() {
         let entries = scan::scan_source(&config.source)?;
-        let hashed_entries = source_completion::hash_source_entries(&config.source, &entries)?;
+        let mut hashing_progress = progress::TerminalProgress::new();
+        let hashed_entries = source_completion::hash_source_entries_with_progress(
+            &config.source,
+            &entries,
+            &mut hashing_progress,
+        )?;
         let filtered_entries = source_completion::filter_entries_for_persisted_skips(
             mode,
             entries,

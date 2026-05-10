@@ -91,6 +91,11 @@ fn new_destination_skips_files_completed_by_previous_destination() {
         !output.status.success(),
         "non-interactive run should stop at delete approval after copying remaining files"
     );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Hashing source"),
+        "staging should show hashing progress before planning; stderr: {stderr}"
+    );
 
     assert!(
         !second_dest.join("a.txt").exists(),

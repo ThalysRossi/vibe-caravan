@@ -1,6 +1,5 @@
 use std::fs;
-use std::os::unix::fs::symlink;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use tempfile::TempDir;
@@ -8,6 +7,16 @@ use tempfile::TempDir;
 use caravan::conflict::detect_batch_conflicts;
 use caravan::models::batch::Batch;
 use caravan::models::file_entry::FileEntry;
+
+#[cfg(target_os = "linux")]
+fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(target_os = "windows")]
+fn create_file_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(target, link)
+}
 
 // Helper function to create a test batch similar to the one in src/conflict.rs
 fn create_test_batch() -> Batch {
@@ -73,12 +82,13 @@ fn test_symlink_conflict_no_size_comparison() {
     let dest = TempDir::new().expect("temp dir");
 
     // Create a symlink at destination
-    fs::write(dest.path().join("target.txt"), b"target").expect("should write");
-    symlink(
-        dest.path().join("target.txt"),
-        dest.path().join("file1.txt"),
-    )
-    .expect("should symlink");
+    let target_path = dest.path().join("target.txt");
+    let link_path = dest.path().join("file1.txt");
+    fs::write(&target_path, b"target").expect("should write");
+    if let Err(err) = create_file_symlink(&target_path, &link_path) {
+        eprintln!("skipping symlink conflict test because symlink creation failed: {err}");
+        return;
+    }
 
     let report = detect_batch_conflicts(&batch, dest.path()).expect("should succeed");
 

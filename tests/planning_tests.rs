@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use caravan::plan::{PlanOptions, build_plan, load_batch_definition, plan_batches};
 use caravan::scan::scan_source;
@@ -94,16 +94,28 @@ fn directory_local_files_stay_together_when_possible() {
     let first: Vec<_> = batches[0]
         .files
         .iter()
-        .map(|f| f.relative_path.to_string_lossy().to_string())
+        .map(|f| f.relative_path.clone())
         .collect();
     let second: Vec<_> = batches[1]
         .files
         .iter()
-        .map(|f| f.relative_path.to_string_lossy().to_string())
+        .map(|f| f.relative_path.clone())
         .collect();
 
-    assert_eq!(first, vec!["a/1.txt", "a/2.txt"]);
-    assert_eq!(second, vec!["b/1.txt", "b/2.txt"]);
+    assert_eq!(
+        first,
+        vec![
+            PathBuf::from("a").join("1.txt"),
+            PathBuf::from("a").join("2.txt")
+        ]
+    );
+    assert_eq!(
+        second,
+        vec![
+            PathBuf::from("b").join("1.txt"),
+            PathBuf::from("b").join("2.txt")
+        ]
+    );
 }
 
 #[test]

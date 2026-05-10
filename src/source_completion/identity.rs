@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
 use crate::models::state::CompletedFileIdentity;
+use crate::progress::{NoopProgress, ProgressReporter};
 use crate::verify;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,8 +25,23 @@ pub fn hash_source_entries(
     source_root: &Path,
     entries: &[FileEntry],
 ) -> Result<Vec<HashedFileEntry>, CaravanError> {
+    let mut progress = NoopProgress;
+    hash_source_entries_with_progress(source_root, entries, &mut progress)
+}
+
+pub fn hash_source_entries_with_progress(
+    source_root: &Path,
+    entries: &[FileEntry],
+    progress: &mut dyn ProgressReporter,
+) -> Result<Vec<HashedFileEntry>, CaravanError> {
+    let total_bytes = entries
+        .iter()
+        .fold(0_u64, |total, entry| total.saturating_add(entry.size_bytes));
+    progress.set_total_bytes(total_bytes);
+    progress.start(entries.len(), "Hashing source");
+
     let mut hashed_entries = Vec::with_capacity(entries.len());
-    for entry in entries {
+    for (index, entry) in entries.iter().enumerate() {
         let source_path = source_root.join(&entry.relative_path);
         let blake3_hash = hash_file_hex(&source_path)?;
         hashed_entries.push(HashedFileEntry {
@@ -33,7 +49,10 @@ pub fn hash_source_entries(
             size_bytes: entry.size_bytes,
             blake3_hash,
         });
+        progress.advance(index + 1, Some(&entry.relative_path.to_string_lossy()));
     }
+
+    progress.finish();
     Ok(hashed_entries)
 }
 

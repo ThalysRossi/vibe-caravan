@@ -153,13 +153,22 @@ fn capacity_trace_includes_destination_volume_and_raw_bytes() {
         total: 10_000,
         available: 9_000,
     };
+    #[cfg(target_os = "windows")]
+    let destination = Path::new("C:\\fake\\destination");
+    #[cfg(target_os = "windows")]
+    let expected_volume_root = "volume_root=C:\\";
 
-    let report = check_capacity_with_probe(Path::new("/fake/destination"), 2_000, 500, &probe)
+    #[cfg(target_os = "linux")]
+    let destination = Path::new("/fake/destination");
+    #[cfg(target_os = "linux")]
+    let expected_volume_root = "volume_root=/";
+
+    let report = check_capacity_with_probe(destination, 2_000, 500, &probe)
         .expect("capacity check should succeed");
 
-    let trace = format_capacity_decision_trace(Path::new("/fake/destination"), &report);
-    assert!(trace.contains("destination=/fake/destination"));
-    assert!(trace.contains("volume_root=/"));
+    let trace = format_capacity_decision_trace(destination, &report);
+    assert!(trace.contains(&format!("destination={}", destination.display())));
+    assert!(trace.contains(expected_volume_root));
     assert!(trace.contains("available_raw_bytes=9000"));
     assert!(trace.contains("required_raw_bytes=2500"));
     assert!(trace.contains("planned_raw_bytes=2000"));

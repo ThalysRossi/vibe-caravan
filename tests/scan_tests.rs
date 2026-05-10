@@ -1,5 +1,6 @@
 use caravan::scan::{ScanBackend, active_scan_backend, scan_source, scan_source_with_backend};
 use std::fs;
+use std::path::PathBuf;
 use tempfile::TempDir;
 
 #[test]
@@ -25,19 +26,18 @@ fn scan_excludes_caravan_directory_at_root() {
     let scanned = scan_source(tmp.path()).expect("scan should succeed");
 
     // Verify .caravan files are NOT in scan results
-    let scanned_paths: Vec<String> = scanned
-        .iter()
-        .map(|e| e.relative_path.to_string_lossy().to_string())
-        .collect();
+    let scanned_paths: Vec<PathBuf> = scanned.iter().map(|e| e.relative_path.clone()).collect();
 
     // Should only have the regular files
     assert_eq!(scanned.len(), 2, "Should only scan 2 regular files");
-    assert!(scanned_paths.contains(&"file1.txt".to_string()));
-    assert!(scanned_paths.contains(&"file2.txt".to_string()));
+    assert!(scanned_paths.contains(&PathBuf::from("file1.txt")));
+    assert!(scanned_paths.contains(&PathBuf::from("file2.txt")));
 
     // Should NOT contain any .caravan paths
     assert!(
-        !scanned_paths.iter().any(|p| p.contains(".caravan")),
+        !scanned_paths.iter().any(|p| p
+            .components()
+            .any(|component| component.as_os_str() == ".caravan")),
         "Scan should not include .caravan files: {:?}",
         scanned_paths
     );
@@ -64,19 +64,18 @@ fn scan_excludes_caravan_directory_in_subdirectory() {
     let scanned = scan_source(tmp.path()).expect("scan should succeed");
 
     // Verify .caravan files are NOT in scan results
-    let scanned_paths: Vec<String> = scanned
-        .iter()
-        .map(|e| e.relative_path.to_string_lossy().to_string())
-        .collect();
+    let scanned_paths: Vec<PathBuf> = scanned.iter().map(|e| e.relative_path.clone()).collect();
 
     // Should only have the regular files
     assert_eq!(scanned.len(), 2, "Should only scan 2 regular files");
-    assert!(scanned_paths.contains(&"docs/doc1.txt".to_string()));
-    assert!(scanned_paths.contains(&"docs/doc2.txt".to_string()));
+    assert!(scanned_paths.contains(&PathBuf::from("docs").join("doc1.txt")));
+    assert!(scanned_paths.contains(&PathBuf::from("docs").join("doc2.txt")));
 
     // Should NOT contain any .caravan paths
     assert!(
-        !scanned_paths.iter().any(|p| p.contains(".caravan")),
+        !scanned_paths.iter().any(|p| p
+            .components()
+            .any(|component| component.as_os_str() == ".caravan")),
         "Scan should not include .caravan files: {:?}",
         scanned_paths
     );
@@ -101,10 +100,7 @@ fn scan_includes_other_hidden_directories() {
     let scanned = scan_source(tmp.path()).expect("scan should succeed");
 
     // Verify .git and .hidden ARE included (only .caravan excluded)
-    let scanned_paths: Vec<String> = scanned
-        .iter()
-        .map(|e| e.relative_path.to_string_lossy().to_string())
-        .collect();
+    let scanned_paths: Vec<PathBuf> = scanned.iter().map(|e| e.relative_path.clone()).collect();
 
     // Should have all 3 files
     assert_eq!(
@@ -112,17 +108,17 @@ fn scan_includes_other_hidden_directories() {
         3,
         "Should scan 3 files (.git/config, .hidden, visible.txt)"
     );
-    assert!(scanned_paths.contains(&".git/config".to_string()));
-    assert!(scanned_paths.contains(&".hidden".to_string()));
-    assert!(scanned_paths.contains(&"visible.txt".to_string()));
+    assert!(scanned_paths.contains(&PathBuf::from(".git").join("config")));
+    assert!(scanned_paths.contains(&PathBuf::from(".hidden")));
+    assert!(scanned_paths.contains(&PathBuf::from("visible.txt")));
 }
 
 #[test]
 fn active_scan_backend_is_platform_aware() {
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     assert_eq!(active_scan_backend(), ScanBackend::Win32FindFirstEx);
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     assert_eq!(active_scan_backend(), ScanBackend::StdFs);
 }
 
@@ -141,19 +137,18 @@ fn std_backend_scan_is_deterministic_and_sorted() {
     let first = scan_source_with_backend(tmp.path(), ScanBackend::StdFs).expect("scan 1");
     let second = scan_source_with_backend(tmp.path(), ScanBackend::StdFs).expect("scan 2");
 
-    let first_paths: Vec<String> = first
-        .iter()
-        .map(|e| e.relative_path.to_string_lossy().to_string())
-        .collect();
-    let second_paths: Vec<String> = second
-        .iter()
-        .map(|e| e.relative_path.to_string_lossy().to_string())
-        .collect();
+    let first_paths: Vec<PathBuf> = first.iter().map(|e| e.relative_path.clone()).collect();
+    let second_paths: Vec<PathBuf> = second.iter().map(|e| e.relative_path.clone()).collect();
 
     assert_eq!(first_paths, second_paths);
     assert_eq!(
         first_paths,
-        vec!["a/a.txt", "a/b.txt", "x/a.txt", "x/z.txt"]
+        vec![
+            PathBuf::from("a").join("a.txt"),
+            PathBuf::from("a").join("b.txt"),
+            PathBuf::from("x").join("a.txt"),
+            PathBuf::from("x").join("z.txt")
+        ]
     );
 }
 
@@ -162,35 +157,33 @@ fn scan_handles_deep_directory_trees() {
     let tmp = TempDir::new().expect("temp dir");
 
     let mut current = tmp.path().to_path_buf();
-    let mut expected_rel = String::new();
-    for depth in 0..256 {
+    let mut expected_rel = PathBuf::new();
+    #[cfg(target_os = "windows")]
+    let max_depth = 32;
+    #[cfg(target_os = "linux")]
+    let max_depth = 256;
+    for depth in 0..max_depth {
         let segment = format!("d{depth:03}");
         current = current.join(&segment);
         fs::create_dir_all(&current).expect("create nested directory");
-        if !expected_rel.is_empty() {
-            expected_rel.push('/');
-        }
-        expected_rel.push_str(&segment);
+        expected_rel.push(&segment);
     }
 
     let deep_file = current.join("leaf.txt");
     fs::write(&deep_file, "leaf").expect("create deep file");
-    let expected_file = format!("{expected_rel}/leaf.txt");
+    let expected_file = expected_rel.join("leaf.txt");
 
     let scanned = scan_source(tmp.path()).expect("scan should succeed");
-    let scanned_paths: Vec<String> = scanned
-        .iter()
-        .map(|e| e.relative_path.to_string_lossy().to_string())
-        .collect();
+    let scanned_paths: Vec<PathBuf> = scanned.iter().map(|e| e.relative_path.clone()).collect();
 
     assert!(
         scanned_paths.contains(&expected_file),
         "expected deep file path not found: {}",
-        expected_file
+        expected_file.display()
     );
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "windows")]
 mod windows_filetime_tests {
     use caravan::scan::windows_filetime_ticks_to_system_time;
     use std::time::{Duration, UNIX_EPOCH};
