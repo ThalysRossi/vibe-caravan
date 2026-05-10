@@ -39,7 +39,7 @@ impl Drop for WinFindHandle {
         // SAFETY: `self.0` originates from a successful `FindFirstFileExW` call and this
         // guard enforces a single `FindClose` on scope exit.
         unsafe {
-            let _ = windows_sys::Win32::Foundation::FindClose(self.0);
+            let _ = windows_sys::Win32::Storage::FileSystem::FindClose(self.0);
         }
     }
 }
