@@ -3,9 +3,9 @@ use std::path::Path;
 use crate::config::Mode;
 use crate::error::CaravanError;
 
-use super::paths::{
-    canonical_path, canonical_path_for_maybe_missing, path_within_or_equal, resolve_existing_path,
-};
+#[cfg(target_os = "linux")]
+use super::paths::resolve_existing_path;
+use super::paths::{canonical_path, canonical_path_for_maybe_missing, path_within_or_equal};
 
 pub fn validate_snapshot_configuration(
     mode: Mode,

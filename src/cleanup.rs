@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::{BatchPhase, JournalEntry, MigrationState};
+use crate::progress::{NoopProgress, ProgressReporter};
 
 pub trait FileRemover {
     fn remove_file(&self, path: &Path) -> std::io::Result<()>;
@@ -25,7 +26,54 @@ pub fn cleanup_batch(
     state: &mut MigrationState,
     execution_context: &str,
 ) -> Result<(), CaravanError> {
-    cleanup_batch_with_remover(batch, source_root, state, execution_context, &FsFileRemover)
+    let mut progress = NoopProgress;
+    let mut no_interrupt = || Ok(());
+    cleanup_batch_with_remover_and_progress(
+        batch,
+        source_root,
+        state,
+        execution_context,
+        &FsFileRemover,
+        &mut progress,
+        &mut no_interrupt,
+    )
+}
+
+pub fn cleanup_batch_with_progress(
+    batch: &Batch,
+    source_root: &Path,
+    state: &mut MigrationState,
+    execution_context: &str,
+    progress: &mut dyn ProgressReporter,
+) -> Result<(), CaravanError> {
+    let mut no_interrupt = || Ok(());
+    cleanup_batch_with_progress_and_interrupt(
+        batch,
+        source_root,
+        state,
+        execution_context,
+        progress,
+        &mut no_interrupt,
+    )
+}
+
+pub fn cleanup_batch_with_progress_and_interrupt(
+    batch: &Batch,
+    source_root: &Path,
+    state: &mut MigrationState,
+    execution_context: &str,
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<(), CaravanError> {
+    cleanup_batch_with_remover_and_progress(
+        batch,
+        source_root,
+        state,
+        execution_context,
+        &FsFileRemover,
+        progress,
+        check_interrupt,
+    )
 }
 
 pub fn cleanup_batch_with_remover(
@@ -34,6 +82,28 @@ pub fn cleanup_batch_with_remover(
     state: &mut MigrationState,
     execution_context: &str,
     remover: &dyn FileRemover,
+) -> Result<(), CaravanError> {
+    let mut progress = NoopProgress;
+    let mut no_interrupt = || Ok(());
+    cleanup_batch_with_remover_and_progress(
+        batch,
+        source_root,
+        state,
+        execution_context,
+        remover,
+        &mut progress,
+        &mut no_interrupt,
+    )
+}
+
+pub fn cleanup_batch_with_remover_and_progress(
+    batch: &Batch,
+    source_root: &Path,
+    state: &mut MigrationState,
+    execution_context: &str,
+    remover: &dyn FileRemover,
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
     let batch_state = state.batch(&batch.id).cloned().ok_or_else(|| {
         CaravanError::StateCorrupt(format!(
@@ -56,6 +126,9 @@ pub fn cleanup_batch_with_remover(
         return Ok(());
     }
 
+    check_interrupt()?;
+    progress.start(batch.files.len(), "Deleting source files");
+
     state.journal.push(JournalEntry {
         event: "delete_started".to_string(),
         batch_id: batch.id.clone(),
@@ -63,7 +136,8 @@ pub fn cleanup_batch_with_remover(
         context: execution_context.to_string(),
     });
 
-    for file in &batch.files {
+    for (index, file) in batch.files.iter().enumerate() {
+        check_interrupt()?;
         let path = source_root.join(&file.relative_path);
         if path.exists() {
             if let Err(err) = remover.remove_file(&path) {
@@ -88,6 +162,8 @@ pub fn cleanup_batch_with_remover(
                 });
             }
         }
+        progress.advance(index + 1, file.relative_path.to_str());
+        check_interrupt()?;
     }
 
     let mut updated = batch_state.clone();
@@ -101,6 +177,7 @@ pub fn cleanup_batch_with_remover(
         context: execution_context.to_string(),
     });
 
+    progress.finish();
     Ok(())
 }
 

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::CaravanError;
 
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn resolve_existing_path(path: &Path) -> Result<PathBuf, CaravanError> {
     let mut candidate: Option<&Path> = Some(path);
     while let Some(current) = candidate {

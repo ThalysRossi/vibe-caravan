@@ -69,20 +69,23 @@ pub fn verify_batch_with_progress(
             continue;
         }
 
-        let source_digest = match digest_file(&source_path) {
+        let source_digest = match digest_file_with_interrupt(&source_path, check_interrupt) {
             Ok(value) => value,
+            Err(CaravanError::GracefulShutdown) => return Err(CaravanError::GracefulShutdown),
             Err(_) => {
                 unreadable_files.push(rel.clone());
                 continue;
             }
         };
-        let destination_digest = match digest_file(&destination_path) {
-            Ok(value) => value,
-            Err(_) => {
-                unreadable_files.push(rel.clone());
-                continue;
-            }
-        };
+        let destination_digest =
+            match digest_file_with_interrupt(&destination_path, check_interrupt) {
+                Ok(value) => value,
+                Err(CaravanError::GracefulShutdown) => return Err(CaravanError::GracefulShutdown),
+                Err(_) => {
+                    unreadable_files.push(rel.clone());
+                    continue;
+                }
+            };
         if source_digest != destination_digest {
             mismatched_files.push(rel);
         }
@@ -120,7 +123,17 @@ pub fn verify_batch_with_progress(
 }
 
 pub fn digest_file(path: &Path) -> Result<[u8; 32], CaravanError> {
+    let mut no_interrupt = || Ok(());
+    digest_file_with_interrupt(path, &mut no_interrupt)
+}
+
+pub fn digest_file_with_interrupt(
+    path: &Path,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<[u8; 32], CaravanError> {
     use std::io::Read;
+
+    check_interrupt()?;
 
     let mut file = fs::File::open(path)
         .map_err(|err| CaravanError::Io(format!("failed to open {}: {}", path.display(), err)))?;
@@ -129,6 +142,7 @@ pub fn digest_file(path: &Path) -> Result<[u8; 32], CaravanError> {
     let mut buffer = vec![0u8; 1024 * 1024]; // 1MB streaming buffer on heap
 
     loop {
+        check_interrupt()?;
         let bytes_read = file.read(&mut buffer).map_err(|err| {
             CaravanError::Io(format!("failed to read {}: {}", path.display(), err))
         })?;
@@ -140,5 +154,6 @@ pub fn digest_file(path: &Path) -> Result<[u8; 32], CaravanError> {
         hasher.update(&buffer[..bytes_read]);
     }
 
+    check_interrupt()?;
     Ok(hasher.finalize().into())
 }

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use caravan::capacity::{
     CapacityDecision, SpaceInfo, SpaceProbe, check_capacity_with_probe,
-    format_capacity_decision_trace,
+    format_capacity_decision_trace, format_destination_space_diagnostic, inspect_destination_space,
 };
 use caravan::error::CaravanError;
 
@@ -193,4 +193,53 @@ fn capacity_trace_includes_probe_and_decision_breakdown() {
     assert!(trace.contains("headroom_raw_bytes="));
     assert!(trace.contains("decision_rule="));
     assert!(trace.contains("decision_reason="));
+}
+
+#[test]
+fn destination_space_diagnostics_count_visible_files_and_caravan_parts() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    std::fs::write(tmp.path().join("movie.mkv"), b"movie").expect("movie file");
+    std::fs::write(tmp.path().join("movie.mkv.caravan.part"), b"partial").expect("part file");
+
+    let diagnostics = inspect_destination_space(tmp.path());
+
+    assert!(diagnostics.destination_exists);
+    assert_eq!(diagnostics.visible_file_count, 2);
+    assert_eq!(diagnostics.visible_logical_bytes, 12);
+    assert_eq!(diagnostics.caravan_part_file_count, 1);
+    assert_eq!(diagnostics.caravan_part_logical_bytes, 7);
+    assert_eq!(diagnostics.scan_error_count, 0);
+}
+
+#[test]
+fn destination_space_diagnostic_trace_includes_visible_and_temp_bytes() {
+    let report = caravan::capacity::CapacityReport {
+        total_capacity_bytes: 10_000,
+        available_free_bytes: 1_000,
+        volume_free_bytes: 1_000,
+        planned_batch_bytes: 2_000,
+        reserve_margin_bytes: 0,
+        probe_backend: "test",
+        decision: CapacityDecision::Abort,
+        reason: Some("insufficient destination space".to_string()),
+    };
+    let diagnostics = caravan::capacity::DestinationSpaceDiagnostics {
+        destination_exists: true,
+        visible_file_count: 3,
+        visible_logical_bytes: 4_000,
+        caravan_part_file_count: 1,
+        caravan_part_logical_bytes: 500,
+        scan_error_count: 0,
+    };
+
+    let trace =
+        format_destination_space_diagnostic(Path::new("/fake/destination"), &report, &diagnostics);
+
+    assert!(trace.contains("destination_usage"));
+    assert!(trace.contains("visible_file_count=3"));
+    assert!(trace.contains("visible_logical_raw_bytes=4000"));
+    assert!(trace.contains("caravan_part_file_count=1"));
+    assert!(trace.contains("caravan_part_logical_raw_bytes=500"));
+    assert!(trace.contains("volume_used_raw_bytes=9000"));
+    assert!(trace.contains("hidden_or_other_raw_bytes=5000"));
 }

@@ -1,20 +1,139 @@
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
 use crate::models::state::CompletedFileIdentity;
+use crate::progress::ProgressReporter;
 
+use super::backfill::{
+    backfill_ledger_from_existing_states_with_interrupt, candidate_paths_from_existing_states,
+};
 use super::identity::{
     FileIdentityKey, HashedFileEntry, file_key_from_completed_identity, file_key_from_hashed_entry,
-    identity_from_hashed_entry,
+    hash_source_candidates_with_progress_and_interrupt, identity_from_hashed_entry,
 };
-use super::ledger::SourceCompletionLedger;
+use super::ledger::{SourceCompletionLedger, load_ledger};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilteredSourceEntries {
     pub entries_to_plan: Vec<FileEntry>,
     pub skipped_completed_files: Vec<CompletedFileIdentity>,
+}
+
+pub fn filter_entries_for_new_migration_selective(
+    source_root: &Path,
+    mode: &str,
+    entries: Vec<FileEntry>,
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<FilteredSourceEntries, CaravanError> {
+    check_interrupt()?;
+    let mut ledger = load_ledger(source_root)?;
+    let scanned_by_path = entries_by_path(&entries);
+    let mut candidate_paths = ledger_candidate_paths(mode, &ledger, &scanned_by_path);
+    candidate_paths.extend(candidate_paths_from_existing_states(
+        source_root,
+        mode,
+        &scanned_by_path,
+        check_interrupt,
+    )?);
+
+    let candidates = entries
+        .iter()
+        .filter(|entry| candidate_paths.contains(&entry.relative_path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let hashed_entries = hash_source_candidates_with_progress_and_interrupt(
+        source_root,
+        &candidates,
+        progress,
+        check_interrupt,
+    )?;
+    check_interrupt()?;
+    backfill_ledger_from_existing_states_with_interrupt(
+        source_root,
+        mode,
+        &hashed_entries,
+        check_interrupt,
+    )?;
+    ledger = load_ledger(source_root)?;
+
+    let completed_keys: HashSet<CompletedFileIdentity> = ledger.entries.iter().cloned().collect();
+    let hashed_by_path: HashMap<&Path, &HashedFileEntry> = hashed_entries
+        .iter()
+        .map(|entry| (entry.relative_path.as_path(), entry))
+        .collect();
+
+    let mut entries_to_plan = Vec::new();
+    let mut skipped_completed_files = Vec::new();
+    for entry in entries {
+        check_interrupt()?;
+        let Some(hashed) = hashed_by_path.get(entry.relative_path.as_path()) else {
+            entries_to_plan.push(entry);
+            continue;
+        };
+        let identity = identity_from_hashed_entry(mode, hashed);
+        if completed_keys.contains(&identity) {
+            skipped_completed_files.push(identity);
+        } else {
+            entries_to_plan.push(entry);
+        }
+    }
+
+    Ok(FilteredSourceEntries {
+        entries_to_plan,
+        skipped_completed_files,
+    })
+}
+
+pub fn filter_entries_for_persisted_skips_selective(
+    source_root: &Path,
+    mode: &str,
+    entries: Vec<FileEntry>,
+    skipped_completed_files: &[CompletedFileIdentity],
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<Vec<FileEntry>, CaravanError> {
+    check_interrupt()?;
+    let scanned_by_path = entries_by_path(&entries);
+    let mut candidate_paths = HashSet::new();
+    for skipped in skipped_completed_files {
+        check_interrupt()?;
+        validate_skipped_file_metadata(mode, skipped, &scanned_by_path)?;
+        candidate_paths.insert(skipped.relative_path.clone());
+    }
+
+    let candidates = entries
+        .iter()
+        .filter(|entry| candidate_paths.contains(&entry.relative_path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let hashed_entries = hash_source_candidates_with_progress_and_interrupt(
+        source_root,
+        &candidates,
+        progress,
+        check_interrupt,
+    )?;
+    check_interrupt()?;
+
+    let hashed_by_path: HashMap<&Path, &HashedFileEntry> = hashed_entries
+        .iter()
+        .map(|entry| (entry.relative_path.as_path(), entry))
+        .collect();
+    for skipped in skipped_completed_files {
+        validate_skipped_file(mode, skipped, &hashed_by_path)?;
+    }
+
+    let skipped_paths: HashSet<&Path> = skipped_completed_files
+        .iter()
+        .map(|identity| identity.relative_path.as_path())
+        .collect();
+
+    Ok(entries
+        .into_iter()
+        .filter(|entry| !skipped_paths.contains(entry.relative_path.as_path()))
+        .collect())
 }
 
 pub fn filter_entries_for_new_migration(
@@ -116,6 +235,59 @@ fn validate_skipped_file(
     }
 
     Ok(())
+}
+
+fn validate_skipped_file_metadata(
+    mode: &str,
+    skipped: &CompletedFileIdentity,
+    scanned_by_path: &HashMap<PathBuf, FileEntry>,
+) -> Result<(), CaravanError> {
+    if skipped.mode != mode {
+        return Err(CaravanError::StateCorrupt(format!(
+            "skipped completed file '{}' belongs to mode '{}' but current state mode is '{}'",
+            skipped.relative_path.display(),
+            skipped.mode,
+            mode
+        )));
+    }
+
+    let Some(current) = scanned_by_path.get(&skipped.relative_path) else {
+        return Err(CaravanError::InvalidArguments(format!(
+            "source drift detected for skipped completed file '{}': file is missing",
+            skipped.relative_path.display()
+        )));
+    };
+    if current.size_bytes != skipped.size_bytes {
+        return Err(CaravanError::InvalidArguments(format!(
+            "source drift detected for skipped completed file '{}': identity changed",
+            skipped.relative_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+fn entries_by_path(entries: &[FileEntry]) -> HashMap<PathBuf, FileEntry> {
+    entries
+        .iter()
+        .map(|entry| (entry.relative_path.clone(), entry.clone()))
+        .collect()
+}
+
+fn ledger_candidate_paths(
+    mode: &str,
+    ledger: &SourceCompletionLedger,
+    scanned_by_path: &HashMap<PathBuf, FileEntry>,
+) -> HashSet<PathBuf> {
+    ledger
+        .entries
+        .iter()
+        .filter(|identity| identity.mode == mode)
+        .filter_map(|identity| {
+            let scanned = scanned_by_path.get(&identity.relative_path)?;
+            (scanned.size_bytes == identity.size_bytes).then(|| identity.relative_path.clone())
+        })
+        .collect()
 }
 
 fn missing_hashed_entry_error(relative_path: &Path) -> CaravanError {

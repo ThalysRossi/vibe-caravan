@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
+use crate::progress::ProgressReporter;
 
 use super::map_io;
 
@@ -56,15 +57,18 @@ pub(super) fn visit_dir_win32(
     source_root: &Path,
     start_dir: &Path,
     output: &mut Vec<FileEntry>,
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_DEVICE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
     };
 
     let mut stack: Vec<WinEnumeratedEntry> = Vec::new();
-    push_win_children_in_reverse_sorted_order(start_dir, &mut stack)?;
+    push_win_children_in_reverse_sorted_order(start_dir, &mut stack, check_interrupt)?;
 
     while let Some(child) = stack.pop() {
+        check_interrupt()?;
         let is_dir = child.attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
         let is_reparse_point = child.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
         let is_device = child.attributes & FILE_ATTRIBUTE_DEVICE != 0;
@@ -77,7 +81,7 @@ pub(super) fn visit_dir_win32(
             if matches!(child.path.file_name(), Some(file_name) if file_name == ".caravan") {
                 continue;
             }
-            push_win_children_in_reverse_sorted_order(&child.path, &mut stack)?;
+            push_win_children_in_reverse_sorted_order(&child.path, &mut stack, check_interrupt)?;
             continue;
         }
 
@@ -88,11 +92,15 @@ pub(super) fn visit_dir_win32(
                 source_root.display()
             ))
         })?;
-        output.push(FileEntry {
+        let file_entry = FileEntry {
             relative_path: relative_path.to_path_buf(),
             size_bytes: child.size_bytes,
             modified_time: child.modified_time,
-        });
+        };
+        output.push(file_entry);
+        let item_name = output.last().map(|entry| entry.relative_path.as_path());
+        progress.advance(output.len(), item_name.and_then(|path| path.to_str()));
+        check_interrupt()?;
     }
 
     Ok(())
@@ -101,15 +109,21 @@ pub(super) fn visit_dir_win32(
 fn push_win_children_in_reverse_sorted_order(
     dir: &Path,
     stack: &mut Vec<WinEnumeratedEntry>,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
-    let children = enumerate_children_win32(dir)?;
+    check_interrupt()?;
+    let children = enumerate_children_win32(dir, check_interrupt)?;
     for child in children.into_iter().rev() {
+        check_interrupt()?;
         stack.push(child);
     }
     Ok(())
 }
 
-fn enumerate_children_win32(current_dir: &Path) -> Result<Vec<WinEnumeratedEntry>, CaravanError> {
+fn enumerate_children_win32(
+    current_dir: &Path,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<Vec<WinEnumeratedEntry>, CaravanError> {
     use std::ffi::OsString;
     use std::mem;
     use std::os::windows::ffi::{OsStrExt, OsStringExt};
@@ -156,6 +170,7 @@ fn enumerate_children_win32(current_dir: &Path) -> Result<Vec<WinEnumeratedEntry
 
     let mut children: Vec<WinEnumeratedEntry> = Vec::new();
     loop {
+        check_interrupt()?;
         let name = wide_to_os_string(&find_data.cFileName);
         let name_lossy = name.to_string_lossy();
         if name_lossy != "." && name_lossy != ".." {

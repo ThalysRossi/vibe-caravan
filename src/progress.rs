@@ -30,6 +30,7 @@ impl ProgressReporter for NoopProgress {
 /// Terminal progress bar implementation
 pub struct TerminalProgress {
     total: usize,
+    current: usize,
     total_bytes: Option<u64>,
     start_time: Instant,
     operation: String,
@@ -41,6 +42,7 @@ impl TerminalProgress {
     pub fn new() -> Self {
         TerminalProgress {
             total: 0,
+            current: 0,
             total_bytes: None,
             start_time: Instant::now(),
             operation: String::new(),
@@ -81,8 +83,8 @@ impl TerminalProgress {
 
     /// Calculate ETA string based on current progress and elapsed time
     fn calculate_eta(&self, current: usize, elapsed: Duration) -> String {
-        match (current > 0, current < self.total) {
-            (true, true) => {
+        match (self.total > 0, current > 0, current < self.total) {
+            (true, true, true) => {
                 let elapsed_secs = elapsed.as_secs_f64();
                 let secs_per_item = elapsed_secs / current as f64;
                 let remaining_items = (self.total - current) as f64;
@@ -97,12 +99,16 @@ impl TerminalProgress {
     /// Calculate throughput string based on elapsed time and total bytes
     fn calculate_throughput(&self, current: usize, elapsed: Duration) -> String {
         match (elapsed.as_secs() > 0, self.total_bytes) {
-            (true, Some(total_bytes)) => {
+            (true, Some(total_bytes)) if self.total > 0 => {
                 let files_per_sec = current as f64 / elapsed.as_secs_f64();
                 let estimated_bytes_copied =
                     (current as f64 / self.total as f64) * total_bytes as f64;
                 let mb_per_sec = estimated_bytes_copied / elapsed.as_secs_f64() / (1024.0 * 1024.0);
                 format!("{:.1} files/s, {:.1} MB/s", files_per_sec, mb_per_sec)
+            }
+            (true, Some(_)) => {
+                let files_per_sec = current as f64 / elapsed.as_secs_f64();
+                format!("{:.1} files/s, -- MB/s", files_per_sec)
             }
             (true, None) => {
                 let files_per_sec = current as f64 / elapsed.as_secs_f64();
@@ -115,6 +121,10 @@ impl TerminalProgress {
 
     /// Determine if the progress display should be updated
     fn should_update_display(&self, current: usize, percent: f64) -> bool {
+        if self.total == 0 {
+            return current == 0 || self.last_printed_time.elapsed().as_millis() >= 100;
+        }
+
         current == self.total
             || (percent - self.last_printed_percent).abs() >= 0.5
             || self.last_printed_time.elapsed().as_millis() >= 100
@@ -134,10 +144,25 @@ impl ProgressReporter for TerminalProgress {
 
     fn start(&mut self, total_items: usize, operation: &str) {
         self.total = total_items;
+        self.current = 0;
         self.start_time = Instant::now();
         self.operation = operation.to_string();
         self.last_printed_percent = -1.0;
         self.last_printed_time = Instant::now();
+        if self.total == 0 {
+            let throughput = if self.total_bytes.is_some() {
+                "-- files/s, -- MB/s"
+            } else {
+                "-- files/s"
+            };
+            eprint!(
+                "\r  {} 0 files | {} | elapsed 0s",
+                self.operation, throughput
+            );
+            let _ = stderr().flush();
+            return;
+        }
+
         let bar = Self::progress_bar(0.0, 20);
         let throughput = if self.total_bytes.is_some() {
             "-- files/s, -- MB/s"
@@ -152,6 +177,8 @@ impl ProgressReporter for TerminalProgress {
     }
 
     fn advance(&mut self, current: usize, _item_name: Option<&str>) {
+        self.current = current;
+
         // Calculate current percentage
         let percent = if self.total > 0 {
             (current as f64 / self.total as f64) * 100.0
@@ -170,8 +197,20 @@ impl ProgressReporter for TerminalProgress {
         let elapsed = self.start_time.elapsed();
 
         // Use helper methods for calculations
-        let eta = self.calculate_eta(current, elapsed);
         let throughput = self.calculate_throughput(current, elapsed);
+        if self.total == 0 {
+            eprint!(
+                "\r  {} {} files | {} | elapsed {}",
+                self.operation,
+                current,
+                throughput,
+                Self::format_duration(elapsed)
+            );
+            let _ = stderr().flush();
+            return;
+        }
+
+        let eta = self.calculate_eta(current, elapsed);
         let bar = Self::progress_bar(percent, 20);
 
         eprint!(
@@ -183,6 +222,16 @@ impl ProgressReporter for TerminalProgress {
 
     fn finish(&mut self) {
         let elapsed = self.start_time.elapsed();
+        if self.total == 0 {
+            eprintln!(
+                "\r  {} {} files Done in {}",
+                self.operation,
+                self.current,
+                Self::format_duration(elapsed)
+            );
+            return;
+        }
+
         let bar = Self::progress_bar(100.0, 20);
         eprintln!(
             "\r  {} {}/{} files {} Done in {}",
@@ -311,6 +360,7 @@ mod tests {
         <TerminalProgress as ProgressReporter>::start(&mut progress, 4, "copying");
 
         assert_eq!(progress.total, 4);
+        assert_eq!(progress.current, 0);
         assert_eq!(progress.operation, "copying");
         assert_eq!(progress.last_printed_percent, -1.0);
         assert!(
@@ -363,6 +413,21 @@ mod tests {
 
         <TerminalProgress as ProgressReporter>::advance(&mut progress, 0, None);
 
+        assert_eq!(progress.last_printed_percent, 0.0);
+    }
+
+    #[test]
+    fn trait_advance_with_unknown_total_records_current_count() {
+        let mut progress = TerminalProgress::new();
+        progress.total = 0;
+        progress.operation = "scanning".to_string();
+        progress.start_time = Instant::now() - Duration::from_secs(1);
+        progress.last_printed_percent = -1.0;
+        progress.last_printed_time = Instant::now() - Duration::from_millis(200);
+
+        <TerminalProgress as ProgressReporter>::advance(&mut progress, 37, None);
+
+        assert_eq!(progress.current, 37);
         assert_eq!(progress.last_printed_percent, 0.0);
     }
 }

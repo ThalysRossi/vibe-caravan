@@ -10,7 +10,7 @@ pub(super) use batch_ops::{
     CopyBatchOp, copy_batch_with_state_updates, handle_verification_error,
     mark_batch_failed_for_conflicts, non_conflicting_subset_batch, verify_batch_with_state_updates,
 };
-pub(super) use capacity_guard::ensure_destination_capacity;
+pub(super) use capacity_guard::ensure_destination_capacity_for_batch;
 pub(super) use deletion::approve_and_delete_verified_batches;
 pub(super) use operator_review::{
     OperatorReviewPolicy, ensure_no_operator_review_blocks,

@@ -6,8 +6,9 @@ use caravan::config::Mode;
 use caravan::error::CaravanError;
 use caravan::models::state::{BatchPhase, BatchState, MigrationState};
 use caravan::snapshot::{
-    SnapshotBackend, SnapshotRequest, process_pending_snapshots, snapshot_if_needed,
-    validate_snapshot_configuration,
+    SnapshotBackend, SnapshotProgressReporter, SnapshotRequest, process_pending_snapshots,
+    process_pending_snapshots_with_progress, process_pending_snapshots_with_progress_and_interrupt,
+    snapshot_if_needed, validate_snapshot_configuration,
 };
 use tempfile::TempDir;
 
@@ -91,6 +92,18 @@ impl SnapshotBackend for SnapshotRootAssertingBackend {
             )));
         }
         Ok("snap-with-custom-root".to_string())
+    }
+}
+
+#[derive(Default)]
+struct RecordingSnapshotProgress {
+    started: Vec<(String, u32)>,
+}
+
+impl SnapshotProgressReporter for RecordingSnapshotProgress {
+    fn creating_snapshot(&mut self, batch_id: &str, deleted_batch_count: u32) {
+        self.started
+            .push((batch_id.to_string(), deleted_batch_count));
     }
 }
 
@@ -282,6 +295,73 @@ fn process_pending_snapshots_applies_cadence_to_deleted_batches() {
         state.batch("batch-000004").unwrap().phase,
         BatchPhase::SnapshotCompleted
     );
+}
+
+#[test]
+fn process_pending_snapshots_reports_progress_before_snapshot_attempts() {
+    let mut state = MigrationState::new("migrate", "/src", "/dst");
+    for batch_id in ["batch-000001", "batch-000002", "batch-000003"] {
+        state.upsert_batch(BatchState {
+            batch_id: batch_id.to_string(),
+            phase: BatchPhase::DeleteCompleted,
+            verification_passed: true,
+            approved_for_delete: true,
+            deleted: true,
+        });
+    }
+
+    let backend = ScriptedSnapshotBackend::with_failing_batches(&["batch-000002"]);
+    let mut progress = RecordingSnapshotProgress::default();
+    let mut persist_state = |_current_state: &MigrationState| Ok::<(), CaravanError>(());
+
+    process_pending_snapshots_with_progress(
+        Mode::Migrate,
+        Some(2),
+        Path::new("/dst"),
+        None,
+        &mut state,
+        &backend,
+        &mut persist_state,
+        &mut progress,
+    )
+    .expect("snapshot failures should be non-fatal");
+
+    assert_eq!(progress.started, vec![("batch-000002".to_string(), 2)]);
+    assert_eq!(backend.calls(), vec!["batch-000002".to_string()]);
+}
+
+#[test]
+fn process_pending_snapshots_honors_shutdown_before_attempt() {
+    let mut state = MigrationState::new("migrate", "/src", "/dst");
+    state.upsert_batch(BatchState {
+        batch_id: "batch-000001".to_string(),
+        phase: BatchPhase::DeleteCompleted,
+        verification_passed: true,
+        approved_for_delete: true,
+        deleted: true,
+    });
+
+    let backend = ScriptedSnapshotBackend::with_failing_batches(&[]);
+    let mut progress = RecordingSnapshotProgress::default();
+    let mut persist_state = |_current_state: &MigrationState| Ok::<(), CaravanError>(());
+    let mut check_interrupt = || Err(CaravanError::GracefulShutdown);
+
+    let err = process_pending_snapshots_with_progress_and_interrupt(
+        Mode::Migrate,
+        Some(1),
+        Path::new("/dst"),
+        None,
+        &mut state,
+        &backend,
+        &mut persist_state,
+        &mut progress,
+        &mut check_interrupt,
+    )
+    .expect_err("shutdown should interrupt snapshots");
+
+    assert!(matches!(err, CaravanError::GracefulShutdown));
+    assert!(progress.started.is_empty());
+    assert!(backend.calls().is_empty());
 }
 
 #[test]

@@ -6,7 +6,7 @@ use caravan::models::verification::VerificationStatus;
 use caravan::plan::{PlanOptions, build_plan};
 use caravan::progress::NoopProgress;
 use caravan::transfer::LocalFsCopyBackend;
-use caravan::verify::{digest_file, verify_batch_with_progress};
+use caravan::verify::{digest_file, digest_file_with_interrupt, verify_batch_with_progress};
 use tempfile::TempDir;
 
 fn create_file(root: &std::path::Path, rel: &str, bytes: &[u8]) {
@@ -278,4 +278,17 @@ fn exact_buffer_size_file_hash() {
     let expected = blake3::hash(&data);
 
     assert_eq!(hash, *expected.as_bytes());
+}
+
+#[test]
+fn digest_file_with_interrupt_returns_graceful_shutdown() {
+    let tmp = TempDir::new().expect("temp dir");
+    let path = tmp.path().join("interrupt.bin");
+    fs::write(&path, b"content").expect("write file");
+    let mut check_interrupt = || Err(CaravanError::GracefulShutdown);
+
+    let err = digest_file_with_interrupt(&path, &mut check_interrupt)
+        .expect_err("digest should stop when shutdown is requested");
+
+    assert!(matches!(err, CaravanError::GracefulShutdown));
 }

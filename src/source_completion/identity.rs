@@ -26,7 +26,15 @@ pub fn hash_source_entries(
     entries: &[FileEntry],
 ) -> Result<Vec<HashedFileEntry>, CaravanError> {
     let mut progress = NoopProgress;
-    hash_source_entries_with_progress(source_root, entries, &mut progress)
+    let mut no_interrupt = || Ok(());
+    hash_source_entries_with_options(
+        source_root,
+        entries,
+        &mut progress,
+        &mut no_interrupt,
+        "Hashing source",
+        false,
+    )
 }
 
 pub fn hash_source_entries_with_progress(
@@ -34,22 +42,79 @@ pub fn hash_source_entries_with_progress(
     entries: &[FileEntry],
     progress: &mut dyn ProgressReporter,
 ) -> Result<Vec<HashedFileEntry>, CaravanError> {
+    let mut no_interrupt = || Ok(());
+    hash_source_entries_with_options(
+        source_root,
+        entries,
+        progress,
+        &mut no_interrupt,
+        "Hashing source",
+        false,
+    )
+}
+
+pub fn hash_source_entries_with_progress_and_interrupt(
+    source_root: &Path,
+    entries: &[FileEntry],
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<Vec<HashedFileEntry>, CaravanError> {
+    hash_source_entries_with_options(
+        source_root,
+        entries,
+        progress,
+        check_interrupt,
+        "Hashing source",
+        false,
+    )
+}
+
+pub(super) fn hash_source_candidates_with_progress_and_interrupt(
+    source_root: &Path,
+    entries: &[FileEntry],
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<Vec<HashedFileEntry>, CaravanError> {
+    hash_source_entries_with_options(
+        source_root,
+        entries,
+        progress,
+        check_interrupt,
+        "Hashing source candidates",
+        true,
+    )
+}
+
+fn hash_source_entries_with_options(
+    source_root: &Path,
+    entries: &[FileEntry],
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+    operation: &str,
+    skip_progress_when_empty: bool,
+) -> Result<Vec<HashedFileEntry>, CaravanError> {
+    if entries.is_empty() && skip_progress_when_empty {
+        return Ok(Vec::new());
+    }
+
     let total_bytes = entries
         .iter()
         .fold(0_u64, |total, entry| total.saturating_add(entry.size_bytes));
     progress.set_total_bytes(total_bytes);
-    progress.start(entries.len(), "Hashing source");
+    progress.start(entries.len(), operation);
 
     let mut hashed_entries = Vec::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
+        check_interrupt()?;
         let source_path = source_root.join(&entry.relative_path);
-        let blake3_hash = hash_file_hex(&source_path)?;
+        let blake3_hash = hash_file_hex_with_interrupt(&source_path, check_interrupt)?;
         hashed_entries.push(HashedFileEntry {
             relative_path: entry.relative_path.clone(),
             size_bytes: entry.size_bytes,
             blake3_hash,
         });
         progress.advance(index + 1, Some(&entry.relative_path.to_string_lossy()));
+        check_interrupt()?;
     }
 
     progress.finish();
@@ -88,8 +153,14 @@ pub(super) fn file_key_from_hashed_entry(mode: &str, entry: &HashedFileEntry) ->
     }
 }
 
-pub(super) fn hash_file_hex(path: &Path) -> Result<String, CaravanError> {
-    Ok(hex_lower(&verify::digest_file(path)?))
+pub(super) fn hash_file_hex_with_interrupt(
+    path: &Path,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<String, CaravanError> {
+    Ok(hex_lower(&verify::digest_file_with_interrupt(
+        path,
+        check_interrupt,
+    )?))
 }
 
 fn hex_lower(bytes: &[u8; 32]) -> String {

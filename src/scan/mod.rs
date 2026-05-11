@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::error::CaravanError;
 use crate::models::file_entry::FileEntry;
 use crate::platform::is_windows_build;
+use crate::progress::{NoopProgress, ProgressReporter};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -33,19 +34,63 @@ pub const fn active_scan_backend() -> ScanBackend {
 }
 
 pub fn scan_source(source_root: &Path) -> Result<Vec<FileEntry>, CaravanError> {
-    scan_source_with_backend(source_root, active_scan_backend())
+    let mut progress = NoopProgress;
+    scan_source_with_backend_and_progress(source_root, active_scan_backend(), &mut progress)
+}
+
+pub fn scan_source_with_progress(
+    source_root: &Path,
+    progress: &mut dyn ProgressReporter,
+) -> Result<Vec<FileEntry>, CaravanError> {
+    let mut no_interrupt = || Ok(());
+    scan_source_with_backend_progress_and_interrupt(
+        source_root,
+        active_scan_backend(),
+        progress,
+        &mut no_interrupt,
+    )
+}
+
+pub fn scan_source_with_progress_and_interrupt(
+    source_root: &Path,
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<Vec<FileEntry>, CaravanError> {
+    scan_source_with_backend_progress_and_interrupt(
+        source_root,
+        active_scan_backend(),
+        progress,
+        check_interrupt,
+    )
 }
 
 pub fn scan_source_with_backend(
     source_root: &Path,
     backend: ScanBackend,
 ) -> Result<Vec<FileEntry>, CaravanError> {
-    scan_source_with_backend_impl(source_root, backend)
+    let mut progress = NoopProgress;
+    scan_source_with_backend_and_progress(source_root, backend, &mut progress)
 }
 
-fn scan_source_with_backend_impl(
+pub fn scan_source_with_backend_and_progress(
     source_root: &Path,
     backend: ScanBackend,
+    progress: &mut dyn ProgressReporter,
+) -> Result<Vec<FileEntry>, CaravanError> {
+    let mut no_interrupt = || Ok(());
+    scan_source_with_backend_progress_and_interrupt(
+        source_root,
+        backend,
+        progress,
+        &mut no_interrupt,
+    )
+}
+
+pub fn scan_source_with_backend_progress_and_interrupt(
+    source_root: &Path,
+    backend: ScanBackend,
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<Vec<FileEntry>, CaravanError> {
     if !source_root.exists() {
         return Err(CaravanError::InvalidArguments(format!(
@@ -61,12 +106,28 @@ fn scan_source_with_backend_impl(
     }
 
     let mut entries = Vec::new();
+    check_interrupt()?;
+    progress.start(0, "Scanning source");
     match backend {
-        ScanBackend::StdFs => visit_dir_std(source_root, source_root, &mut entries)?,
-        ScanBackend::Win32FindFirstEx => visit_dir_win32(source_root, source_root, &mut entries)?,
+        ScanBackend::StdFs => visit_dir_std(
+            source_root,
+            source_root,
+            &mut entries,
+            progress,
+            check_interrupt,
+        )?,
+        ScanBackend::Win32FindFirstEx => visit_dir_win32(
+            source_root,
+            source_root,
+            &mut entries,
+            progress,
+            check_interrupt,
+        )?,
     }
 
+    check_interrupt()?;
     entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    progress.finish();
     Ok(entries)
 }
 
@@ -74,11 +135,14 @@ pub(super) fn visit_dir_std(
     source_root: &Path,
     start_dir: &Path,
     output: &mut Vec<FileEntry>,
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
     let mut stack: Vec<PathBuf> = Vec::new();
-    push_children_in_reverse_sorted_order(start_dir, &mut stack)?;
+    push_children_in_reverse_sorted_order(start_dir, &mut stack, check_interrupt)?;
 
     while let Some(child) = stack.pop() {
+        check_interrupt()?;
         let metadata =
             fs::symlink_metadata(&child).map_err(map_io("failed to read source file metadata"))?;
         if metadata.is_dir() {
@@ -86,7 +150,7 @@ pub(super) fn visit_dir_std(
             if matches!(child.file_name(), Some(file_name) if file_name == ".caravan") {
                 continue;
             }
-            push_children_in_reverse_sorted_order(&child, &mut stack)?;
+            push_children_in_reverse_sorted_order(&child, &mut stack, check_interrupt)?;
             continue;
         }
         if !metadata.is_file() {
@@ -100,11 +164,15 @@ pub(super) fn visit_dir_std(
                 source_root.display()
             ))
         })?;
-        output.push(FileEntry {
+        let file_entry = FileEntry {
             relative_path: relative_path.to_path_buf(),
             size_bytes: metadata.len(),
             modified_time: metadata.modified().ok(),
-        });
+        };
+        output.push(file_entry);
+        let item_name = output.last().map(|entry| entry.relative_path.as_path());
+        progress.advance(output.len(), item_name.and_then(|path| path.to_str()));
+        check_interrupt()?;
     }
 
     Ok(())
@@ -113,14 +181,19 @@ pub(super) fn visit_dir_std(
 fn push_children_in_reverse_sorted_order(
     dir: &Path,
     stack: &mut Vec<PathBuf>,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
+    check_interrupt()?;
     let read_dir = fs::read_dir(dir).map_err(map_io("failed to read source directory"))?;
-    let mut children: Vec<PathBuf> = read_dir
-        .map(|entry| entry.map(|e| e.path()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(map_io("failed to enumerate source directory entries"))?;
+    let mut children: Vec<PathBuf> = Vec::new();
+    for entry in read_dir {
+        check_interrupt()?;
+        let entry = entry.map_err(map_io("failed to enumerate source directory entries"))?;
+        children.push(entry.path());
+    }
     children.sort();
     for child in children.into_iter().rev() {
+        check_interrupt()?;
         stack.push(child);
     }
     Ok(())

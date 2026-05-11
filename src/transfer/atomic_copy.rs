@@ -62,7 +62,7 @@ pub(super) fn copy_file_atomically(
     Ok(())
 }
 
-fn temp_destination_path(destination_path: &Path) -> PathBuf {
+pub(crate) fn temp_destination_path(destination_path: &Path) -> PathBuf {
     let file_name = destination_path
         .file_name()
         .map(|name| {

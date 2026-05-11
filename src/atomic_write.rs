@@ -1,5 +1,7 @@
 use std::ffi::OsString;
-use std::fs::{self, File, OpenOptions};
+#[cfg(target_os = "linux")]
+use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

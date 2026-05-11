@@ -14,7 +14,10 @@ mod platform_windows;
 
 pub use backend::{SnapshotBackend, SystemSnapshotBackend};
 pub use policy::snapshot_if_needed;
-pub use processing::process_pending_snapshots;
+pub use processing::{
+    SnapshotProgressReporter, process_pending_snapshots, process_pending_snapshots_with_interrupt,
+    process_pending_snapshots_with_progress, process_pending_snapshots_with_progress_and_interrupt,
+};
 pub use request::SnapshotRequest;
 pub use validation::validate_snapshot_configuration;
 

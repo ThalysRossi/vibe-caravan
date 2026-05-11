@@ -5,7 +5,7 @@ use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::state::CompletedFileIdentity;
 
-use super::identity::hash_file_hex;
+use super::identity::hash_file_hex_with_interrupt;
 use super::ledger::{load_ledger, persist_ledger};
 
 pub fn mark_batch_completed(
@@ -13,7 +13,18 @@ pub fn mark_batch_completed(
     mode: &str,
     batch: &Batch,
 ) -> Result<(), CaravanError> {
-    let identities = identities_from_batch(source_root, mode, batch)?;
+    let mut no_interrupt = || Ok(());
+    mark_batch_completed_with_interrupt(source_root, mode, batch, &mut no_interrupt)
+}
+
+pub fn mark_batch_completed_with_interrupt(
+    source_root: &Path,
+    mode: &str,
+    batch: &Batch,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<(), CaravanError> {
+    let identities =
+        identities_from_batch_with_interrupt(source_root, mode, batch, check_interrupt)?;
     upsert_identities(source_root, &identities)
 }
 
@@ -42,19 +53,21 @@ pub fn remove_batch_completed(
     Ok(())
 }
 
-fn identities_from_batch(
+fn identities_from_batch_with_interrupt(
     source_root: &Path,
     mode: &str,
     batch: &Batch,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<Vec<CompletedFileIdentity>, CaravanError> {
     let mut identities = Vec::with_capacity(batch.files.len());
     for file in &batch.files {
+        check_interrupt()?;
         let source_path = source_root.join(&file.relative_path);
         identities.push(CompletedFileIdentity {
             mode: mode.to_string(),
             relative_path: file.relative_path.clone(),
             size_bytes: file.size_bytes,
-            blake3_hash: hash_file_hex(&source_path)?,
+            blake3_hash: hash_file_hex_with_interrupt(&source_path, check_interrupt)?,
         });
     }
     Ok(identities)

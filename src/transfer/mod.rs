@@ -20,3 +20,5 @@ pub use summary::{
     TransferExecutionSummary, TransferPlanningSummary, summarize_transfer_execution,
     summarize_transfer_plan,
 };
+
+pub(crate) use atomic_copy::temp_destination_path;

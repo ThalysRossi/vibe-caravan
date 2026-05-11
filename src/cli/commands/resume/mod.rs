@@ -28,27 +28,37 @@ fn ensure_resume_manifest_is_consistent(
     state: &mut MigrationState,
     config: &TransferConfig,
     state_path: &Path,
+    check_shutdown: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<(), CaravanError> {
     let plan_opts = PlanOptions {
         batch_size_bytes: state.batch_size_bytes,
         max_files: state.max_files.map(|value| value as usize),
     };
     let snapshot = if state.skipped_completed_files.is_empty() {
-        plan::build_plan(&config.source, &plan_opts)?
-    } else {
-        let entries = scan::scan_source(&config.source)?;
-        let mut hashing_progress = progress::TerminalProgress::new();
-        let hashed_entries = source_completion::hash_source_entries_with_progress(
+        let mut scan_progress = progress::TerminalProgress::new();
+        plan::build_plan_with_progress_and_interrupt(
             &config.source,
-            &entries,
-            &mut hashing_progress,
+            &plan_opts,
+            &mut scan_progress,
+            check_shutdown,
+        )?
+    } else {
+        let mut scan_progress = progress::TerminalProgress::new();
+        let entries = scan::scan_source_with_progress_and_interrupt(
+            &config.source,
+            &mut scan_progress,
+            check_shutdown,
         )?;
-        let filtered_entries = source_completion::filter_entries_for_persisted_skips(
+        let mut hashing_progress = progress::TerminalProgress::new();
+        let filtered_entries = source_completion::filter_entries_for_persisted_skips_selective(
+            &config.source,
             &state.mode,
             entries,
-            &hashed_entries,
             &state.skipped_completed_files,
+            &mut hashing_progress,
+            check_shutdown,
         )?;
+        check_shutdown()?;
         plan::build_plan_from_entries(filtered_entries, &plan_opts)?
     };
 
@@ -134,7 +144,8 @@ pub(in crate::cli) fn execute_resume(
 
     let mut state = resume_ops::load_state_for_resume(state_path)?;
     let config = transfer_config_from_state(&state, recover_failed)?;
-    ensure_resume_manifest_is_consistent(&mut state, &config, state_path)?;
+    let mut check_shutdown = || crate::signal::check_shutdown(&shutdown_flag);
+    ensure_resume_manifest_is_consistent(&mut state, &config, state_path, &mut check_shutdown)?;
 
     if inspect_failed {
         let report = resume_ops::inspect_failed_batches(&state, &config.dest)?;
@@ -213,7 +224,8 @@ pub(in crate::cli) fn execute_resume(
             &mut persist_state,
             "resume",
         )?;
-        snapshot::process_pending_snapshots(
+        let mut check_shutdown = || context.check_shutdown();
+        snapshot::process_pending_snapshots_with_interrupt(
             context.config.mode.clone(),
             context.config.snapshot_every,
             &context.config.dest,
@@ -221,6 +233,7 @@ pub(in crate::cli) fn execute_resume(
             &mut state,
             &context.snapshot_backend,
             &mut persist_state,
+            &mut check_shutdown,
         )?;
 
         let execution_summary = resume_ops::summarize_resume_execution(&state);
@@ -313,7 +326,8 @@ mod tests {
         );
         state.batch_size_bytes = 1024;
 
-        ensure_resume_manifest_is_consistent(&mut state, &config, &state_path)
+        let mut no_interrupt = || Ok(());
+        ensure_resume_manifest_is_consistent(&mut state, &config, &state_path, &mut no_interrupt)
             .expect("missing manifest should be seeded");
 
         assert!(
@@ -361,8 +375,14 @@ mod tests {
             },
         ];
 
-        let err = ensure_resume_manifest_is_consistent(&mut state, &config, &state_path)
-            .expect_err("drifted manifest must fail");
+        let mut no_interrupt = || Ok(());
+        let err = ensure_resume_manifest_is_consistent(
+            &mut state,
+            &config,
+            &state_path,
+            &mut no_interrupt,
+        )
+        .expect_err("drifted manifest must fail");
         assert!(
             err.to_string()
                 .contains("planned manifest batch count changed")

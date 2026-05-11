@@ -89,7 +89,16 @@ fn delete_batches_by_id(
                     batch_id
                 ))
             })?;
-            cleanup::cleanup_batch(&batch, source_root, state, delete_context)?;
+            let mut progress = crate::progress::TerminalProgress::new();
+            let mut check_interrupt = || check_shutdown(shutdown_flag);
+            cleanup::cleanup_batch_with_progress_and_interrupt(
+                &batch,
+                source_root,
+                state,
+                delete_context,
+                &mut progress,
+                &mut check_interrupt,
+            )?;
             persist_state(state)?;
         }
     }

@@ -3,13 +3,34 @@ use std::path::Path;
 use crate::error::CaravanError;
 use crate::models::batch::Batch;
 use crate::models::file_entry::FileEntry;
-use crate::scan::scan_source;
+use crate::progress::{NoopProgress, ProgressReporter};
+use crate::scan::scan_source_with_progress_and_interrupt;
 
 use super::types::{PlanOptions, PlanningSnapshot};
 
 pub fn build_plan(
     source_root: &Path,
     options: &PlanOptions,
+) -> Result<PlanningSnapshot, CaravanError> {
+    let mut progress = NoopProgress;
+    let mut no_interrupt = || Ok(());
+    build_plan_with_progress_and_interrupt(source_root, options, &mut progress, &mut no_interrupt)
+}
+
+pub fn build_plan_with_progress(
+    source_root: &Path,
+    options: &PlanOptions,
+    progress: &mut dyn ProgressReporter,
+) -> Result<PlanningSnapshot, CaravanError> {
+    let mut no_interrupt = || Ok(());
+    build_plan_with_progress_and_interrupt(source_root, options, progress, &mut no_interrupt)
+}
+
+pub fn build_plan_with_progress_and_interrupt(
+    source_root: &Path,
+    options: &PlanOptions,
+    progress: &mut dyn ProgressReporter,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<PlanningSnapshot, CaravanError> {
     if options.batch_size_bytes == 0 {
         return Err(CaravanError::InvalidArguments(
@@ -22,7 +43,8 @@ pub fn build_plan(
         ));
     }
 
-    let entries = scan_source(source_root)?;
+    let entries = scan_source_with_progress_and_interrupt(source_root, progress, check_interrupt)?;
+    check_interrupt()?;
     build_plan_from_entries(entries, options)
 }
 

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs;
 use std::path::Path;
 
@@ -27,6 +28,16 @@ pub struct SpaceInfo {
     pub total_bytes: u64,
     pub available_bytes: u64,
     pub volume_free_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DestinationSpaceDiagnostics {
+    pub destination_exists: bool,
+    pub visible_file_count: u64,
+    pub visible_logical_bytes: u64,
+    pub caravan_part_file_count: u64,
+    pub caravan_part_logical_bytes: u64,
+    pub scan_error_count: u64,
 }
 
 pub trait SpaceProbe {
@@ -220,5 +231,108 @@ pub fn format_capacity_decision_trace(destination: &Path, report: &CapacityRepor
         decision_rule,
         decision_reason,
         decision
+    )
+}
+
+pub fn inspect_destination_space(destination: &Path) -> DestinationSpaceDiagnostics {
+    let mut diagnostics = DestinationSpaceDiagnostics {
+        destination_exists: destination.exists(),
+        visible_file_count: 0,
+        visible_logical_bytes: 0,
+        caravan_part_file_count: 0,
+        caravan_part_logical_bytes: 0,
+        scan_error_count: 0,
+    };
+
+    if !diagnostics.destination_exists {
+        return diagnostics;
+    }
+
+    let mut pending = VecDeque::from([destination.to_path_buf()]);
+    while let Some(path) = pending.pop_front() {
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                diagnostics.scan_error_count += 1;
+                continue;
+            }
+        };
+        let file_type = metadata.file_type();
+
+        if file_type.is_file() {
+            diagnostics.visible_file_count += 1;
+            diagnostics.visible_logical_bytes = diagnostics
+                .visible_logical_bytes
+                .saturating_add(metadata.len());
+
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".caravan.part"))
+            {
+                diagnostics.caravan_part_file_count += 1;
+                diagnostics.caravan_part_logical_bytes = diagnostics
+                    .caravan_part_logical_bytes
+                    .saturating_add(metadata.len());
+            }
+            continue;
+        }
+
+        if file_type.is_dir() {
+            let entries = match fs::read_dir(&path) {
+                Ok(entries) => entries,
+                Err(_) => {
+                    diagnostics.scan_error_count += 1;
+                    continue;
+                }
+            };
+
+            for entry in entries {
+                match entry {
+                    Ok(entry) => pending.push_back(entry.path()),
+                    Err(_) => diagnostics.scan_error_count += 1,
+                }
+            }
+        }
+    }
+
+    diagnostics
+}
+
+pub fn format_destination_space_diagnostic(
+    destination: &Path,
+    report: &CapacityReport,
+    diagnostics: &DestinationSpaceDiagnostics,
+) -> String {
+    let volume_used_raw_bytes = report
+        .total_capacity_bytes
+        .saturating_sub(report.volume_free_bytes);
+    let hidden_or_other_raw_bytes =
+        volume_used_raw_bytes.saturating_sub(diagnostics.visible_logical_bytes);
+    let hidden_hint = if hidden_or_other_raw_bytes
+        > report.planned_batch_bytes.max(1024 * 1024 * 1024)
+    {
+        format!(
+            " hidden_space_hint=\"volume used greatly exceeds files visible under destination; on Windows run elevated: fsutil volume allocationreport {}; fsutil usn queryjournal {}\"",
+            destination_volume_root(destination),
+            destination_volume_root(destination)
+        )
+    } else {
+        String::new()
+    };
+
+    format!(
+        "destination_usage destination={} destination_exists={} visible_file_count={} visible_logical_raw_bytes={} caravan_part_file_count={} caravan_part_logical_raw_bytes={} scan_error_count={} volume_used_raw_bytes={} volume_free_raw_bytes={} hidden_or_other_raw_bytes={}{}",
+        destination.display(),
+        diagnostics.destination_exists,
+        diagnostics.visible_file_count,
+        diagnostics.visible_logical_bytes,
+        diagnostics.caravan_part_file_count,
+        diagnostics.caravan_part_logical_bytes,
+        diagnostics.scan_error_count,
+        volume_used_raw_bytes,
+        report.volume_free_bytes,
+        hidden_or_other_raw_bytes,
+        hidden_hint
     )
 }

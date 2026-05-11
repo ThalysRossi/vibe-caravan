@@ -5,7 +5,7 @@ use crate::models::state::MigrationState;
 use crate::resume as resume_ops;
 
 use super::super::shared::{
-    CopyBatchOp, copy_batch_with_state_updates, ensure_destination_capacity,
+    CopyBatchOp, copy_batch_with_state_updates, ensure_destination_capacity_for_batch,
     handle_verification_error, mark_batch_failed_for_conflicts, non_conflicting_subset_batch,
     print_resume_continue_to_deletion, print_resume_processing_batch_banner,
     print_resume_skip_already_completed, print_resume_verification_passed,
@@ -79,7 +79,7 @@ fn copy_batch_for_resume(
     state: &mut MigrationState,
 ) -> Result<(), CaravanError> {
     print_resume_processing_batch_banner(batch);
-    ensure_destination_capacity(&context.config.dest, batch.total_bytes)?;
+    ensure_destination_capacity_for_batch(&context.config.dest, batch)?;
 
     let conflict_report = crate::conflict::detect_batch_conflicts(batch, &context.config.dest)?;
     if conflict_report.has_conflicts {
@@ -171,7 +171,13 @@ fn copy_batch_for_resume(
             ))
         },
     )?;
-    crate::source_completion::mark_batch_completed(&context.config.source, &state.mode, batch)?;
+    let mut check_shutdown = || context.check_shutdown();
+    crate::source_completion::mark_batch_completed_with_interrupt(
+        &context.config.source,
+        &state.mode,
+        batch,
+        &mut check_shutdown,
+    )?;
 
     Ok(())
 }

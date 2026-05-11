@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::config::TransferConfig;
 use crate::error::CaravanError;
 use crate::models::state::MigrationState;
-use crate::signal::{ShutdownFlag, install_signal_handlers};
+use crate::signal::{ShutdownFlag, check_shutdown, install_signal_handlers};
 use crate::{migration_registry, snapshot, state_store, transfer};
 
 pub(super) struct TransferContext<'a> {
@@ -41,6 +41,10 @@ impl<'a> TransferContext<'a> {
             &self.secondary_state_path,
             state,
         )
+    }
+
+    pub(super) fn check_shutdown(&self) -> Result<(), CaravanError> {
+        check_shutdown(&self.shutdown_flag)
     }
 }
 

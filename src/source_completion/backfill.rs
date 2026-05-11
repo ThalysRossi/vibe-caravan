@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::CaravanError;
 use crate::migration_registry;
+use crate::models::file_entry::FileEntry;
 use crate::models::state::{BatchPhase, BatchState, CompletedFileIdentity};
 use crate::state_store;
 
@@ -14,6 +15,21 @@ pub fn backfill_ledger_from_existing_states(
     source_root: &Path,
     mode: &str,
     hashed_entries: &[HashedFileEntry],
+) -> Result<usize, CaravanError> {
+    let mut no_interrupt = || Ok(());
+    backfill_ledger_from_existing_states_with_interrupt(
+        source_root,
+        mode,
+        hashed_entries,
+        &mut no_interrupt,
+    )
+}
+
+pub fn backfill_ledger_from_existing_states_with_interrupt(
+    source_root: &Path,
+    mode: &str,
+    hashed_entries: &[HashedFileEntry],
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<usize, CaravanError> {
     let state_dir = migration_registry::state_dir_in_source(source_root);
     if !state_dir.exists() {
@@ -31,6 +47,7 @@ pub fn backfill_ledger_from_existing_states(
 
     let source_identity = normalized_path(source_root);
     for state_path in migration_state_paths(&state_dir)? {
+        check_interrupt()?;
         let state = state_store::load_state(&state_path)?;
         if state.mode != mode || normalized_path(Path::new(&state.source)) != source_identity {
             continue;
@@ -41,6 +58,7 @@ pub fn backfill_ledger_from_existing_states(
             .iter()
             .filter(|batch| eligible_batch_state(batch))
         {
+            check_interrupt()?;
             let Some(planned_batch) = state.planned_batch(&batch_state.batch_id) else {
                 eprintln!(
                     "[WARNING] cannot backfill completed files for {} from {}: missing planned batch manifest",
@@ -51,6 +69,7 @@ pub fn backfill_ledger_from_existing_states(
             };
 
             for planned_file in &planned_batch.files {
+                check_interrupt()?;
                 let Some(hashed) = hashed_by_path.get(planned_file.relative_path.as_path()) else {
                     continue;
                 };
@@ -71,6 +90,56 @@ pub fn backfill_ledger_from_existing_states(
     }
 
     Ok(ledger.entries.len().saturating_sub(initial_len))
+}
+
+pub(super) fn candidate_paths_from_existing_states(
+    source_root: &Path,
+    mode: &str,
+    scanned_by_path: &HashMap<PathBuf, FileEntry>,
+    check_interrupt: &mut dyn FnMut() -> Result<(), CaravanError>,
+) -> Result<HashSet<PathBuf>, CaravanError> {
+    let state_dir = migration_registry::state_dir_in_source(source_root);
+    let mut candidates = HashSet::new();
+    if !state_dir.exists() {
+        return Ok(candidates);
+    }
+
+    let source_identity = normalized_path(source_root);
+    for state_path in migration_state_paths(&state_dir)? {
+        check_interrupt()?;
+        let state = state_store::load_state(&state_path)?;
+        if state.mode != mode || normalized_path(Path::new(&state.source)) != source_identity {
+            continue;
+        }
+
+        for batch_state in state
+            .batches
+            .iter()
+            .filter(|batch| eligible_batch_state(batch))
+        {
+            check_interrupt()?;
+            let Some(planned_batch) = state.planned_batch(&batch_state.batch_id) else {
+                eprintln!(
+                    "[WARNING] cannot backfill completed files for {} from {}: missing planned batch manifest",
+                    batch_state.batch_id,
+                    state_path.display()
+                );
+                continue;
+            };
+
+            for planned_file in &planned_batch.files {
+                check_interrupt()?;
+                let Some(scanned) = scanned_by_path.get(&planned_file.relative_path) else {
+                    continue;
+                };
+                if scanned.size_bytes == planned_file.size_bytes {
+                    candidates.insert(planned_file.relative_path.clone());
+                }
+            }
+        }
+    }
+
+    Ok(candidates)
 }
 
 fn migration_state_paths(state_dir: &Path) -> Result<Vec<PathBuf>, CaravanError> {

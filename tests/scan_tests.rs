@@ -1,7 +1,33 @@
-use caravan::scan::{ScanBackend, active_scan_backend, scan_source, scan_source_with_backend};
+use caravan::progress::ProgressReporter;
+use caravan::scan::{
+    ScanBackend, active_scan_backend, scan_source, scan_source_with_backend,
+    scan_source_with_backend_and_progress, scan_source_with_backend_progress_and_interrupt,
+};
 use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
+
+#[derive(Default)]
+struct RecordingProgress {
+    starts: Vec<(usize, String)>,
+    advances: Vec<(usize, Option<String>)>,
+    finishes: usize,
+}
+
+impl ProgressReporter for RecordingProgress {
+    fn start(&mut self, total_items: usize, operation: &str) {
+        self.starts.push((total_items, operation.to_string()));
+    }
+
+    fn advance(&mut self, current: usize, item_name: Option<&str>) {
+        self.advances
+            .push((current, item_name.map(ToOwned::to_owned)));
+    }
+
+    fn finish(&mut self) {
+        self.finishes += 1;
+    }
+}
 
 #[test]
 fn scan_excludes_caravan_directory_at_root() {
@@ -150,6 +176,64 @@ fn std_backend_scan_is_deterministic_and_sorted() {
             PathBuf::from("x").join("z.txt")
         ]
     );
+}
+
+#[test]
+fn scan_reports_progress_for_discovered_files() {
+    let tmp = TempDir::new().expect("temp dir");
+    fs::create_dir_all(tmp.path().join("a")).expect("create a");
+    fs::write(tmp.path().join("a/one.txt"), "one").expect("write one");
+    fs::write(tmp.path().join("two.txt"), "two").expect("write two");
+
+    let mut progress = RecordingProgress::default();
+    let scanned =
+        scan_source_with_backend_and_progress(tmp.path(), ScanBackend::StdFs, &mut progress)
+            .expect("scan should succeed");
+
+    assert_eq!(scanned.len(), 2);
+    assert_eq!(progress.starts, vec![(0, "Scanning source".to_string())]);
+    assert_eq!(progress.advances.len(), 2);
+    assert_eq!(progress.advances[0].0, 1);
+    assert_eq!(progress.advances[1].0, 2);
+    assert_eq!(progress.finishes, 1);
+}
+
+#[test]
+fn scan_does_not_start_progress_when_source_is_invalid() {
+    let tmp = TempDir::new().expect("temp dir");
+    let missing = tmp.path().join("missing");
+    let mut progress = RecordingProgress::default();
+
+    scan_source_with_backend_and_progress(&missing, ScanBackend::StdFs, &mut progress)
+        .expect_err("missing source should fail");
+
+    assert!(progress.starts.is_empty());
+    assert!(progress.advances.is_empty());
+    assert_eq!(progress.finishes, 0);
+}
+
+#[test]
+fn scan_shutdown_does_not_finish_progress() {
+    let tmp = TempDir::new().expect("temp dir");
+    fs::write(tmp.path().join("a.txt"), "one").expect("write one");
+    let mut progress = RecordingProgress::default();
+    let mut check_interrupt = || Err(caravan::error::CaravanError::GracefulShutdown);
+
+    let err = scan_source_with_backend_progress_and_interrupt(
+        tmp.path(),
+        ScanBackend::StdFs,
+        &mut progress,
+        &mut check_interrupt,
+    )
+    .expect_err("shutdown should interrupt scan");
+
+    assert!(matches!(
+        err,
+        caravan::error::CaravanError::GracefulShutdown
+    ));
+    assert!(progress.starts.is_empty());
+    assert!(progress.advances.is_empty());
+    assert_eq!(progress.finishes, 0);
 }
 
 #[test]

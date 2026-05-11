@@ -42,49 +42,55 @@ fn build_plan_for_transfer_state(
     state: &mut MigrationState,
     mode: &str,
     options: &PlanOptions,
+    check_shutdown: &mut dyn FnMut() -> Result<(), CaravanError>,
 ) -> Result<plan::PlanningSnapshot, CaravanError> {
     if state_is_empty_for_completed_file_filtering(state) {
-        let entries = scan::scan_source(&config.source)?;
+        let mut scan_progress = progress::TerminalProgress::new();
+        let entries = scan::scan_source_with_progress_and_interrupt(
+            &config.source,
+            &mut scan_progress,
+            check_shutdown,
+        )?;
         let mut hashing_progress = progress::TerminalProgress::new();
-        let hashed_entries = source_completion::hash_source_entries_with_progress(
+        let filtered = source_completion::filter_entries_for_new_migration_selective(
             &config.source,
-            &entries,
-            &mut hashing_progress,
-        )?;
-        source_completion::backfill_ledger_from_existing_states(
-            &config.source,
-            mode,
-            &hashed_entries,
-        )?;
-        let ledger = source_completion::load_ledger(&config.source)?;
-        let filtered = source_completion::filter_entries_for_new_migration(
             mode,
             entries,
-            &hashed_entries,
-            &ledger,
+            &mut hashing_progress,
+            check_shutdown,
         )?;
+        check_shutdown()?;
         state.skipped_completed_files = filtered.skipped_completed_files;
         return plan::build_plan_from_entries(filtered.entries_to_plan, options);
     }
 
     if !state.skipped_completed_files.is_empty() {
-        let entries = scan::scan_source(&config.source)?;
-        let mut hashing_progress = progress::TerminalProgress::new();
-        let hashed_entries = source_completion::hash_source_entries_with_progress(
+        let mut scan_progress = progress::TerminalProgress::new();
+        let entries = scan::scan_source_with_progress_and_interrupt(
             &config.source,
-            &entries,
-            &mut hashing_progress,
+            &mut scan_progress,
+            check_shutdown,
         )?;
-        let filtered_entries = source_completion::filter_entries_for_persisted_skips(
+        let mut hashing_progress = progress::TerminalProgress::new();
+        let filtered_entries = source_completion::filter_entries_for_persisted_skips_selective(
+            &config.source,
             mode,
             entries,
-            &hashed_entries,
             &state.skipped_completed_files,
+            &mut hashing_progress,
+            check_shutdown,
         )?;
+        check_shutdown()?;
         return plan::build_plan_from_entries(filtered_entries, options);
     }
 
-    plan::build_plan(&config.source, options)
+    let mut scan_progress = progress::TerminalProgress::new();
+    plan::build_plan_with_progress_and_interrupt(
+        &config.source,
+        options,
+        &mut scan_progress,
+        check_shutdown,
+    )
 }
 
 #[cfg(test)]
@@ -156,7 +162,14 @@ pub(in crate::cli) fn execute_transfer(config: TransferConfig) -> Result<(), Car
             max_files: config.max_files.map(|v| v as usize),
         };
         let had_manifest = state_has_manifest(&state);
-        let plan = build_plan_for_transfer_state(&config, &mut state, mode, &plan_opts)?;
+        let mut check_shutdown = || context.check_shutdown();
+        let plan = build_plan_for_transfer_state(
+            &config,
+            &mut state,
+            mode,
+            &plan_opts,
+            &mut check_shutdown,
+        )?;
 
         if had_manifest {
             plan::ensure_manifest_matches_snapshot(&state.planned_batches, &plan)?;
@@ -203,7 +216,8 @@ pub(in crate::cli) fn execute_transfer(config: TransferConfig) -> Result<(), Car
         run_delete_phase(&context, &mut state)?;
         let mut persist_state =
             |current_state: &MigrationState| context.persist_state(current_state);
-        snapshot::process_pending_snapshots(
+        let mut check_shutdown = || context.check_shutdown();
+        snapshot::process_pending_snapshots_with_interrupt(
             config.mode.clone(),
             config.snapshot_every,
             &config.dest,
@@ -211,6 +225,7 @@ pub(in crate::cli) fn execute_transfer(config: TransferConfig) -> Result<(), Car
             &mut state,
             &context.snapshot_backend,
             &mut persist_state,
+            &mut check_shutdown,
         )?;
 
         let execution_summary =
